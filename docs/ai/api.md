@@ -208,8 +208,8 @@ Query `ListQuery` (bookings, logs, tool-calls): `limit` (default 50, maks 200), 
 Endpoint `GET /api/v1/events/stream` (👮 operator/admin saja — SEC-18) menstream event dari event bus in-memory. Handler: `EventStream` di [handlers.go](../../backend/internal/handlers/handlers.go), bus: [backend/internal/events/bus.go](../../backend/internal/events/bus.go). Payload event disanitasi di sisi publish: tidak ada prompt mentah, PII kontak booking, maupun external_id/amount payment.
 
 Event yang dipublikasikan:
-- Workflow chat: `ai_thinking`, `search_trips`, `select_package`, `collect_order_detail`, `ai_response`, `workflow_completed`
-- Tool & data: `mcp_tool_executed`, `trip_created`, `booking_created`
+- Workflow chat: `ai_response`, `workflow_completed` (event step individual seperti `ai_thinking` sudah dihapus dari backend.md/architecture.md karena memakai OpenAI function calling, dan tidak ada di source code selain docs OpenAPI).
+- Tool & data: `mcp_tool_executed`, `trip_created`, `booking_created`, `booking_updated`
 - Payment: `payment_created`, `payment_updated`, `booking_confirmed`
 - Keep-alive: `heartbeat` (tiap 25 detik)
 

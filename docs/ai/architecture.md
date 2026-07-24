@@ -68,23 +68,27 @@ Detail per-module: lihat [modules.md](modules.md). Detail service: lihat [backen
 
 ```mermaid
 flowchart TD
-  A["POST /api/v1/chat"] --> B["GuestChat: buat/ambil Guest user"]
+  A["POST /api/v1/chat"] --> B["resolveGuestSession: buat/validasi ChatSession anonymous via cookie HttpOnly vero_chat_session"]
   B --> C["AIService.Chat"]
-  C --> D["Buat/lanjut ChatSession + simpan pesan user"]
-  D --> E["Pipeline MCP berurutan (tiap langkah publish event SSE)"]
-  E --> E1["ai_thinking -> search_destination"]
-  E --> E2["searching_destination -> search_hotels"]
-  E --> E3["calculating_budget -> calculate_budget"]
-  E --> E4["generating_itinerary -> generate_itinerary"]
-  E --> F["Ambil katalog paket published dari DB"]
-  F --> G["generateWithAI: kirim prompt + workflow + memory ke LLM"]
-  G --> H["selectRecommendedPackages: skor keyword -> top 3"]
-  H --> I["Simpan pesan asisten + refresh memory summary"]
-  I --> J["Publish workflow_completed"]
-  J --> K["Respons: {session_id, message, workflow, recommended_packages}"]
+  C --> D["Validasi session (ownership + expiry), simpan pesan user, update LastActivityAt/ExpiresAt sliding"]
+  D --> E["generateWithToolLoop: LLM function calling (maks MaxToolCallRounds)"]
+  E --> E1["LLM memilih tool dari katalog aktif"]
+  E1 --> E2["search_trips -> scoring katalog published -> top 3"]
+  E1 --> E3["select_package -> simpan SelectedTripID ke session"]
+  E1 --> E4["collect_order_detail -> draft detail booking"]
+  E1 --> E5["create_booking -> BookingService.Create -> DB"]
+  E2 --> F["Append hasil tool (role=tool), panggil LLM lagi sampai teks final"]
+  F --> G["Guard: klaim order sukses tanpa create_booking success -> diganti pesan gagal aman"]
+  G --> H["Simpan pesan asisten + refresh memory summary"]
+  H --> I["Publish workflow_completed {session_id}"]
+  I --> J["Respons: {message, workflow, show_recommendations, recommendation_reason, recommended_packages}"]
 ```
 
-Catatan penting: tool `create_payment` **sengaja dinonaktifkan** di pipeline ini (lihat bagian Keputusan Arsitektur). Tool MCP saat ini **mock** (mengembalikan data dummy).
+Catatan penting:
+- Rekomendasi paket **hanya** berasal dari tool `search_trips` (tidak ada lagi scoring otomatis pasca-LLM). Detail alur: lihat [backend.md](backend.md) bagian AIService.
+- Session identifier tidak dikembalikan di JSON; ownership proof = cookie HttpOnly `vero_chat_session` (sliding TTL default 7 hari). `GuestChatSession` ber-`UserID=NULL` (anonymous), bukan lagi user bersama `guest@vero.local`.
+- Tool `create_payment` **sengaja dinonaktifkan** (lihat bagian Keputusan Arsitektur). Tool lama `search_destination`, `search_hotels`, `calculate_budget`, `generate_itinerary`, `update_order_draft` dinonaktifkan dari katalog OpenAI; `MCPService.Execute()` memetakan nama lama ke `search_trips` untuk kompatibilitas logging.
+- Pipeline lama yang berurutan (ai_thinking -> search_destination -> ... -> generate_itinerary) **sudah tidak dipakai**; workflow kini digerakkan LLM via function calling loop.
 
 ### 3.2 Auth (access + refresh token)
 
@@ -166,8 +170,8 @@ Pola frontend (kedua app): **custom hook untuk data/logic** (`use-trip-form.ts`,
 ## 6. Keputusan Arsitektur Penting
 
 1. **`create_payment` MCP dinonaktifkan di workflow chat.** Agar AI tidak pernah menyebut QRIS/pembayaran saat DOKU disabled. Ditandai `Enabled: false` di `internal/mcp/tools.go`, diblok di `MCPService.Execute()`, dan dikomentari di `internal/services/ai_service.go` (langkah workflow `Chat()`). Jangan aktifkan kembali tanpa `PAYMENTS_ENABLED=true` dan wiring booking+payment end-to-end.
-2. **Tool MCP masih mock.** `internal/services/mcp_service.go` fungsi `mock()` mengembalikan data dummy. Integrasi LLM nyata sudah ada (`internal/ai`) dengan fallback lokal bila `AI_API_KEY` kosong.
-3. **Guest chat tanpa auth.** `POST /api/v1/chat` membuat user "Guest Traveler" otomatis. Memudahkan demo; tidak butuh login.
+2. **Tool MCP lama masih mock/legacy.** Tool rekomendasi lama (`search_destination`, `search_hotels`, `calculate_budget`, `generate_itinerary`) sudah dinonaktifkan dari katalog OpenAI; `MCPService.Execute()` memetakan nama-nama itu ke `search_trips` demi kompatibilitas. Fungsi `mock()` kini hanya menangani `send_whatsapp` (juga disabled) dan fallback `unknown tool`. Integrasi LLM nyata sudah ada (`internal/ai`) dengan fallback lokal bila `AI_API_KEY` kosong.
+3. **Guest chat tanpa auth, session anonymous.** `POST /api/v1/chat` memakai `ChatSession` ber-`UserID=NULL` yang diikat cookie HttpOnly `vero_chat_session` (bukan lagi user bersama `guest@vero.local`). User "Guest Traveler" (`guest@vero.local`) hanya masih dipakai untuk memenuhi kontrak `bookings.user_id NOT NULL` saat order dibuat.
 4. **Refresh token sebagai session DB + cookie HttpOnly.** Bukan disimpan di JS. Bisa di-revoke, dirotasi tiap refresh, dengan reuse detection revoke-all.
 5. **Access TTL pendek (15 menit).** Memperkecil dampak XSS; refresh otomatis menangani perpanjangan.
 6. **`WriteTimeout=0`** demi SSE long-lived.

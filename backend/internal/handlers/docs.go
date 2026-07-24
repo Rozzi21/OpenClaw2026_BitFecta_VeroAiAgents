@@ -74,9 +74,9 @@ func (h *Handler) OpenAPI(c *gin.Context) {
 			"/api/v1/events/stream": gin.H{"get": gin.H{
 				"tags":    []string{"Realtime"},
 				"summary": "Server-Sent Events stream",
-				"description": "Streams workflow events: ai_thinking, searching_destination, calculating_budget, " +
-					"generating_itinerary, ai_response, workflow_completed, plus mcp_tool_executed, trip_created, " +
-					"booking_created, payment_created, payment_updated, booking_confirmed, and periodic heartbeat. " +
+				"description": "Streams workflow events: ai_response, workflow_completed, " +
+					"plus mcp_tool_executed, trip_created, booking_created, booking_updated, " +
+					"payment_created, payment_updated, booking_confirmed, and periodic heartbeat. " +
 					"Note: payment_created/booking_confirmed only occur when PAYMENTS_ENABLED=true; current manual order flow emits booking_created only.",
 				"security":  []gin.H{{"BearerAuth": []string{}}},
 				"responses": okResponse("text/event-stream"),

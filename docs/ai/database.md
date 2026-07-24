@@ -42,7 +42,7 @@ Aturan penting (dokumentasikan sebagai pola wajib):
 Akun pengguna. Punya `Role` (`user` | `operator` | `admin`).
 - Relasi: `has many` ChatSession, Booking, AuthSession.
 - Email `uniqueIndex`. Password bcrypt (tidak diserialisasi).
-- Guest chat membuat user "Guest Traveler" (`guest@vero.local`) via `FirstOrCreateUser`.
+- User "Guest Traveler" (`guest@vero.local`) dibuat via `FirstOrCreateUser` — hanya dipakai untuk memenuhi `bookings.user_id NOT NULL` saat order tamu dibuat. ChatSession tamu ber-`UserID=NULL` (bukan user ini).
 
 ### AuthSession ([models.go](../../backend/internal/models/models.go))
 Menyimpan sesi refresh token untuk memungkinkan **revocation**.
@@ -100,7 +100,9 @@ erDiagram
 
 `Database.AutoMigrate()` ([database.go](../../backend/internal/database/database.go)) dipanggil di startup (`main.go`). Mendaftarkan 10 model secara berurutan: User, AuthSession, ChatSession, ChatMessage, Trip, Itinerary, Booking, Payment, AILog, ToolCall.
 
-Setelah AutoMigrate, `MigrateGuestChatSessions()` menormalisasi session lama yang masih menunjuk `guest@vero.local` menjadi `UserID=NULL` dan mengisi expiry legacy dari timestamp aktivitas. Cleanup expired menghapus child `ChatMessage`, `ToolCall`, dan `AILog` lalu parent `ChatSession` dalam transaksi.
+Setelah AutoMigrate, `MigrateGuestChatSessions()` menormalisasi session lama yang masih menunjuk `guest@vero.local` menjadi `UserID=NULL` dan mengisi expiry legacy dari timestamp aktivitas.
+
+> ⚠️ **Catatan (ditemukan 25 Jul 2026):** cleanup expired (`Repository.DeleteExpiredChatSessions`, dipicu ticker di `main.go`) hanya **soft-delete** `ChatSession` — child `ChatMessage`, `ToolCall`, dan `AILog` TIDAK ikut terhapus dan menjadi orphan. Lihat `known-issues.md` #19 untuk dampak + rencana perbaikan.
 
 ### Migrasi legacy: `slots` -> `adult_pax`
 `migrateLegacySlots()` menangani skema lama: jika kolom `slots` masih ada di tabel `trips`, menyalin nilainya ke `adult_pax` untuk baris yang belum punya pax. Pola ini contoh **migrasi data idempoten** — selalu cek `Migrator().HasColumn` dulu.

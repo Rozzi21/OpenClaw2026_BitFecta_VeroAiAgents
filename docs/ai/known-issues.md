@@ -4,7 +4,7 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Prinsip: dokumen ini sengaja menyoroti yang BELUM beres. Untuk gambaran fitur yang sudah aktif, lihat `architecture.md` dan `api.md`.
 
-> Audit terakhir: 23 Jul 2026 (audit keamanan + bug menyeluruh) menemukan 12 temuan (SEC-10..SEC-21). Status: SEC-11, SEC-13, SEC-14, SEC-15, SEC-16, SEC-17, SEC-18, SEC-19 & SEC-20 SELESAI (bagian A.2), sisanya (SEC-10, SEC-12 & SEC-21) BELUM (bagian A.1). Temuan lama SEC-1..SEC-9 tetap SELESAI (bagian A.3).
+> Audit terakhir: 23 Jul 2026 (audit keamanan + bug menyeluruh) menemukan 12 temuan (SEC-10..SEC-21). Status: SEC-11, SEC-13, SEC-14, SEC-15, SEC-16, SEC-17, SEC-18, SEC-19 & SEC-20 SELESAI (bagian A.2); SEC-10 juga SELESAI (ditemukan sudah ter-fix saat audit sinkronisasi 25 Jul 2026, lihat A.1). Sisanya (SEC-12 & SEC-21) BELUM (bagian A.1). Temuan lama SEC-1..SEC-9 tetap SELESAI (bagian A.3).
 
 ---
 
@@ -12,13 +12,13 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 Temuan hasil audit ulang seluruh kode yang masih terbuka. Diurutkan berdasarkan severity.
 
-### SEC-10. 🔴 TINGGI — IDOR pada `GET /chat/:id/messages`
+### SEC-10. ✅ TINGGI — IDOR pada `GET /chat/:id/messages` (SUDAH TER-FIX — verifikasi ulang 25 Jul 2026)
 
-**Lokasi:** `backend/internal/handlers/handlers.go` → `ChatMessages()` (baris ~167) + `routes.go`.
+**Lokasi:** `backend/internal/handlers/handlers.go` → `ChatMessages()`.
 
-Handler memanggil `Repo.ListChatMessages(id)` tanpa memverifikasi bahwa session milik `currentUserID(c)`. Siapa pun dengan JWT valid (user biasa) dapat membaca SELURUH isi pesan sesi milik user lain dengan menebak/menyalin UUID session. Parah dikombinasikan dengan #8 (semua guest berbagi user `guest@vero.local`): semua riwayat chat tamu bisa dibaca satu akun.
+Handler kini memverifikasi ownership sebelum membaca pesan: `FindChatSession(id)` lalu menolak (404 generik) bila `session.UserID == nil`, `*session.UserID != currentUserID(c)`, atau session expired. User biasa tidak bisa lagi membaca sesi milik user lain dengan menebak UUID. Catatan: guest session (`UserID=NULL`) tidak bisa diakses lewat endpoint ini sama sekali — history guest hanya lewat `GET /chat/history` berbasis cookie.
 
-**Perbaikan:** tambah filter ownership (`FindChatSession(id)` → cocokkan `UserID`, atau query messages join session dengan `user_id = ?`), staff boleh akses semua.
+**Catatan lanjutan:** endpoint ini tidak mengizinkan staff mengakses sesi user lain (belum ada kebutuhan). Bila nanti dibutuhkan, tambahkan bypass `isStaff(c)`.
 
 ### SEC-12. 🔴 TINGGI — Replay Webhook Pembayaran (Tanpa Timestamp/Nonce)
 
@@ -226,28 +226,21 @@ Origins dibaca dari env `CORS_ALLOWED_ORIGINS` (CSV), fallback ke localhost dev.
 
 ### 0. Guest Chat Session Hardening (IMPLEMENTED)
 
-Guest ChatSession kini anonymous (`user_id=NULL`) dan diikat ke HttpOnly cookie `vero_chat_session`, bukan shared `guest@vero.local`. Cookie memakai `SameSite=Lax` default yang dapat dikonfigurasi (`GUEST_COOKIE_SAME_SITE`) untuk kompatibilitas roadmap OAuth, Secure di production, dan sliding TTL default 7 hari. `GET /chat/history` tidak menerima atau mengembalikan session identifier. Cleanup MVP berjalan tiap jam dan menghapus session expired beserta child chat records.
+Guest ChatSession kini anonymous (`user_id=NULL`) dan diikat ke HttpOnly cookie `vero_chat_session`, bukan shared `guest@vero.local`. Cookie memakai `SameSite=Lax` default yang dapat dikonfigurasi (`GUEST_COOKIE_SAME_SITE`) untuk kompatibilitas roadmap OAuth, Secure di production, dan sliding TTL default 7 hari. `GET /chat/history` tidak menerima atau mengembalikan session identifier. Cleanup MVP berjalan tiap jam dan menghapus session expired (catatan: child chat records TIDAK ikut terhapus — lihat #19).
 
 Booking guest masih memakai legacy `GuestUser()` hanya untuk memenuhi kontrak `bookings.user_id` yang saat ini `NOT NULL`; ini tidak lagi dipakai sebagai ownership ChatSession. Saat login guest di masa depan, migrasi session cukup mengubah `chat_sessions.user_id` ke user baru.
 
-### 1. Sebagian MCP Tools Masih Mock (Bukan Integrasi Nyata)
+### 1. MCP Tools Legacy Sudah Di-unify ke `search_trips` (Status Terkini 25 Jul 2026)
 
-**Lokasi:** `backend/internal/services/mcp_service.go` → `MCPService.mock()`
+**Lokasi:** `backend/internal/services/mcp_service.go` → `MCPService.Execute()` + `mock()`
 
-Sebagian tool MCP masih mengembalikan data dummy hardcoded, bukan hasil pencarian/komputasi nyata:
+Tool rekomendasi legacy (`search_destination`, `search_hotels`, `calculate_budget`, `generate_itinerary`) sudah **dinonaktifkan dari katalog OpenAI** dan tidak lagi mengembalikan data dummy statis. `MCPService.Execute()` memetakan nama-nama itu ke `executeSearchTrips()` (scoring katalog published nyata dari DB) untuk kompatibilitas bila LLM lama tetap memanggilnya. Fungsi `mock()` kini hanya menangani `send_whatsapp` (juga disabled) dan mengembalikan `unknown tool` untuk sisanya.
 
-- `search_destination` → selalu `["Tokyo", "Kyoto", "Osaka", "Bali"]`
-- `search_hotels` → selalu `["Aman Kyoto", "Hoshinoya Tokyo", "Bali Ocean Villa"]`
-- `calculate_budget` → selalu `5400 USD`
-- `generate_itinerary` → 3 hari statis
+Tool yang nyata saat ini: `search_trips` (scoring katalog DB), `select_package`, `collect_order_detail`, `create_booking` (via `BookingService.Create()`), `create_order` (alias `create_booking`).
 
-Tool yang sudah nyata:
-- `create_booking` → memanggil `BookingService.Create()` dan menyimpan booking/order ke DB.
-- `update_order_draft` → lightweight success response untuk validasi tool call UI/draft.
+**Dampak:** Tidak ada lagi dummy Tokyo/Kyoto/Bali statis di workflow chat. Rekomendasi paket sepenuhnya berasal dari katalog DB published.
 
-**Dampak:** Workflow rekomendasi masih terlihat "pintar" tapi konteks search/budget/itinerary tool tidak mencerminkan input user. Yang benar-benar dinamis adalah respons LLM akhir (`generateWithToolLoop`), pemilihan paket dari katalog DB (`selectRecommendedPackages`), dan order creation via `create_booking`.
-
-**Yang perlu dilakukan:** Ganti `mock()` dengan implementasi nyata. Pertahankan signature `Execute()` agar logging/retry tetap jalan.
+**Yang perlu dilakukan (opsional):** hapus cabang legacy + `mock()` sepenuhnya bila yakin tidak ada LLM client lama yang masih memanggil nama tool lama.
 
 ---
 
@@ -330,13 +323,13 @@ Backend punya endpoint `POST /api/v1/bookings`, `POST /api/v1/payments/create`, 
 
 ---
 
-### 8. Guest Chat: Satu User "Guest Traveler" Dibagi Semua Tamu
+### 8. Guest Chat: Legacy User "Guest Traveler" Hanya untuk Booking (RESOLVED untuk Chat)
 
 **Lokasi:** `backend/internal/services/auth_service.go` → `AuthService.GuestUser()`
 
-`GuestUser()` memakai `FirstOrCreateUser` dengan email tetap `guest@vero.local`. **Semua tamu berbagi satu record user**. ChatSession dibedakan per session_id, tapi semua dimiliki user guest yang sama.
+Sejak guest session hardening (lihat #0), `ChatSession` tamu ber-`UserID=NULL` (anonymous) dan diikat cookie HttpOnly `vero_chat_session` — tamu **tidak lagi berbagi** satu user untuk chat. Masalah lama "`GET /chat/sessions` mengembalikan sesi semua tamu" sudah tidak relevan karena sesi guest tidak punya `user_id` dan endpoint itu hanya men-list sesi user authenticated.
 
-**Dampak:** `GET /api/v1/chat/sessions` untuk guest akan mengembalikan sesi semua tamu bila dipakai. Privasi antar-tamu belum ada.
+Sisa penggunaan: `GuestUser()` (`guest@vero.local`) masih dipakai **hanya** untuk memenuhi kontrak `bookings.user_id NOT NULL` saat order manual dibuat (`GuestCreateOrder` + tool `create_booking`). Semua order tamu tetap tercatat di bawah satu user — ini berdampak ke administrasi order, bukan privasi chat. Pertimbangan lanjutan: jadikan `bookings.user_id` nullable atau buat user booking per-kontak bila perlu isolasi order antar-tamu.
 
 ---
 
@@ -429,6 +422,16 @@ Job `CleanupExpiredChatSessions` dipicu via `time.Ticker` internal di `main.go`.
 **Dampak:** Beban DB ganda dan potensi konflik transaksi.
 **Rekomendasi:** Matikan ticker internal di mode prod, delegasikan eksekusi `CleanupExpiredChatSessions` ke Kubernetes CronJob atau scheduler eksternal lain.
 
+### 19. Cleanup Session Meninggalkan Child Records Orphan (ditemukan 25 Jul 2026)
+
+**Lokasi:** `backend/internal/repositories/repositories.go` → `DeleteExpiredChatSessions()`.
+
+Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena `BaseModel.DeletedAt`). Child records `ChatMessage`, `ToolCall`, dan `AILog` milik session tersebut **tidak ikut dihapus** — menjadi orphan permanen di DB (soft-deleted session tidak pernah diquery lagi, tapi tabel anak terus tumbuh). Dokumentasi lama (`database.md`, bagian #0 di atas) mengklaim cleanup menghapus child dalam transaksi — klaim itu TIDAK sesuai implementasi.
+
+**Dampak:** `chat_messages`, `tool_calls`, `ai_logs` tumbuh tak terbatas dari sesi tamu expired; boros storage dan memperlambat query berindeks `session_id` seiring waktu.
+
+**Perbaikan yang disarankan:** dalam satu transaksi, ambil ID session expired, lalu `Unscoped().Delete` child (`ChatMessage`/`ToolCall`/`AILog` dengan `session_id IN (...)`) sebelum delete parent — atau pakai hard delete berkala. Catatan: `AILog.SessionID` nullable, jadi filter harus `session_id IN` bukan join.
+
 ---
 
 ## Ringkasan Prioritas
@@ -437,14 +440,13 @@ Job `CleanupExpiredChatSessions` dipicu via `time.Ticker` internal di `main.go`.
 
 | Prioritas | Item | Alasan |
 |---|---|---|
-| 🔴 **Tinggi** | SEC-10 IDOR chat messages | Semua chat tamu/user bisa dibaca lintas akun |
 | 🔴 **Tinggi** | SEC-12 Replay webhook | Wajib beres sebelum `PAYMENTS_ENABLED=true` |
 | 🟠 **Tinggi** | #3 Test auth/payment/AI | Tidak ada safety net untuk kode sensitif (kini juga untuk mengunci SEC-1..SEC-4) |
 | 🟠 **Tinggi** | #7 Event bus in-memory | SSE realtime putus di arsitektur load balancer; ganti ke Redis Pub/Sub |
 | 🟡 Sedang | #4 Re-enable payment UI saat siap | Alur revenue/payment belum jalan dari UI (ikuti kontrak baru pasca SEC-3 dan set `PAYMENTS_ENABLED=true`) |
 | 🟡 Sedang | #8 Isolasi guest user | Privasi antar-tamu |
 | 🟡 Sedang | #16 Metrik Observability | Tambah metrik Prometheus untuk production visibilitas |
-| 🟡 Sedang | #1 MCP Tools masih mock | Ubah integrasi tool dari data dummy ke kueri nyata |
+| 🟡 Sedang | #19 Cleanup orphan child records | `chat_messages`/`tool_calls`/`ai_logs` tumbuh dari sesi expired |
 | Rendah | #13 Uang float64 | Presisi (makin relevan setelah harga server-side SEC-3) |
 | Rendah | #10 LLM summarization memory | Masih truncation string (termasuk risiko patah byte UTF-8 dari SEC-21) |
 | Rendah | #17 Duplikasi frontend shared | Ekstrak tipe dan utils ke shared package |
@@ -472,6 +474,7 @@ Job `CleanupExpiredChatSessions` dipicu via `time.Ticker` internal di `main.go`.
 | SEC-18 SSE broadcast data sensitif | ✅ `/events/stream` dibatasi staff + payload event disanitasi (tanpa prompt/PII/amount) |
 | SEC-19 Token backoffice + BroadcastChannel | ✅ Validasi pesan channel + CSP/security headers di kedua `next.config.mjs` |
 | SEC-20 Docker/deploy hardening | ✅ Runtime non-root, no host network, uploads volume/gitignore, env placeholder guard |
+| SEC-10 IDOR chat messages | ✅ `ChatMessages()` cek ownership session + tolak guest/expired (verifikasi 25 Jul 2026) |
 | #11 Pecah services.go | ✅ Dipecah per-domain (satu package) |
 | #12 Duplikasi prompt LLM | ✅ Urutan pesan dirapikan + workflow diringkas |
 | #14 Error HTML Saat JSON | ✅ Cek `Content-Type` + try-catch di `api.ts` |

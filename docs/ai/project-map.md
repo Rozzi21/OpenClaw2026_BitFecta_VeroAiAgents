@@ -98,14 +98,15 @@ VeroAiTravelAgents/
 3. **DI manual**: semua service dirakit di `services.New()`, handler di `handlers.New()`.
 4. **Event-driven SSE**: `events.Bus` in-memory mem-publish event, di-stream lewat `/api/v1/events/stream`.
 5. **JWT dua audience**: access (15m) vs refresh (720h), refresh disimpan sebagai session DB yang bisa di-revoke + dirotasi.
-6. **Guest chat**: `POST /api/v1/chat` tidak butuh login (auto-buat user "Guest Traveler").
-7. **AI tools masih mock**: tool MCP mengembalikan data dummy; integrasi LLM nyata sudah ada dengan fallback lokal.
+6. **Guest chat**: `POST /api/v1/chat` tidak butuh login (session anonymous via cookie).
+7. **AI workflow tool-driven**: LLM memilih tool aktif (`search_trips`, `select_package`, `collect_order_detail`, `create_booking`) via function calling; tool rekomendasi legacy (`search_destination`, dll) dinonaktifkan dan dipetakan ke `search_trips`. Integrasi LLM nyata dengan fallback lokal.
 8. **`create_payment` sengaja dinonaktifkan** di workflow chat (lihat `mcp/tools.go` `Enabled: false`).
+9. **Guest chat anonymous**: `ChatSession` ber-`UserID=NULL`, diikat cookie HttpOnly `vero_chat_session` (sliding 7 hari); bukan lagi user bersama `guest@vero.local` (user itu hanya dipakai untuk `bookings.user_id`).
 
 ## Fakta Penting (Status Saat Ini)
 
 - **Belum ada automated test** di seluruh repo.
-- **Tool MCP masih simulasi/mock** (`mcp_service.go` method `mock`).
+- **Tool MCP legacy masih simulasi/mock** (`mcp_service.go` method `mock` — hanya `send_whatsapp` + fallback unknown; tool rekomendasi lama di-unify ke `search_trips`).
 - **Frontend customer**: hanya 2 endpoint aktif (chat + detail paket), tanpa auth.
 - **Backoffice**: auth + CRUD paket + upload media aktif; dashboard/orders/settings masih placeholder.
 - **Dependencies frontend**: kedua app Next.js memakai `lucide-react` ^1.18; `framer-motion` sudah dihapus (tidak pernah dipakai). Animasi chat = client-side murni.

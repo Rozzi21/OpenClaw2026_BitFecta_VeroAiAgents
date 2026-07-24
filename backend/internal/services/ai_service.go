@@ -435,4 +435,3 @@ func (s *AIService) refreshMemorySummary(sessionID uuid.UUID) error {
 	session.MemorySummary = summary
 	return s.repo.UpdateChatSession(&session)
 }
-
