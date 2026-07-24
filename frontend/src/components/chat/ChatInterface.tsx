@@ -34,7 +34,6 @@ type ChatMessage = {
 
 export default function ChatInterface() {
   const [prompt, setPrompt] = useState("");
-  const [sessionID, setSessionID] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
