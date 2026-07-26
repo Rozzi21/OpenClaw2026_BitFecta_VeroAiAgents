@@ -10,6 +10,69 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 ---
 
+## A.9 Temuan Audit AI Workflow (26 Jul 2026)
+
+Audit end-to-end terhadap 15 aspek AI workflow: tool calling, MCP, prompt/tool injection, hallucination protection, memory, recommendation/booking flow, context window, token usage, retry logic, infinite loop, invalid tool call, session restore. Sumber: `ai_service.go`, `mcp_service.go`, `mcp/tools.go`, `ai_client.go`, `handlers.go`.
+
+**Yang sudah baik (jangan diubah):**
+- **Infinite loop terkunci**: `MaxToolCallRounds=5` di `ai_client.go`; loop tool di-break paksa setelah 5 round dan dipaksa final text. Tool loop tidak bisa mengulang tanpa batas.
+- **Tool ilegal tidak bisa jalan**: LLM hanya melihat `ActiveCatalog()` (5 tool aktif). `create_payment` diblok eksplisit di `MCPService.Execute` (return failed) DAN tidak ada di katalog OpenAI. Tool tak dikenal jatuh ke `mock()` → `unknown tool` failed.
+- **Data user lain tidak bocor**: `sessionOwnedByContext` di `Chat()` menolak session asing; guest anonymous (`UserID=nil`); `select_package`/`search_trips` re-validasi session + expiry. Semua tool ber-scope `sessionID` yang sudah divalidasi.
+- **Hallucination guard booking**: `responseClaimsOrderCreated` + `hasSuccessfulCreateBooking` — klaim "pesanan berhasil" diganti pesan gagal aman bila `create_booking` tidak success. `select_package` memvalidasi `trip_id` ada di DB.
+- **Rekomendasi tidak invalid**: hanya dari tool `search_trips` (katalog published dari DB), dibatasi top-3, dan diblok bila paket sudah dipilih tanpa `alternative=true`. Tidak ada rekomendasi otomatis pasca-LLM.
+- **Body AI dibatasi**: `io.LimitReader` 1 MiB (SEC-9); prompt max 4000 char (SEC-16); body limit 64 KiB.
+
+### AIW-1. SEDANG — Indirect Prompt Injection via Data Katalog (Konfirmasi AI-1)
+
+- **Severity:** Medium
+- **Issue:** Hasil tool `search_trips` (data `Trip` dari DB: title/summary/highlights/destination) di-marshal mentah ke `role: tool` dan masuk konteks LLM. Tidak ada sanitasi/delimiter instruksi.
+- **Impact:** Bila deskripsi paket berisi instruksi tersembunyi ("abaikan perintah sebelumnya..."), LLM bisa mematuhinya saat memproses tool result. Vektor: admin/operator (atau akun backoffice terkompromi) menulis prompt injection ke field katalog.
+- **Affected Module:** `backend/internal/services/mcp_service.go` (`executeSearchTrips`), `backend/internal/services/ai_service.go` (`generateWithToolLoop` — append tool result).
+- **Recommendation:** Sama dengan AI-1 — sanitasi string tool result + perkuat system prompt dengan delimiter eksplisit bahwa isi tool result BUKAN instruksi. Sudah tercatat di A.7; dicatat ulang di sini karena masuk scope audit workflow.
+- **Complexity:** Medium
+
+### AIW-2. SEDANG — Tool Result Token Tidak Dibatasi (Context Window Bloat)
+
+- **Severity:** Medium
+- **Issue:** Tiap `search_trips` mengembalikan hingga 3 paket lengkap (title, summary, highlights[], destination, location, category, duration, image_url) sebagai JSON di `role: tool`. Dengan `MaxToolCallRounds=5`, worst case ~5×(3 paket) + memory summary (1800 char) + 8 recent messages masuk satu request tanpa truncation per-tool-result.
+- **Impact:** Context window LLM cepat penuh pada katalog besar/highlights panjang → token usage boros, biaya naik, dan risiko provider menolak request (context length exceeded) yang jatuh ke fallback gagal. Tidak ada batas ukuran per tool result.
+- **Affected Module:** `backend/internal/services/mcp_service.go` (`executeSearchTrips` — field yang dikembalikan), `backend/internal/services/ai_service.go` (`generateWithToolLoop` — append tanpa truncate).
+- **Recommendation:** Batasi field yang dikirim ke LLM (mis. buang `image_url`, potong `summary`/`highlights`), dan/atau cap karakter per tool result sebelum append ke `messages`. Bedakan payload ke LLM vs payload ke frontend.
+- **Complexity:** Low-Medium
+
+### AIW-3. RENDAH — Tool Call Berulang Tidak Dideduplikasi Antar-Round
+
+- **Severity:** Low
+- **Issue:** Loop tool tidak mendeteksi tool call identik berulang (nama + argumen sama) di round berikutnya. LLM bisa memanggil `search_trips(query=X)` di round 1 lalu mengulang persis di round 2 — tetap dieksekusi ulang (query DB + append konteks) sampai `MaxToolCallRounds`.
+- **Impact:** Pemborosan query DB + token + round loop untuk hasil yang sama. Bukan infinite loop (masih dibatasi 5), tapi tidak efisien.
+- **Affected Module:** `backend/internal/services/ai_service.go` (`generateWithToolLoop`).
+- **Recommendation:** Cache/dedup key `nama+args` per session-loop; bila identik dengan round sebelumnya, kembalikan tool result cache atau tolak dengan pesan "already called". Bisa juga tambah instruksi system prompt agar tidak mengulang tool yang sama.
+- **Complexity:** Low
+
+### AIW-4. RENDAH — Memory Summary Bisa Masuk Konteks Dua Kali
+
+- **Severity:** Low
+- **Issue:** `buildMessages` memasukkan `memory_summary` (ringkasan dari N pesan terakhir via `TailChatMessages`) DAN `ListRecentChatMessages` (8 pesan terakhir). Karena keduanya bersumber dari pesan yang sama dan summary diambil dari tail, ada overlap konten: 8 pesan terbaru muncul di summary (sebagai teks) DAN sebagai pesan utuh.
+- **Impact:** Duplikasi token untuk konten yang sama; mempercepat context window penuh. Tidak menyebabkan salah jawab, hanya boros.
+- **Affected Module:** `backend/internal/services/ai_service.go` (`buildMessages`, `refreshMemorySummary`).
+- **Recommendation:** Bila `recent messages` sudah memuat N pesan terbaru, summary idealnya mencakup pesan LEBIH LAMA dari window recent (bukan termasuk yang sudah tampil). Alternatif: skip summary bila jumlah pesan < threshold tertentu agar tidak redundan.
+- **Complexity:** Low
+
+### AIW-5. RENDAH — `create_order` Alias Aktif Tanpa Beda Perilaku
+
+- **Severity:** Low
+- **Issue:** `create_order` diekspos ke LLM sebagai tool aktif terpisah padahal hanya alias `create_booking`. LLM melihat dua tool dengan fungsi sama → bisa bingung memilih, dan `requiredInputs` keduanya identik.
+- **Impact:** Menambah permukaan tool yang tidak perlu; LLM bisa memanggil `create_order` padahal dokumentasi flow menyebut `create_booking`. Tidak ada risiko keamanan (sama-sama lewat `executeCreateBooking` + guard).
+- **Affected Module:** `backend/internal/mcp/tools.go` (`Catalog`, `requiredInputs`).
+- **Recommendation:** Pertimbangkan nonaktifkan `create_order` dari katalog OpenAI (tetap terima di `Execute` untuk kompatibilitas) agar LLM hanya melihat satu tool booking. Kurangi ambiguitas pilihan tool.
+- **Complexity:** Low
+
+### Catatan Session Restore (Terverifikasi Aman)
+
+Session restore guest memakai cookie HttpOnly `vero_chat_session` sebagai satu-satunya bukti ownership; `resolveGuestSession` memvalidasi session ada, `UserID=nil`, dan belum expired sebelum dipakai; `Chat()` kembali memvalidasi `sessionOwnedByContext` + expiry. Cookie invalid → dibuat session baru (bukan error). Tidak ada jalur restore ke session user lain. `GET /chat/history` tidak menerima session ID dari request. Aman.
+
+---
+
 ## A.8 Temuan Audit Arsitektur Backend (26 Jul 2026)
 
 Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/service pattern, handler, DTO, entity, domain boundary, event bus, DI, coupling, cohesion, modularity, maintainability, scalability). Metode: verifikasi dependency graph via `go list -deps`, baca wiring (`main.go`, `services.go`, `routes.go`), sampling handler/service/repo.
@@ -684,8 +747,13 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 |---|---|---|
 | 🟠 **Tinggi** | #7 Event bus in-memory | SSE realtime putus di arsitektur load balancer; ganti ke Redis Pub/Sub |
 | 🟡 Sedang | ARCH-1 Handler akses repo langsung | Logika guest session tersebar di handler; pindah ke service (bukan redesign) |
+| 🟡 Sedang | AIW-1 Indirect prompt injection katalog | Konfirmasi AI-1; sanitasi tool result + delimiter system prompt |
+| 🟡 Sedang | AIW-2 Tool result token tak dibatasi | Context window bloat; cap field/karakter payload ke LLM |
 | 🟡 Sedang | #4 Re-enable payment UI saat siap | Alur revenue/payment belum jalan dari UI (ikuti kontrak baru pasca SEC-3 dan set `PAYMENTS_ENABLED=true`) |
 | 🟡 Sedang | #16 Metrik Observability | Tambah metrik Prometheus untuk production visibilitas |
+| Rendah | AIW-3 Tool call berulang tak didedup | Dedup `nama+args` antar-round agar hemat query+token |
+| Rendah | AIW-4 Memory summary overlap recent | Summary mencakup pesan di luar window recent |
+| Rendah | AIW-5 `create_order` alias aktif | Nonaktifkan dari katalog OpenAI, sisakan `create_booking` |
 | Rendah | ARCH-2 Domain kosong + entity anemik | Tunda sampai invariant booking/payment bertambah; jangan DDD prematur |
 | Rendah | ARCH-3 Batasan single-instance | Disengaja & terdokumentasi; tindak saat horizontal scaling |
 | Rendah | ARCH-4 Repo impor dto | Tunda sampai repo dipakai caller non-HTTP |
