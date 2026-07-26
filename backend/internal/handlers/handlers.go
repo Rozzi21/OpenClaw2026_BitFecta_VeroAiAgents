@@ -409,7 +409,7 @@ func (h *Handler) UpdateBooking(c *gin.Context) {
 	}
 	booking, err := h.Services.Bookings.UpdateStatus(id, currentUserID(c), isStaff(c), req)
 	if err != nil {
-		if err.Error() == "Booking not found" {
+		if errors.Is(err, services.ErrBookingNotFound) {
 			utils.NotFound(c, "Booking not found")
 			return
 		}
@@ -448,6 +448,15 @@ func (h *Handler) PaymentWebhook(c *gin.Context) {
 	if req.Signature == "" {
 		req.Signature = c.GetHeader("X-Doku-Signature")
 	}
+	if req.Timestamp == "" {
+		req.Timestamp = c.GetHeader("X-Doku-Timestamp")
+	}
+	
+	rawBody, err := c.GetRawData()
+	if err == nil {
+		req.RawBody = rawBody
+	}
+
 	payment, err := h.Services.Payments.Webhook(req)
 	if err != nil {
 		// SEC-15: do not echo internal/payment errors to an unauthenticated

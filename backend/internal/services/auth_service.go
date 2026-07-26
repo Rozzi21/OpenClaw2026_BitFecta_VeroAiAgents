@@ -227,11 +227,14 @@ func (s *AuthService) Me(userID uuid.UUID) (models.User, error) {
 	return s.repo.FindUserByID(userID)
 }
 
+// GuestUser now generates an isolated user per guest booking (Fix for #8).
+// We no longer share the `guest@vero.local` dummy user across all guest orders.
 func (s *AuthService) GuestUser() (models.User, error) {
+	guestID := uuid.NewString()
 	hash, _ := bcrypt.GenerateFromPassword([]byte(uuid.NewString()), bcrypt.DefaultCost)
 	user := models.User{
 		Name:     "Guest Traveler",
-		Email:    "guest@vero.local",
+		Email:    "guest-" + guestID[:8] + "@vero.local",
 		Password: string(hash),
 		Role:     models.RoleUser,
 	}

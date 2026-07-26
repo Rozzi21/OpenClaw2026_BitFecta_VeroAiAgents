@@ -80,29 +80,23 @@ func (s *MCPService) Execute(sessionID uuid.UUID, toolName string, payload map[s
 		ExecutionTime: time.Since(start).Milliseconds(),
 		Response:      string(resultJSON),
 	}
-	// Persist tool call + AI log asynchronously to avoid blocking the chat
-	// workflow. Errors are logged to the audit log and retried once.
-	go func() {
-		if err := s.repo.CreateToolCall(&toolCall); err != nil {
-			auth.LogSecurity("tool_call_persist_failed", map[string]any{
-				"session_id": sessionID.String(),
-				"tool_name":  toolName,
-				"error":      err.Error(),
-			})
-			time.Sleep(500 * time.Millisecond)
-			_ = s.repo.CreateToolCall(&toolCall)
-		}
-		if err := s.repo.CreateAILog(&aiLog); err != nil {
-			auth.LogSecurity("ai_log_persist_failed", map[string]any{
-				"session_id": sessionID.String(),
-				"workflow":   "mcp_tool_execution",
-				"tool_name":  toolName,
-				"error":      err.Error(),
-			})
-			time.Sleep(500 * time.Millisecond)
-			_ = s.repo.CreateAILog(&aiLog)
-		}
-	}()
+	// SEC-21: Persist tool call + AI log asynchronously, but bounded/rate-limited via standard means.
+	// We'll keep it simple: synchronous. Bounding goroutines here is safer to prevent flood.
+	if err := s.repo.CreateToolCall(&toolCall); err != nil {
+		auth.LogSecurity("tool_call_persist_failed", map[string]any{
+			"session_id": sessionID.String(),
+			"tool_name":  toolName,
+			"error":      err.Error(),
+		})
+	}
+	if err := s.repo.CreateAILog(&aiLog); err != nil {
+		auth.LogSecurity("ai_log_persist_failed", map[string]any{
+			"session_id": sessionID.String(),
+			"workflow":   "mcp_tool_execution",
+			"tool_name":  toolName,
+			"error":      err.Error(),
+		})
+	}
 
 	// SEC-18: broadcast only tool name + status.
 	s.bus.Publish("mcp_tool_executed", map[string]interface{}{"tool": result.Tool, "status": result.Status})

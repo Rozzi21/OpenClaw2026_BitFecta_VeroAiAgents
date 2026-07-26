@@ -39,7 +39,9 @@ func (s *TripService) Create(req dto.TripRequest) (models.Trip, error) {
 			trip, _ = s.repo.FindTrip(trip.ID)
 		}
 	}
-	s.bus.Publish("trip_created", trip)
+	if err == nil {
+		s.bus.Publish("trip_created", trip)
+	}
 	return trip, err
 }
 func (s *TripService) Update(id uuid.UUID, req dto.TripRequest) (models.Trip, error) {

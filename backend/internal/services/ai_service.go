@@ -429,9 +429,14 @@ func (s *AIService) refreshMemorySummary(sessionID uuid.UUID) error {
 		parts = append(parts, message.Role+": "+message.Content)
 	}
 	summary := strings.Join(parts, "\n")
-	if len(summary) > s.cfg.AIMemoryMaxChars {
-		summary = summary[len(summary)-s.cfg.AIMemoryMaxChars:]
+	
+	// SEC-21: convert to rune slice before slicing to avoid breaking multi-byte UTF-8 chars
+	runes := []rune(summary)
+	if len(runes) > s.cfg.AIMemoryMaxChars {
+		runes = runes[len(runes)-s.cfg.AIMemoryMaxChars:]
+		summary = string(runes)
 	}
+	
 	session.MemorySummary = summary
 	return s.repo.UpdateChatSession(&session)
 }

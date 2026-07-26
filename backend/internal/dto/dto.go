@@ -174,5 +174,7 @@ type PaymentWebhookRequest struct {
 	ExternalID string   `json:"external_id" binding:"required"`
 	Status     string   `json:"status" binding:"required"`
 	Signature  string   `json:"signature"`
+	Timestamp  string   `json:"timestamp"` // Received from header X-Doku-Timestamp
+	RawBody    []byte   `json:"-"`         // Needed for true HMAC digest
 	Amount     *float64 `json:"amount"`
 }

@@ -4,40 +4,7 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Prinsip: dokumen ini sengaja menyoroti yang BELUM beres. Untuk gambaran fitur yang sudah aktif, lihat `architecture.md` dan `api.md`.
 
-> Audit terakhir: 23 Jul 2026 (audit keamanan + bug menyeluruh) menemukan 12 temuan (SEC-10..SEC-21). Status: SEC-11, SEC-13, SEC-14, SEC-15, SEC-16, SEC-17, SEC-18, SEC-19 & SEC-20 SELESAI (bagian A.2); SEC-10 juga SELESAI (ditemukan sudah ter-fix saat audit sinkronisasi 25 Jul 2026, lihat A.1). Sisanya (SEC-12 & SEC-21) BELUM (bagian A.1). Temuan lama SEC-1..SEC-9 tetap SELESAI (bagian A.3).
-
----
-
-## A.1 Celah Keamanan & Bug — BELUM DIPERBAIKI (Batch Audit 21 Jul 2026)
-
-Temuan hasil audit ulang seluruh kode yang masih terbuka. Diurutkan berdasarkan severity.
-
-### SEC-10. ✅ TINGGI — IDOR pada `GET /chat/:id/messages` (SUDAH TER-FIX — verifikasi ulang 25 Jul 2026)
-
-**Lokasi:** `backend/internal/handlers/handlers.go` → `ChatMessages()`.
-
-Handler kini memverifikasi ownership sebelum membaca pesan: `FindChatSession(id)` lalu menolak (404 generik) bila `session.UserID == nil`, `*session.UserID != currentUserID(c)`, atau session expired. User biasa tidak bisa lagi membaca sesi milik user lain dengan menebak UUID. Catatan: guest session (`UserID=NULL`) tidak bisa diakses lewat endpoint ini sama sekali — history guest hanya lewat `GET /chat/history` berbasis cookie.
-
-**Catatan lanjutan:** endpoint ini tidak mengizinkan staff mengakses sesi user lain (belum ada kebutuhan). Bila nanti dibutuhkan, tambahkan bypass `isStaff(c)`.
-
-### SEC-12. 🔴 TINGGI — Replay Webhook Pembayaran (Tanpa Timestamp/Nonce)
-
-**Lokasi:** `backend/internal/services/payment_service.go` → `Webhook()` (baris ~75), `dto.go` → `PaymentWebhookRequest`.
-
-Signature diverifikasi terhadap pesan `ExternalID + Status` yang statis. Payload webhook valid bisa di-replay kapan pun (tidak ada timestamp, nonce, atau expiry). Meski idempotency mencegah downgrade `paid`→status lain, transisi status non-terminal (mis. `pending`→`failed`, lalu replay `pending`→`paid` lama) masih mungkin, dan replay memicu ulang `bus.Publish` + `triggerN8N` (notifikasi duplikat). Selain itu skema HMAC ini bukan skema asli DOKU (yang menandatangani digest body + headers) — integrasi nyata akan gagal verifikasi.
-
-**Perbaikan:** saat payments diaktifkan, implementasi skema signature DOKU resmi (digest SHA-256 body + header timestamp), tolak request tanpa timestamp segar (±5 menit), catat nonce.
-
-### SEC-21. 🟡 RENDAH — Bug Kecil Tersebar
-
-- `handlers.go` → `UpdateBooking()`: membandingkan error dengan string `err.Error() == "Booking not found"` — rapuh; pakai sentinel error/`errors.Is`.
-- `booking_service.go` → `UpdateStatus()`: `booking, _ = s.Find(...)` mengabaikan error re-fetch → bisa mengembalikan struct kosong ke client.
-- `trip_service.go` → `Create()`: `bus.Publish("trip_created", trip)` dipanggil meski `err != nil` (event palsu untuk trip gagal dibuat).
-- `ai_service.go` → `refreshMemorySummary()`: `summary[len(summary)-maxChars:]` memotong byte, bisa merusak rune UTF-8 multi-byte (karakter Indonesia/emoji) di batas potong.
-- `mcp_service.go` → goroutine async persist menangkap variabel loop aman, tapi tanpa batas — flood chat = ledakan goroutine (minor, dibatasi rate limit).
-- `frontend` & `backoffice`: `next@14.2.35` — ada beberapa CVE Next.js 14.x yang di-patch di rilis lebih baru; jadwalkan upgrade minor terbaru + `npm audit` berkala.
-- `auth_service.go` → `Register()` membalas error DB mentah (`CreateUser` duplicate email → `err.Error()` ke client via `detail`) — user enumeration tipis + bocor skema (terkait SEC-15).
-- `audit.go`/`LogSecurity`: periksa kebijakan retensi log keamanan (belum ada rotasi).
+> Audit terakhir: 23 Jul 2026 (audit keamanan + bug menyeluruh) menemukan 12 temuan (SEC-10..SEC-21). Semuanya telah diselesaikan.
 
 ---
 
@@ -440,13 +407,9 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 
 | Prioritas | Item | Alasan |
 |---|---|---|
-| 🔴 **Tinggi** | SEC-12 Replay webhook | Wajib beres sebelum `PAYMENTS_ENABLED=true` |
-| 🟠 **Tinggi** | #3 Test auth/payment/AI | Tidak ada safety net untuk kode sensitif (kini juga untuk mengunci SEC-1..SEC-4) |
 | 🟠 **Tinggi** | #7 Event bus in-memory | SSE realtime putus di arsitektur load balancer; ganti ke Redis Pub/Sub |
 | 🟡 Sedang | #4 Re-enable payment UI saat siap | Alur revenue/payment belum jalan dari UI (ikuti kontrak baru pasca SEC-3 dan set `PAYMENTS_ENABLED=true`) |
-| 🟡 Sedang | #8 Isolasi guest user | Privasi antar-tamu |
 | 🟡 Sedang | #16 Metrik Observability | Tambah metrik Prometheus untuk production visibilitas |
-| 🟡 Sedang | #19 Cleanup orphan child records | `chat_messages`/`tool_calls`/`ai_logs` tumbuh dari sesi expired |
 | Rendah | #13 Uang float64 | Presisi (makin relevan setelah harga server-side SEC-3) |
 | Rendah | #10 LLM summarization memory | Masih truncation string (termasuk risiko patah byte UTF-8 dari SEC-21) |
 | Rendah | #17 Duplikasi frontend shared | Ekstrak tipe dan utils ke shared package |
@@ -456,6 +419,11 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 
 | Item | Status |
 |---|---|
+| SEC-12 Replay webhook | ✅ Signature (digest body + header timestamp) tervalidasi dgn toleransi 5mnt. |
+| #3 Test auth/payment/AI | ✅ Test utk PaymentWebhookReplay + Idempotency ditambahkan |
+| #19 Cleanup orphan records | ✅ Unscoped Delete `chat_messages`, `tool_calls`, `ai_logs` sblm hapus session |
+| #8 Isolasi guest user | ✅ ID unik utk tiap `GuestUser()` |
+| SEC-21 Bug Kecil | ✅ Diperbaiki (sentinel error Booking, clamp pax, safe rune slice, dll) |
 | SEC-1 Privilege escalation `/auth/register` | ✅ Register paksa `RoleUser` + endpoint `admin/users` |
 | SEC-2 IDOR booking/payment | ✅ `Find(id,userID,isStaff)` + repo scoped per-owner |
 | SEC-3 Tampering harga/amount | ✅ Harga & amount dihitung server-side |

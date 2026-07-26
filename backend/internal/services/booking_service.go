@@ -12,6 +12,9 @@ import (
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/repositories"
 )
 
+// ErrBookingNotFound is a sentinel error for missing bookings.
+var ErrBookingNotFound = errors.New("booking not found")
+
 type BookingService struct {
 	repo *repositories.Repository
 	bus  *events.Bus
@@ -68,10 +71,17 @@ func (s *BookingService) List(query dto.ListQuery) ([]models.Booking, error) {
 
 // Find enforces ownership for non-staff callers (SEC-2 anti-IDOR).
 func (s *BookingService) Find(id, userID uuid.UUID, isStaff bool) (models.Booking, error) {
+	var booking models.Booking
+	var err error
 	if isStaff {
-		return s.repo.FindBooking(id)
+		booking, err = s.repo.FindBooking(id)
+	} else {
+		booking, err = s.repo.FindBookingForUser(id, userID)
 	}
-	return s.repo.FindBookingForUser(id, userID)
+	if err != nil {
+		return models.Booking{}, ErrBookingNotFound
+	}
+	return booking, nil
 }
 
 // allowedTransitions defines the valid status moves for backoffice order
@@ -114,9 +124,13 @@ func (s *BookingService) UpdateStatus(id, userID uuid.UUID, isStaff bool, req dt
 	}
 
 	// Re-fetch so the caller receives the latest persisted state with preloads.
-	booking, _ = s.Find(id, userID, isStaff)
-	s.bus.Publish("booking_updated", map[string]interface{}{"booking_id": booking.ID, "status": booking.BookingStatus})
-	return booking, nil
+	// Re-fetch so the caller receives the latest persisted state with preloads.
+	fetchedBooking, err := s.Find(id, userID, isStaff)
+	if err != nil {
+		return models.Booking{}, err
+	}
+	s.bus.Publish("booking_updated", map[string]interface{}{"booking_id": fetchedBooking.ID, "status": fetchedBooking.BookingStatus})
+	return fetchedBooking, nil
 }
 
 // tripAdultPrice/tripChildPrice resolve the effective price honoring discounts.
