@@ -10,6 +10,53 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 ## A.4 Temuan Audit Keamanan Baru (Belum Diperbaiki - 26 Jul 2026)
 
+### SEC-22. KRITIS — DOKU Webhook Signature Bypass (Body Terkonsumsi)
+
+- **Severity:** Critical
+- **Root Cause:** Pada `handlers.go` (`PaymentWebhook`), fungsi `bind(c, &req)` (`c.ShouldBindJSON`) membaca habis `c.Request.Body`. Ketika `c.GetRawData()` dipanggil setelahnya, stream body sudah di-consume sehingga mengembalikan `[]byte{}` (kosong). Akibatnya, `rawBody` yang diteruskan ke `payment_service.go` selalu string kosong. HMAC signature diverifikasi hanya menggunakan `timestamp + "|"` tanpa isi body request sebenarnya.
+- **Impact:** Attacker dapat mem-bypass autentikasi webhook. Dengan menangkap satu webhook valid dari log (signature + timestamp), attacker dapat mengirim ulang payload tersebut dengan mengubah isi body (misalnya merubah `"status": "paid"` atau memanipulasi `amount`), dan validasi signature server akan tetap `true` karena body manipulasi tersebut tidak pernah di-hash oleh server.
+- **Exploit Scenario:** 
+  1. Attacker mendapatkan satu payload webhook valid (timestamp + signature) hasil transaksi kecil.
+  2. Attacker mengirim POST ke `/api/v1/payments/webhook` menggunakan signature yang sama namun memanipulasi JSON payload menjadi instruksi untuk membayar booking ID jutaan rupiah.
+  3. Server memverifikasi body kosong dengan signature dan timestamp yang cocok, dan menyetujui transaksi tersebut.
+- **Affected Files:** 
+  - `backend/internal/handlers/handlers.go` (`PaymentWebhook`)
+  - `backend/internal/services/payment_service.go` (`verifyDokuSignature`)
+- **Recommendation:** Gunakan `c.GetRawData()` di awal handler untuk membaca body mentah, lalu lakukan `json.Unmarshal` secara manual ke dalam `req`, ATAU gunakan `c.ShouldBindBodyWith(&req, binding.JSON)` agar stream body disalin dan bisa dibaca ulang.
+- **Implementation Complexity:** Low
+- **OWASP Mapping:** API2:2023 Broken Authentication, API10:2023 Unsafe Consumption of APIs
+
+### SEC-23. TINGGI — Race Condition (TOCTOU) pada Transisi Status Booking
+
+- **Severity:** High
+- **Root Cause:** Pada `BookingService.UpdateStatus`, status dibaca dari database dan ditampung ke memori (`current := booking.BookingStatus`). Validasi `allowedTransitions` dilakukan di memori. Setelah itu, status baru disimpan dengan `s.repo.UpdateBooking(&booking)`. Tidak ada atomicity di level query (optimistic locking atau atomic update constraint) yang menjamin bahwa status di database belum berubah ketika proses update dijalankan.
+- **Impact:** Terjadinya *Time-of-Check to Time-of-Use* (TOCTOU) *race condition*. Dua instruksi bersamaan dapat menimpa data satu sama lain dan menghasilkan transisi state logistik yang dilarang.
+- **Exploit Scenario:** 
+  1. Dua administrator/request paralel mengakses status pesanan yang sama secara bersamaan (keduanya membaca status `pending`).
+  2. Request pertama memerintahkan transisi `pending` -> `processing` dan lewat validasi.
+  3. Request kedua memerintahkan `pending` -> `cancelled` dan lewat validasi.
+  4. Keduanya melakukan update ke DB yang menyebabkan status saling bertumpuk (data inkonsisten / invalid workflow).
+- **Affected Files:** 
+  - `backend/internal/services/booking_service.go` (`UpdateStatus`)
+- **Recommendation:** Lakukan atomic update berbasis kondisi pada database. Misalnya menggunakan *Optimistic Locking* dengan field `version`, atau menggunakan where clause pada `status`: `db.Model(&booking).Where("id = ? AND booking_status = ?", id, current).Update("booking_status", target)`. Pastikan mengecek nilai `RowsAffected`.
+- **Implementation Complexity:** Low
+- **OWASP Mapping:** API4:2023 Unrestricted Resource Consumption (Concurrency/Race Condition), API6:2023 Unrestricted Access to Sensitive Business Flows
+
+### SEC-24. SEDANG — Risiko Kolisi UUID dan Weak Randomness pada Guest User
+
+- **Severity:** Medium
+- **Root Cause:** Fungsi pembuatan guest user (`AuthService.GuestUser`) memotong `uuid.NewString()` menjadi 8 karakter saja: `"guest-" + guestID[:8] + "@vero.local"`. Berdasarkan *Birthday Paradox*, probabilitas kolisi pada ruang 8 karakter hex sangat tinggi (kemungkinan bertabrakan setelah sekitar ~65.000 iterasi). Selain itu, password di-generate dari `uuid.NewString()` yang secara matematis tidak terdesain sebagai *Cryptographically Secure Pseudo-Random Number Generator* (CSPRNG).
+- **Impact:** Begitu terjadi kolisi karakter `guestID`, `FirstOrCreateUser` akan mengasumsikan guest tersebut sudah ada di database. Alih-alih membuat user baru, sistem akan menetapkan booking ID ke user lama. Hal ini menghancurkan isolasi dan privasi pesanan guest.
+- **Exploit Scenario:** 
+  1. Sistem melayani ribuan guest order seiring waktu.
+  2. *Collision* terjadi di 8 karakter hex UUID. Sistem mengembalikan user_id tamu sebelumnya.
+  3. Pesanan tamu B terekam di akun tamu A, mengacaukan riwayat kepemilikan transaksi di database.
+- **Affected Files:** 
+  - `backend/internal/services/auth_service.go` (`GuestUser`)
+- **Recommendation:** Jangan memotong UUID. Gunakan `uuid.NewString()` secara utuh (36 karakter) untuk pembuatan guest email. Gunakan library `crypto/rand` untuk mengenerate string password yang keamanannya terjamin secara kriptografi.
+- **Implementation Complexity:** Low
+- **OWASP Mapping:** API2:2023 Broken Authentication, API9:2023 Improper Inventory Management (Data Integrity)
+
 ### SEC-25. TINGGI — God Object pada Handlers dan Repositories
 
 - **Severity:** High
@@ -76,58 +123,82 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 - **Recommendation:** Ekstrak logic eksekusi block tool menjadi satu helper function terpisah di dalam paket yang sama.
 - **Implementation Complexity:** Low
 
-### SEC-22. KRITIS — DOKU Webhook Signature Bypass (Body Terkonsumsi)
-
-- **Severity:** Critical
-- **Root Cause:** Pada `handlers.go` (`PaymentWebhook`), fungsi `bind(c, &req)` (`c.ShouldBindJSON`) membaca habis `c.Request.Body`. Ketika `c.GetRawData()` dipanggil setelahnya, stream body sudah di-consume sehingga mengembalikan `[]byte{}` (kosong). Akibatnya, `rawBody` yang diteruskan ke `payment_service.go` selalu string kosong. HMAC signature diverifikasi hanya menggunakan `timestamp + "|"` tanpa isi body request sebenarnya.
-- **Impact:** Attacker dapat mem-bypass autentikasi webhook. Dengan menangkap satu webhook valid dari log (signature + timestamp), attacker dapat mengirim ulang payload tersebut dengan mengubah isi body (misalnya merubah `"status": "paid"` atau memanipulasi `amount`), dan validasi signature server akan tetap `true` karena body manipulasi tersebut tidak pernah di-hash oleh server.
-- **Exploit Scenario:** 
-  1. Attacker mendapatkan satu payload webhook valid (timestamp + signature) hasil transaksi kecil.
-  2. Attacker mengirim POST ke `/api/v1/payments/webhook` menggunakan signature yang sama namun memanipulasi JSON payload menjadi instruksi untuk membayar booking ID jutaan rupiah.
-  3. Server memverifikasi body kosong dengan signature dan timestamp yang cocok, dan menyetujui transaksi tersebut.
-- **Affected Files:** 
-  - `backend/internal/handlers/handlers.go` (`PaymentWebhook`)
-  - `backend/internal/services/payment_service.go` (`verifyDokuSignature`)
-- **Recommendation:** Gunakan `c.GetRawData()` di awal handler untuk membaca body mentah, lalu lakukan `json.Unmarshal` secara manual ke dalam `req`, ATAU gunakan `c.ShouldBindBodyWith(&req, binding.JSON)` agar stream body disalin dan bisa dibaca ulang.
-- **Implementation Complexity:** Low
-- **OWASP Mapping:** API2:2023 Broken Authentication, API10:2023 Unsafe Consumption of APIs
-
-### SEC-23. TINGGI — Race Condition (TOCTOU) pada Transisi Status Booking
-
-- **Severity:** High
-- **Root Cause:** Pada `BookingService.UpdateStatus`, status dibaca dari database dan ditampung ke memori (`current := booking.BookingStatus`). Validasi `allowedTransitions` dilakukan di memori. Setelah itu, status baru disimpan dengan `s.repo.UpdateBooking(&booking)`. Tidak ada atomicity di level query (optimistic locking atau atomic update constraint) yang menjamin bahwa status di database belum berubah ketika proses update dijalankan.
-- **Impact:** Terjadinya *Time-of-Check to Time-of-Use* (TOCTOU) *race condition*. Dua instruksi bersamaan dapat menimpa data satu sama lain dan menghasilkan transisi state logistik yang dilarang.
-- **Exploit Scenario:** 
-  1. Dua administrator/request paralel mengakses status pesanan yang sama secara bersamaan (keduanya membaca status `pending`).
-  2. Request pertama memerintahkan transisi `pending` -> `processing` dan lewat validasi.
-  3. Request kedua memerintahkan `pending` -> `cancelled` dan lewat validasi.
-  4. Keduanya melakukan update ke DB yang menyebabkan status saling bertumpuk (data inkonsisten / invalid workflow).
-- **Affected Files:** 
-  - `backend/internal/services/booking_service.go` (`UpdateStatus`)
-- **Recommendation:** Lakukan atomic update berbasis kondisi pada database. Misalnya menggunakan *Optimistic Locking* dengan field `version`, atau menggunakan where clause pada `status`: `db.Model(&booking).Where("id = ? AND booking_status = ?", id, current).Update("booking_status", target)`. Pastikan mengecek nilai `RowsAffected`.
-- **Implementation Complexity:** Low
-- **OWASP Mapping:** API4:2023 Unrestricted Resource Consumption (Concurrency/Race Condition), API6:2023 Unrestricted Access to Sensitive Business Flows
-
-### SEC-24. SEDANG — Risiko Kolisi UUID dan Weak Randomness pada Guest User
+### SEC-31. SEDANG — Memory Leak pada SSE EventStream
 
 - **Severity:** Medium
-- **Root Cause:** Fungsi pembuatan guest user (`AuthService.GuestUser`) memotong `uuid.NewString()` menjadi 8 karakter saja: `"guest-" + guestID[:8] + "@vero.local"`. Berdasarkan *Birthday Paradox*, probabilitas kolisi pada ruang 8 karakter hex sangat tinggi (kemungkinan bertabrakan setelah sekitar ~65.000 iterasi). Selain itu, password di-generate dari `uuid.NewString()` yang secara matematis tidak terdesain sebagai *Cryptographically Secure Pseudo-Random Number Generator* (CSPRNG).
-- **Impact:** Begitu terjadi kolisi karakter `guestID`, `FirstOrCreateUser` akan mengasumsikan guest tersebut sudah ada di database. Alih-alih membuat user baru, sistem akan menetapkan booking ID ke user lama. Hal ini menghancurkan isolasi dan privasi pesanan guest.
-- **Exploit Scenario:** 
-  1. Sistem melayani ribuan guest order seiring waktu.
-  2. *Collision* terjadi di 8 karakter hex UUID. Sistem mengembalikan user_id tamu sebelumnya.
-  3. Pesanan tamu B terekam di akun tamu A, mengacaukan riwayat kepemilikan transaksi di database.
-- **Affected Files:** 
-  - `backend/internal/services/auth_service.go` (`GuestUser`)
-- **Recommendation:** Jangan memotong UUID. Gunakan `uuid.NewString()` secara utuh (36 karakter) untuk pembuatan guest email. Gunakan library `crypto/rand` untuk mengenerate string password yang keamanannya terjamin secara kriptografi.
+- **Root Cause:** Di `handlers.go`, handler `EventStream` menggunakan `<-time.After(25 * time.Second)` di dalam blok `select` untuk loop pengiriman *heartbeat*. Fungsi `time.After` akan mengalokasikan *timer* di bawah *hood* yang tidak akan dihapus (di *garbage collect*) sampai waktunya berakhir. Karena *select* ter-evaluasi pada setiap iterasi pengiriman SSE, ini berakibat pada akumulasi timer.
+- **Impact:** Memory *leak* yang berpotensi terus tumbuh selama koneksi SSE dibuka, terlebih dengan tingginya *traffic* atau koneksi jangka panjang.
+- **Affected Files:**
+  - `backend/internal/handlers/handlers.go` (`EventStream`)
+- **Recommendation:** Ganti `time.After` dengan inisialisasi `time.NewTicker(25 * time.Second)` di luar loop `select`, lalu dengarkan `ticker.C` di dalam `select`. Panggil `defer ticker.Stop()` di awal fungsi.
 - **Implementation Complexity:** Low
-- **OWASP Mapping:** API2:2023 Broken Authentication, API9:2023 Improper Inventory Management (Data Integrity)
+
+### SEC-32. SEDANG — Goroutine Leak pada Health Check Database
+
+- **Severity:** Medium
+- **Root Cause:** Di `database.go` pada metode `Health()`, perintah ping *database* dibungkus dengan *goroutine*: `go func() { done <- sqlDB.PingContext(ctx) }()`. Jika `ctx` mencapai waktu *timeout*, metode akan mengembalikan *error* terlebih dahulu, namun *goroutine* tersebut akan terus mem-blok operasi pengecekan sampai `PingContext` selesai merespons, mengakibatkan *resource leak*.
+- **Impact:** Jika *database* hang dan rentetan *request* `Health()` masuk, *goroutine* akan terus menumpuk (leak) hingga *database* kembali membalas ping.
+- **Affected Files:**
+  - `backend/internal/database/database.go` (`Health`)
+- **Recommendation:** Karena `PingContext` secara *native* sudah menerima parameter `context`, tidak perlu membungkusnya dengan *goroutine*. Panggil `PingContext` secara langsung untuk mencegah kebocoran resource.
+- **Implementation Complexity:** Low
+
+## A.5 Temuan Audit Database (Belum Diperbaiki - 26 Jul 2026)
+
+### DB-1. TINGGI — Kinerja Query (Full Table Scan pada Pencarian Trip)
+
+- **Severity:** High
+- **Issue:** Query performansi buruk akibat operasi `LIKE` dengan *wildcard* ganda (`%...%`) dikombinasikan dengan fungsi `LOWER()`.
+- **Impact:** Di PostgreSQL, pola query `LOWER(title) LIKE '%...'` tidak dapat menggunakan *B-Tree index*. Saat data tabel `trips` membesar, query *search* dari *frontend* dan *backoffice* akan memicu *Sequential Scan* (Full Table Scan) yang mengakibatkan pemakaian *CPU* tinggi dan latensi lambat.
+- **Affected Tables:** `trips`
+- **Affected Repository:** `ListTrips` (`backend/internal/repositories/repositories.go`)
+- **Recommendation:** Gunakan *PostgreSQL Full Text Search* (`tsvector` & `tsquery`) atau buat GIN (Generalized Inverted Index) dengan ekstensi `pg_trgm` (`CREATE INDEX idx_trip_title_trgm ON trips USING gin(LOWER(title) gin_trgm_ops);`).
+- **Implementation Complexity:** Medium
+
+### DB-2. SEDANG — Overwrite Data pada Operasi `Save` (Potensi Konflik GORM)
+
+- **Severity:** Medium
+- **Issue:** GORM `Save()` menimpa keseluruhan field tabel (semua *column*) dengan nilai *struct* yang ada di memori. 
+- **Impact:** Transaksi ganda. Bila *webhook* masuk dan *admin* memperbarui `payment_status` secara bersamaan, panggilan `r.DB.Save(payment)` di akhir *service* bisa meng-overwrite field lain (seperti status atau jumlah) yang telah berubah sejak pembacaan awal dari *database* (*Lost Update*). Ini mirip dengan kasus SEC-23 (TOCTOU).
+- **Affected Tables:** `payments`, `bookings`, `trips`
+- **Affected Repository:** `UpdatePayment`, `UpdateBooking`, `UpdateTrip` (`backend/internal/repositories/repositories.go`)
+- **Recommendation:** Hindari `.Save()`. Gunakan spesifik `.Updates(map[string]interface{}{...})` atau `.Select("field").Updates(...)` untuk hanya memperbarui nilai kolom target yang relevan dengan instruksi dari *service*.
+- **Implementation Complexity:** Low
+
+### DB-3. RENDAH — Ketiadaan Indeks pada Kolom Status Kritis
+
+- **Severity:** Low
+- **Issue:** Kolom `booking_status` dan `payment_status` pada tabel `bookings` digunakan untuk menyaring alur *logical state* pada pesanan (misal: "tampilkan semua pesanan dengan status 'pending'"). Saat ini kolom tersebut tidak memiliki *database index*.
+- **Impact:** Karena query tidak ter-indeks (misalnya saat agregasi metrik *analytics*), operasi filter *dashboard backoffice* memicu pemindaian seluruh tabel pesanan (`Seq Scan`). Ini berpotensi memperlambat pemuatan halaman admin (backoffice).
+- **Affected Tables:** `bookings`
+- **Affected Repository:** Tidak ada fungsi tertentu (berpengaruh ke semua query yang mem-filter status pesanan).
+- **Recommendation:** Tambahkan tag `gorm:"index"` pada field `BookingStatus` dan `PaymentStatus` di *struct* `Booking` (`backend/internal/models/models.go`).
+- **Implementation Complexity:** Low
 
 ---
 
 ## A.2 Celah Keamanan — SELESAI (Batch 21 Jul 2026)
 
 Temuan batch audit 21 Jul 2026 yang sudah diperbaiki pada hari yang sama dan diverifikasi `go build`/`go vet`/`gofmt`.
+
+### SEC-11. ✅ TINGGI — Validasi Pax Negatif pada Booking (FIXED 21 Jul 2026)
+
+**Lokasi:** `backend/internal/services/booking_service.go` → `Create()`, `dto.go` → `BookingRequest` + konstanta `MaxBookingPax`.
+
+Dulu `AdultPax`/`ChildPax` tanpa batas: nilai negatif menghasilkan `TotalPrice` negatif/nol dan nilai raksasa berisiko overflow. Kini dua lapis pertahanan:
+
+1. DTO binding `gte=0,lte=20` pada `AdultPax`/`ChildPax` — menolak request HTTP (`POST /bookings`, `POST /orders`) di luar rentang.
+2. Guard server-side di `BookingService.Create()`: tolak `pax < 0` atau `pax > dto.MaxBookingPax` (20). Menutup jalur non-HTTP yang bypass binding (tool MCP `create_booking` di `mcp_service.go` — cast `int(v)` tanpa clamp kini tertahan guard ini dan mengembalikan error ke tool result).
+
+Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
+
+### SEC-13. ✅ SEDANG — Endpoint Publik `POST /orders` & `/chat` Tanpa Proteksi Abuse (FIXED 21 Jul 2026)
+
+**Lokasi:** `backend/internal/middlewares/middlewares.go` → `PublicWriteRateLimit()`; `backend/internal/routes/routes.go`.
+
+Dulu `POST /orders` (publik) dan `POST /chat` hanya dilindungi `RateLimit()` global 20 req/s per-IP — cukup untuk spam ribuan booking palsu dan membakar biaya LLM. Kini keduanya dilewati middleware baru `PublicWriteRateLimit()` per-route: **5 request/menit per-IP** (`rate.Every(12*time.Second)`, burst 5), memakai `ipRateLimiter` yang sama dengan `RateLimit()`/`AuthRateLimit()`. Dikombinasikan SEC-11 (pax divalidasi), nilai order tidak bisa lagi negatif/nol. Catatan: masing-masing route punya bucket limiter sendiri (5/menit per route, bukan gabungan). CAPTCHA/Turnstile belum ada — opsional bila abuse berlanjut.
+
+Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
 
 ### SEC-14. ✅ SEDANG — Rate Limiter `sync.Map` Tumbuh Tak Terbatas (Memory DoS) (FIXED 23 Jul 2026)
 
@@ -147,17 +218,6 @@ Kini dua lapis pertahanan:
 
 Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
 
-### SEC-11. ✅ TINGGI — Validasi Pax Negatif pada Booking (FIXED 21 Jul 2026)
-
-**Lokasi:** `backend/internal/services/booking_service.go` → `Create()`, `dto.go` → `BookingRequest` + konstanta `MaxBookingPax`.
-
-Dulu `AdultPax`/`ChildPax` tanpa batas: nilai negatif menghasilkan `TotalPrice` negatif/nol dan nilai raksasa berisiko overflow. Kini dua lapis pertahanan:
-
-1. DTO binding `gte=0,lte=20` pada `AdultPax`/`ChildPax` — menolak request HTTP (`POST /bookings`, `POST /orders`) di luar rentang.
-2. Guard server-side di `BookingService.Create()`: tolak `pax < 0` atau `pax > dto.MaxBookingPax` (20). Menutup jalur non-HTTP yang bypass binding (tool MCP `create_booking` di `mcp_service.go` — cast `int(v)` tanpa clamp kini tertahan guard ini dan mengembalikan error ke tool result).
-
-Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
-
 ### SEC-15. ✅ SEDANG — Kebocoran Detail Error Internal ke Client (FIXED 21 Jul 2026)
 
 **Lokasi:** `backend/internal/utils/response.go` → `ServerError()`; `backend/internal/handlers/handlers.go`.
@@ -171,11 +231,11 @@ Dulu respons 500/400 membawa pesan error Go/GORM mentah (nama tabel, constraint,
 
 Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
 
-### SEC-13. ✅ SEDANG — Endpoint Publik `POST /orders` & `/chat` Tanpa Proteksi Abuse (FIXED 21 Jul 2026)
+### SEC-16. ✅ SEDANG — Prompt Chat Tanpa Batas Ukuran (FIXED 21 Jul 2026)
 
-**Lokasi:** `backend/internal/middlewares/middlewares.go` → `PublicWriteRateLimit()`; `backend/internal/routes/routes.go`.
+**Lokasi:** `backend/internal/dto/dto.go` → `ChatRequest`; `backend/internal/middlewares/middlewares.go` → `RequestBodyLimit()`; `backend/internal/routes/routes.go`.
 
-Dulu `POST /orders` (publik) dan `POST /chat` hanya dilindungi `RateLimit()` global 20 req/s per-IP — cukup untuk spam ribuan booking palsu dan membakar biaya LLM. Kini keduanya dilewati middleware baru `PublicWriteRateLimit()` per-route: **5 request/menit per-IP** (`rate.Every(12*time.Second)`, burst 5), memakai `ipRateLimiter` yang sama dengan `RateLimit()`/`AuthRateLimit()`. Dikombinasikan SEC-11 (pax divalidasi), nilai order tidak bisa lagi negatif/nol. Catatan: masing-masing route punya bucket limiter sendiri (5/menit per route, bukan gabungan). CAPTCHA/Turnstile belum ada — opsional bila abuse berlanjut.
+Dulu prompt chat tidak memiliki batas panjang dan request publik tidak memiliki batas body khusus. Kini `ChatRequest.Prompt` dibatasi `2..4000` karakter. Endpoint publik `POST /chat` dan `POST /orders` memakai `RequestBodyLimit(64 << 10)` (64 KiB) sebelum binding JSON; rate limit SEC-13 tetap aktif. Ini membatasi payload besar, biaya token LLM, alokasi memory, dan write workload dari request tunggal.
 
 Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
 
@@ -184,14 +244,6 @@ Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
 **Lokasi:** `backend/internal/services/ai_service.go` → `Chat()`.
 
 Dulu `session_id` dari body diterima mentah — pesan langsung ditulis ke sesi itu tanpa cek kepemilikan (lintas-sesi tamu: prompt injection + polusi memory summary). Kini `Chat()` memverifikasi dulu: `FindChatSession(*req.SessionID)` dan hanya memakai sesi itu bila `existing.UserID == userID`. Sesi asing atau tidak ditemukan **jatuh ke pembuatan sesi baru** milik caller (bukan error) — perilaku UX tidak berubah untuk alur normal, tapi injeksi lintas sesi tertutup.
-
-Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
-
-### SEC-16. ✅ SEDANG — Prompt Chat Tanpa Batas Ukuran (FIXED 21 Jul 2026)
-
-**Lokasi:** `backend/internal/dto/dto.go` → `ChatRequest`; `backend/internal/middlewares/middlewares.go` → `RequestBodyLimit()`; `backend/internal/routes/routes.go`.
-
-Dulu prompt chat tidak memiliki batas panjang dan request publik tidak memiliki batas body khusus. Kini `ChatRequest.Prompt` dibatasi `2..4000` karakter. Endpoint publik `POST /chat` dan `POST /orders` memakai `RequestBodyLimit(64 << 10)` (64 KiB) sebelum binding JSON; rate limit SEC-13 tetap aktif. Ini membatasi payload besar, biaya token LLM, alokasi memory, dan write workload dari request tunggal.
 
 Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
 
@@ -536,11 +588,6 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 
 | Item | Status |
 |---|---|
-| SEC-12 Replay webhook | ✅ Signature (digest body + header timestamp) tervalidasi dgn toleransi 5mnt. |
-| #3 Test auth/payment/AI | ✅ Test utk PaymentWebhookReplay + Idempotency ditambahkan |
-| #19 Cleanup orphan records | ✅ Unscoped Delete `chat_messages`, `tool_calls`, `ai_logs` sblm hapus session |
-| #8 Isolasi guest user | ✅ ID unik utk tiap `GuestUser()` |
-| SEC-21 Bug Kecil | ✅ Diperbaiki (sentinel error Booking, clamp pax, safe rune slice, dll) |
 | SEC-1 Privilege escalation `/auth/register` | ✅ Register paksa `RoleUser` + endpoint `admin/users` |
 | SEC-2 IDOR booking/payment | ✅ `Find(id,userID,isStaff)` + repo scoped per-owner |
 | SEC-3 Tampering harga/amount | ✅ Harga & amount dihitung server-side |
@@ -550,7 +597,9 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 | SEC-7 Rate limiter global | ✅ Per-IP + `AuthRateLimit` ketat untuk `/auth` |
 | SEC-8 CORS hardcoded | ✅ Dari env `CORS_ALLOWED_ORIGINS` |
 | SEC-9 AI body tanpa limit | ✅ `io.LimitReader` 1 MiB |
+| SEC-10 IDOR chat messages | ✅ `ChatMessages()` cek ownership session + tolak guest/expired (verifikasi 25 Jul 2026) |
 | SEC-11 Pax negatif booking | ✅ DTO `gte=0,lte=20` + guard `MaxBookingPax` di service |
+| SEC-12 Replay webhook | ✅ Signature (digest body + header timestamp) tervalidasi dgn toleransi 5mnt. |
 | SEC-13 Spam order/chat publik | ✅ `PublicWriteRateLimit` 5 req/menit per-IP untuk `/orders` + `/chat` |
 | SEC-14 Memory-bounded rate limiter | ✅ `maxRateLimiterEntries=10_000` + janitor + `TRUSTED_PROXIES` di production |
 | SEC-15 Kebocoran error internal | ✅ `ServerError` generik + log; `/health/database` & BadRequest tanpa `detail` mentah |
@@ -559,11 +608,14 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 | SEC-18 SSE broadcast data sensitif | ✅ `/events/stream` dibatasi staff + payload event disanitasi (tanpa prompt/PII/amount) |
 | SEC-19 Token backoffice + BroadcastChannel | ✅ Validasi pesan channel + CSP/security headers di kedua `next.config.mjs` |
 | SEC-20 Docker/deploy hardening | ✅ Runtime non-root, no host network, uploads volume/gitignore, env placeholder guard |
-| SEC-10 IDOR chat messages | ✅ `ChatMessages()` cek ownership session + tolak guest/expired (verifikasi 25 Jul 2026) |
+| SEC-21 Bug Kecil | ✅ Diperbaiki (sentinel error Booking, clamp pax, safe rune slice, dll) |
+| #3 Test auth/payment/AI | ✅ Test utk PaymentWebhookReplay + Idempotency ditambahkan |
+| #8 Isolasi guest user | ✅ ID unik utk tiap `GuestUser()` |
 | #11 Pecah services.go | ✅ Dipecah per-domain (satu package) |
 | #12 Duplikasi prompt LLM | ✅ Urutan pesan dirapikan + workflow diringkas |
 | #14 Error HTML Saat JSON | ✅ Cek `Content-Type` + try-catch di `api.ts` |
 | #15 Refresh Promise Timeout | ✅ AbortController 10s di `refreshAccessToken` |
+| #19 Cleanup orphan records | ✅ Unscoped Delete `chat_messages`, `tool_calls`, `ai_logs` sblm hapus session |
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.
 
