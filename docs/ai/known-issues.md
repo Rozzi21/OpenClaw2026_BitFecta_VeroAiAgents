@@ -10,6 +10,72 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 ## A.4 Temuan Audit Keamanan Baru (Belum Diperbaiki - 26 Jul 2026)
 
+### SEC-25. TINGGI — God Object pada Handlers dan Repositories
+
+- **Severity:** High
+- **Root Cause:** Seluruh domain logic di backend dicampur dalam `handlers/handlers.go` dan `repositories/repositories.go`. Hal ini melanggar Single Responsibility Principle (SRP).
+- **Impact:** Terjadi package coupling yang kuat, menimbulkan konflik merge saat tim bekerja bersama, dan membuat maintenance semakin sulit.
+- **Affected Files:**
+  - `backend/internal/handlers/handlers.go`
+  - `backend/internal/repositories/repositories.go`
+- **Recommendation:** Pecah `Handler` menjadi beberapa handler spesifik domain (misalnya `AuthHandler`, `TripHandler`). Lakukan hal yang sama pada `Repository` dengan memecahnya menjadi `UserRepository`, `TripRepository`, dsb.
+- **Implementation Complexity:** Medium
+
+### SEC-26. TINGGI — Context Propagation Hilang (Resource Leak Risk)
+
+- **Severity:** High
+- **Root Cause:** Layer Service dan Repository di backend saat ini tidak menerima `context.Context` dari request HTTP. Contohnya, pada `ai_service.go`, pemanggilan LLM sering mengandalkan `context.Background()` yang di hardcode atau tidak menyambung timeout klien.
+- **Impact:** Terjadi risiko resource leak. Jika klien memutus koneksi di tengah jalan, eksekusi seperti request LLM atau query DB akan terus berjalan di background tanpa di-cancel.
+- **Affected Files:**
+  - Semua file di `handlers/`
+  - Semua file di `services/`
+  - Semua file di `repositories/`
+- **Recommendation:** Tambahkan parameter `ctx context.Context` pada seluruh fungsi di layer Service dan Repository. Pass nilai `c.Request.Context()` dari handler Gin ke layer di bawahnya.
+- **Implementation Complexity:** High
+
+### SEC-27. SEDANG — Pelanggaran Dependency Inversion (Tight Coupling)
+
+- **Severity:** Medium
+- **Root Cause:** Layer Service mengandalkan concrete struct pointer `*repositories.Repository` untuk dependensinya. Selain itu, antar service juga saling coupled, misalnya `MCPService` menggunakan `*BookingService`.
+- **Impact:** Sulit menulis unit test karena tidak mungkin mem-mock DB tanpa alat eksternal atau patch monkey patching. Ini merusak lapisan arsitektur bersih.
+- **Affected Files:**
+  - Semua file di `services/`
+  - Semua file di `repositories/`
+- **Recommendation:** Buat interface per-domain untuk layer bawah dan oper (inject) instance implementasi interface tersebut melalui constructor tiap service, sehingga mempermudah mocking pada saat testing.
+- **Implementation Complexity:** High
+
+### SEC-28. SEDANG — Kurangnya Sentinel Errors (String Matching untuk Cek Error)
+
+- **Severity:** Medium
+- **Root Cause:** Sistem memeriksa jenis error menggunakan pencocokan teks (`string matching`). Contoh: `handlers.go` mengecek error dari DB/Service dengan membandingkan nilai string `err.Error() == "chat session expired"`.
+- **Impact:** Kode menjadi rapuh (brittle) dan berutang budi secara teknis (technical debt). Jika ada perubahan minor pada teks pesan error, flow logika pengecekan dapat terputus.
+- **Affected Files:**
+  - `backend/internal/handlers/handlers.go`
+  - `backend/internal/services/ai_service.go`
+- **Recommendation:** Gunakan Sentinel Errors. Buat variabel global konstan error (misal `var ErrSessionExpired = errors.New("...")`) pada masing-masing paket. Saat menangani error, gunakan `errors.Is(err, pkg.ErrSessionExpired)`.
+- **Implementation Complexity:** Low
+
+### SEC-29. SEDANG — Hardcoded Magic Strings
+
+- **Severity:** Medium
+- **Root Cause:** Tedapat pemeriksaan status atau respon yang mengandalkan teks yang kaku. Contoh: fungsi `responseClaimsOrderCreated` melakukan pencarian secara manual terhadap puluhan kata atau frasa dalam Bahasa Indonesia (salah ketik/typo dsb). Begitu pula dengan status bayar pada `payment_service.go`.
+- **Impact:** Logika pemeriksaan sangat kaku dan bisa rusak apabila terjadi pergeseran sedikit gaya bahasa LLM.
+- **Affected Files:**
+  - `backend/internal/services/ai_service.go`
+  - `backend/internal/services/payment_service.go`
+- **Recommendation:** Gunakan konstanta enumerasi yang aman terhadap tipe data untuk payment status. Untuk logika AI, gunakan LLM Structured Output (JSON response format) daripada mencoba melakukan pem-parsing teks bebas dari LLM.
+- **Implementation Complexity:** Medium
+
+### SEC-30. RENDAH — Code Smell Long Function
+
+- **Severity:** Low
+- **Root Cause:** Beberapa fungsi memiliki ukuran yang terlalu besar, di mana beberapa tanggung jawab digabungkan di satu tempat. Fungsi `generateWithToolLoop` di `ai_service.go` melingkupi logic perputaran LLM, pem-parsing argument, dan operasi pencatatan log pada DB.
+- **Impact:** Sulit untuk dibaca, dimodifikasi, dan di debug secara terisolasi.
+- **Affected Files:**
+  - `backend/internal/services/ai_service.go`
+- **Recommendation:** Ekstrak logic eksekusi block tool menjadi satu helper function terpisah di dalam paket yang sama.
+- **Implementation Complexity:** Low
+
 ### SEC-22. KRITIS — DOKU Webhook Signature Bypass (Body Terkonsumsi)
 
 - **Severity:** Critical
