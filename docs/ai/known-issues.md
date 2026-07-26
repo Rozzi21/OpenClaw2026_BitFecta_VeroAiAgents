@@ -175,6 +175,36 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 - **Recommendation:** Tambahkan tag `gorm:"index"` pada field `BookingStatus` dan `PaymentStatus` di *struct* `Booking` (`backend/internal/models/models.go`).
 - **Implementation Complexity:** Low
 
+## A.6 Temuan Audit Performa (Belum Diperbaiki - 26 Jul 2026)
+
+### PERF-1. KRITIS — Tidak Ada Streaming pada Respons AI (High TTFT)
+
+- **Severity:** Critical
+- **Problem:** Klien AI (`backend/internal/ai/ai_client.go`) dan HTTP *handler* terkait tidak mengimplementasikan kapabilitas aliran data (*streaming*). Proses LLM (termasuk *function calling loop*) diblok penuh dan respon diakumulasi di dalam memori sebelum dikembalikan sekaligus kepada *user*.
+- **Estimated Impact:** *Time To First Token* (TTFT) sangat lambat, dapat memakan belasan detik di sisi pelanggan. Selama menunggu, antrean HTTP tertahan (*blocked*) dan berpotensi memicu *timeout* beban puncak. Buffer memori per-*request* dapat melonjak drastis saat respons LLM berukuran besar.
+- **Recommendation:** Aktifkan *flag* `stream: true` pada beban *payload* `ai_client.go`. Implementasikan penanganan *chunk* data asinkron dan rutekan kembali ke pelanggan melalui jalur SSE (*Server-Sent Events*) secara *real-time*.
+- **Complexity:** High
+
+### PERF-2. TINGGI — Penggunaan *Bubble Sort* O(N^2) pada *Scoring*
+
+- **Severity:** High
+- **Problem:** Logika *scoring* kemiripan nama paket terhadap perintah pengguna pada fungsi `scoreTrips` (`backend/internal/services/mcp_service.go`) menggunakan metode *Bubble Sort* manual dengan *loop* `for i ... for j`.
+- **Estimated Impact:** Kompleksitas *Bubble Sort* adalah O(N^2). Walaupun saat ini katalog data belum banyak, bertambahnya paket perjalanan dari *backoffice* akan meningkatkan latensi CPU secara eksponensial di *thread* utama layanan *backend* saat LLM memanggil alat (`tool`) pencarian paket.
+- **Recommendation:** Hapus konstruksi *looping* ganda. Gunakan paket fungsi bawaan standar *Golang* seperti `sort.Slice` atau memigrasi pemfilteran logika *scoring* kemiripan kata secara komprehensif ke level *Database* menggunakan ekstensi GIN/pg_trgm untuk PostgreSQL.
+- **Complexity:** Low
+
+### PERF-3. SEDANG — Alokasi Memori Berulang (Regex & JSON Marshal)
+
+- **Severity:** Medium
+- **Problem:** 
+  1. *Helper* `slugify` (`backend/internal/services/helpers.go`) secara persisten memanggil `regexp.MustCompile` setiap fungsi dijalankan, me-rekompilasi *regex pattern* yang harusnya statis.
+  2. `MCPService.Execute` mengalokasikan CPU untuk melakukan eksekusi ulang fungsi `json.Marshal` atas *payload* hanya untuk penyimpanan *logging/auditing* rekam jejak pada tabel GORM.
+- **Estimated Impact:** Penalti pada memori tambahan yang membebankan *Garbage Collector* secara prematur dan melambatkan eksekusi aplikasi untuk aktivitas yang berulang tinggi.
+- **Recommendation:** 
+  1. Deklarasikan hasil kompilasi *Regex* sebagai variabel konstan pada level *package*.
+  2. Alihkan proses penulisan basis data operasional seperti `CreateAILog` menjadi *goroutine* / proses asinkron yang lepas (*detached*) dari respons sinkron layanan LLM utama (gunakan *worker pool* untuk menghindari resiko habisnya koneksi DB).
+- **Complexity:** Low
+
 ---
 
 ## A.2 Celah Keamanan — SELESAI (Batch 21 Jul 2026)
