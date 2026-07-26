@@ -8,6 +8,197 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit arsitektur backend: 26 Jul 2026 — layering, package dependency, DI, coupling/cohesion, scalability. Kesimpulan: **arsitektur secara keseluruhan baik, tidak perlu redesign**. Temuan arsitektur dicatat di bagian A.8. Temuan teknis spesifik (context propagation, god object, dll) yang overlap dengan SEC-22..SEC-32 tidak diduplikasi — lihat bagian A.4.
 
+> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`.
+
+---
+
+## A.11 Temuan Bug Hunting Backend (Belum Diperbaiki - 27 Jul 2026)
+
+Bug baru yang tidak tercakup audit sebelumnya. Detail reproduksi per item ada di `backend/docs/bug-hunt-2026-07-27.md`. Ringkasan:
+
+### BUG-1. TINGGI — Race Condition Double-Rotation pada `AuthService.Refresh` (Session Failure)
+
+- **Severity:** High
+- **Root Cause:** `Refresh()` menjalankan cek `RevokedAt` → `RevokeSessionByJTI` → `issueSession` tanpa transaksi/locking. Dua refresh bersamaan dengan token sama (dua tab auto-refresh) sama-sama lolos validasi dan sama-sama membuat sesi token baru; sesi pertama jadi token liar. Saat token lama dipakai lagi, reuse-detection salah mengira pencurian → `RevokeAllActiveSessionsByUser` → logout paksa semua perangkat (false positive).
+- **Impact:** Concurrent refresh yang sah memicu force-logout global; sesi token ganda.
+- **Affected Files:** `backend/internal/services/auth_service.go` (`Refresh`), `backend/internal/repositories/auth_sessions.go` (`RevokeSessionByJTI`)
+- **Recommendation:** Rotasi atomik: `UPDATE ... SET revoked_at=now() WHERE token_jti=? AND revoked_at IS NULL` + cek `RowsAffected==1`. Bila 0 → sudah dirotasi request paralel (bukan reuse jahat), jangan revoke-all.
+- **Complexity:** Medium
+
+### BUG-2. TINGGI — Panic: Event Bus `Unsubscribe` Close Channel vs `Publish` Send (Data Race)
+
+- **Severity:** High
+- **Root Cause:** `Unsubscribe` memanggil `close(ch)` di bawah `Lock()`, tetapi `Publish` mengirim di bawah `RLock()`. Race: `Publish` mengirim ke channel yang tepat saat itu ditutup `Unsubscribe` → `panic: send on closed channel`. Terpicu saat SSE disconnect berbarengan dengan event publish. Panic terjadi di goroutine publisher, tidak ter-catch `Recovery()`.
+- **Impact:** Panic intermittent saat client SSE putus berbarengan event → potensi crash request/handler.
+- **Affected Files:** `backend/internal/events/bus.go` (`Unsubscribe`, `Publish`); pemicu `handlers.go` (`EventStream`)
+- **Recommendation:** Jangan `close(ch)` di `Unsubscribe`; cukup `delete(b.clients, ch)` dan biarkan `EventStream` berhenti via `c.Request.Context().Done()`.
+- **Complexity:** Low
+
+### BUG-3. SEDANG — Resource Leak: HTTP Body `triggerN8N` Tidak Ditutup
+
+- **Severity:** Medium
+- **Root Cause:** `payment_service.go` `triggerN8N`: `_, _ = client.Do(req)` tanpa membaca/`Close()` body. Koneksi keep-alive tidak bisa di-reuse; menumpuk pada volume webhook tinggi.
+- **Impact:** Kebocoran file descriptor / koneksi TCP saat banyak webhook `paid`.
+- **Affected Files:** `backend/internal/services/payment_service.go` (`triggerN8N`)
+- **Recommendation:** `res, err := client.Do(req); if err == nil { io.Copy(io.Discard, res.Body); res.Body.Close() }`; jalankan async dengan context timeout.
+- **Complexity:** Low
+
+### BUG-4. SEDANG — Context Leak: SSE `WriteTimeout=0` + Koneksi Zombie Tanpa Max Lifetime
+
+- **Severity:** Medium
+- **Root Cause:** `EventStream` hanya keluar saat client disconnect/heartbeat. Pada koneksi setengah-putus (client hilang tanpa FIN), `c.Request.Context().Done()` tidak cepat terpicu dan write ke buffer TCP masih "berhasil", sehingga goroutine SSE hidup lama → akumulasi goroutine + subscriber bus bocor. Berbeda dari SEC-31 (timer leak).
+- **Impact:** Goroutine/subscriber menumpuk pada banyak koneksi SSE zombie.
+- **Affected Files:** `backend/cmd/server/main.go` (http.Server), `backend/internal/handlers/handlers.go` (`EventStream`)
+- **Recommendation:** Deteksi write error → return false; batasi umur maksimal + jumlah koneksi SSE; pisahkan server SSE saat scaling (ARCH-3).
+- **Complexity:** Medium
+
+### BUG-5. SEDANG — Error Ditelan: `AIService.Chat` Silent-Fail `FindChatSession` → Logic Bypass Rekomendasi
+
+- **Severity:** Medium
+- **Root Cause:** `ai_service.go` baris ~112 `chatSession, _ := s.repo.FindChatSession(sessionID)` mengabaikan error. Bila query gagal sesaat, `selectedTripID=nil` → guard "paket sudah dipilih" dilewati → rekomendasi baru terkirim padahal user sudah memilih (fail-open).
+- **Impact:** Inkonsistensi workflow rekomendasi pada DB flake.
+- **Affected Files:** `backend/internal/services/ai_service.go` (`Chat()`)
+- **Recommendation:** Tangani error; fail-closed (`showRecommendations=false`) atau kembalikan error 500. Jangan telan `_`.
+- **Complexity:** Low
+
+### BUG-6. SEDANG — Race: Guest Session Dihapus Cleanup Saat Request In-Flight
+
+- **Severity:** Medium
+- **Root Cause:** `Chat()` memvalidasi expiry di awal lalu menjalankan tool loop hingga ~35 dtk. Ticker `CleanupExpiredChatSessions` bisa menghapus session tepat saat melewati expiry di tengah proses → penulisan pesan/selected trip gagal atau data hilang, error intermiten sulit direproduksi.
+- **Impact:** Booking/chat gagal/hilang acak pada session mendekati expiry.
+- **Affected Files:** `backend/internal/services/ai_service.go` (`Chat`), `backend/internal/repositories/repositories.go` (`DeleteExpiredChatSessions`), `backend/cmd/server/main.go` (ticker)
+- **Recommendation:** Tandai session in-flight (skip cleanup) atau pastikan TTL >> `AITimeout`; perpanjang `expires_at` atomik sebelum tool loop.
+- **Complexity:** Medium
+
+### BUG-7. SEDANG — Float Precision / Overflow: `total` Booking pada Harga Ekstrem (Tanpa Guard Harga)
+
+- **Severity:** Medium
+- **Root Cause:** `BookingService.Create` menghitung `total` dari harga `float64` DB tanpa batas atas; `TripRequest` tidak memvalidasi harga (boleh negatif/sangat besar). Harga ekstrem × pax → kehilangan presisi float64 atau gagal insert `numeric(14,2)`; harga negatif → total negatif.
+- **Impact:** Total salah/negatif/error DB dari harga katalog invalid.
+- **Affected Files:** `backend/internal/services/booking_service.go` (`Create`), `backend/internal/dto/dto.go` (`TripRequest`), `backend/internal/services/trip_service.go` (`buildTripFromRequest`)
+- **Recommendation:** Validasi harga trip non-negatif + batas atas di DTO & service; pertimbangkan integer sen (lihat #13).
+- **Complexity:** Low-Medium
+
+### BUG-8. RENDAH — Error Handling: `GuestUser` Mengabaikan Error `bcrypt.GenerateFromPassword`
+
+- **Severity:** Low
+- **Root Cause:** `auth_service.go` `GuestUser()`: `hash, _ := bcrypt.GenerateFromPassword(...)`. Bila gagal, user guest tersimpan tanpa hash valid (password kosong).
+- **Impact:** Latent defect; baris user dengan password kosong.
+- **Affected Files:** `backend/internal/services/auth_service.go` (`GuestUser`)
+- **Recommendation:** Tangani error bcrypt (`if err != nil { return models.User{}, err }`).
+- **Complexity:** Low
+
+### BUG-9. RENDAH — Invalid Input: `parseDate` Mengembalikan `nil` Diam-diam untuk `travel_date` AI
+
+- **Severity:** Low
+- **Root Cause:** `parseDate` mengembalikan `nil` untuk format selain RFC3339/`2006-01-02`. Tool `create_booking` meneruskan `travel_date` teks natural LLM ("12 Agustus 2026") yang sering gagal parse → `TravelDate=NULL` tanpa error; booking sukses tanpa tanggal.
+- **Impact:** Booking tersimpan tanpa tanggal perjalanan (booking failure tersembunyi); LLM bisa mengklaim tanggal tercatat padahal kosong.
+- **Affected Files:** `backend/internal/services/helpers.go` (`parseDate`), `backend/internal/services/booking_service.go` (`Create`), `backend/internal/services/mcp_service.go` (`executeCreateBooking`)
+- **Recommendation:** Normalisasi/validasi `travel_date` di `executeCreateBooking` (minta ISO ke LLM, parse lebih banyak layout) atau error tool bila tanggal wajib gagal parse.
+- **Complexity:** Low-Medium
+
+### BUG-10. RENDAH — Concurrent Request: Lost Update `MemorySummary` via GORM `Save`
+
+- **Severity:** Low
+- **Root Cause:** `refreshMemorySummary` memakai `UpdateChatSession(&session)` (GORM `Save` menulis semua kolom, overlap DB-2) atas struct session yang dibaca sebelumnya; berpacu dengan `UpdateChatSessionActivity`/`UpdateChatSessionSelectedTrip` yang memakai `Updates` kolom tertentu → field `selected_trip_id`/`last_activity_at` yang baru diubah bisa tertimpa.
+- **Impact:** Lost update state session pada chat paralel cepat.
+- **Affected Files:** `backend/internal/services/ai_service.go` (`refreshMemorySummary`), `backend/internal/repositories/repositories.go` (`UpdateChatSession`)
+- **Recommendation:** Update hanya kolom `memory_summary` (`Updates(map)` / `Select`), jangan `Save` seluruh struct.
+- **Complexity:** Low
+
+---
+
+## A.10 Temuan Audit Production Readiness Backend (27 Jul 2026)
+
+Audit kesiapan production terhadap 5 kategori (Observability, Deployment, Reliability, Scalability, Security). Sumber: `deployment.md`, `Dockerfile`, `docker-compose.yml`, `main.go`, `middlewares.go`, `database.go`, `config.go`, `auth/audit.go`. Prioritas: P0 = blocker production, P1 = harus sebelum scale/traffic nyata, P2 = penting untuk operasional sehat, P3 = nice-to-have.
+
+**Yang sudah siap (jangan diubah):**
+- **Graceful shutdown**: `main.go` menangani SIGINT/SIGTERM + `server.Shutdown(ctx)` 15s.
+- **DB retry + pooling**: connect retry 5x backoff; pool `MaxOpen=25/MaxIdle=10/ConnMaxLifetime=1h`.
+- **Docker**: multi-stage, binary statis CGO=0, non-root user `app`, `.dockerignore`, uploads named volume, healthcheck di compose.
+- **Secret guard**: `Config.Validate()` menolak start di production bila `JWT_SECRET` default/kosong, `DATABASE_PASSWORD` kosong/placeholder, `DOKU_SECRET` kosong saat payments enabled.
+- **Rate limit**: per-IP global (20/s), auth (5/s), public write (5/min); memory-bounded + janitor (SEC-14).
+- **Audit log**: `auth.LogSecurity` via `slog` terstruktur (`security_audit` event) untuk aksi auth + kegagalan persistensi tool.
+- **Timeout AI**: HTTP client timeout 35s + context timeout; body AI dibatasi 1 MiB (SEC-9).
+
+### P0 — Blocker Production
+
+#### PRR-P0-1. TLS/HTTPS Tidak Ditangani Aplikasi (Bergantung Penuh pada Reverse Proxy)
+
+- **Root Cause:** `main.go` hanya `server.ListenAndServe()` polos (HTTP); tidak ada `RunTLS`/redirect HTTPS. Aplikasi mengandalkan reverse proxy (Nginx/Caddy) untuk terminasi TLS, tetapi tidak ada konfigurasi proxy bawaan repo dan tidak ada guard yang memastikan proxy itu ada.
+- **Impact:** Bila operator lupa memasang reverse proxy atau salah konfigurasi, API ter-ekspos via HTTP polos — cookie `Secure`, session, dan token refresh dikirim tanpa enkripsi. Risiko tinggi karena tidak ada fail-safe.
+- **Recommendation:** Dokumentasikan wajib reverse proxy sebagai langkah deploy yang tidak bisa diskip (sudah ada di checklist #5, pertegas). Tambahkan contoh konfigurasi Nginx/Caddy di `backend/docs/server-deploy.md`. Pertimbangkan guard start: tolak jalan di `APP_ENV=production` bila tidak ada indikasi proxy (mis. `TRUSTED_PROXIES` kosong + `JWT_COOKIE_SECURE=true`), atau sediakan mode TLS langsung via env cert/key sebagai alternatif.
+- **Complexity:** Low-Medium
+
+#### PRR-P0-2. Tidak Ada Backup & Restore Terdokumentasi untuk PostgreSQL + Uploads
+
+- **Root Cause:** Tidak ada job/strategi backup untuk database PostgreSQL maupun folder `uploads/` (media trip). `docker-compose` memakai named volume tanpa rencana snapshot/ekspor. Tidak ada skrip restore.
+- **Impact:** Data booking/payment/chat dan file upload hilang permanen saat volume/DB korup atau salah migrasi. Recovery Point Objective (RPO) = tak terdefinisi; tidak ada cara restore. Untuk sistem yang menyimpan order + pembayaran, ini blocker.
+- **Recommendation:** Definisikan strategi backup: `pg_dump` terjadwal (cron/systemd/Kubernetes CronJob) + snapshot volume `uploads_data`. Dokumentasikan prosedur restore di `deployment.md`. Minimal: backup harian DB + retensi, dan uji restore berkala.
+- **Complexity:** Medium
+
+### P1 — Harus Sebelum Traffic Nyata
+
+#### PRR-P1-1. Observability: Tidak Ada Metrics/Prometheus/Tracing (Konfirmasi #16)
+
+- **Root Cause:** Tidak ada ekspor metrik (latensi, QPS, error rate, goroutine, DB pool), tidak ada endpoint `/metrics`, tidak ada distributed tracing (OpenTelemetry). Logging memakai `log.Printf` + `gin.Logger()` (unstructured, kecuali audit `slog`).
+- **Impact:** Buta visibilitas saat insiden production: tidak bisa deteksi latensi AI tinggi, DB pool habis, error spike, atau bottleneck. Debugging multi-request sulit tanpa trace ID berkorelasi (hanya ada `request_id` per-request, tidak di-propagasi ke log bawah).
+- **Recommendation:** Tambahkan middleware Prometheus (mis. `gin-contrib` / `prometheus/client_golang`) + endpoint `/metrics` (guard internal). Untuk tracing, pertimbangkan OpenTelemetry SDK minimal pada HTTP server + DB + AI client. Sudah tercatat #16; diangkat ke P1 karena prasyarat operasi production sehat.
+- **Complexity:** Medium
+
+#### PRR-P1-2. Health Endpoint Tidak Membedakan Liveness vs Readiness
+
+- **Root Cause:** Hanya ada `/health` (selalu OK, tidak cek dependency) dan `/health/database` (cek DB ping). Tidak ada pemisahan `/healthz` (liveness: proses hidup) vs `/readyz` (readiness: siap terima traffic = DB + dependency kritis up). Kubernetes butuh keduanya untuk probe yang benar.
+- **Impact:** Di Kubernetes, pod bisa dianggap ready padahal DB down (karena `/health` selalu 200), sehingga traffic masuk ke instance yang tidak bisa melayani → error massal. Atau sebaliknya pod di-restart terus karena probe salah sasaran.
+- **Recommendation:** Pisahkan: `/healthz` → liveness sederhana (200 bila proses jalan). `/readyz` → cek DB ping (+ opsional dependency kritism lain). Petakan ke `livenessProbe`/`readinessProbe` di manifest K8s.
+- **Complexity:** Low
+
+#### PRR-P1-3. Tidak Ada Manifest/Concurrency Safety Multi-Instance (Stateful Komponen)
+
+- **Root Cause:** Beberapa komponen stateful in-memory yang tidak aman multi-instance (lihat ARCH-3): event bus in-memory (#7), rate limiter per-IP in-memory, cleanup ticker internal (#18). Tidak ada manifest Kubernetes / panduan HPA; deploy formal hanya systemd single-binary atau compose single-service.
+- **Impact:** Aplikasi efektif single-instance. Saat coba horizontal scale: SSE tidak konsisten, rate limit jadi N× limit, cleanup job berpacu menekan DB. Belum siap Kubernetes/HPA tanpa kerja tambahan.
+- **Recommendation:** Untuk production multi-instance: ganti bus ke Redis Pub/Sub (#7), rate limit ke Redis/gateway, matikan ticker internal + delegasikan cleanup ke CronJob (#18). Siapkan manifest K8s (Deployment + Service + probe PRR-P1-2). Single instance tetap valid untuk skala sekarang.
+- **Complexity:** Medium-High
+
+### P2 — Penting untuk Operasional Sehat
+
+#### PRR-P2-1. Log Tidak Terstruktur & Tidak Ter-agregasi (Selain Audit)
+
+- **Root Cause:** Log aplikasi memakai `log.Printf` bebas + `gin.Logger()` format default (teks). Hanya `auth.LogSecurity` yang memakai `slog` terstruktur. Tidak ada level konsisten, tidak ada `request_id` otomatis di semua log, tidak ada konfigurasi output JSON untuk agregasi (Loki/ELK/Datadog).
+- **Impact:** Sulit query/filter log saat insiden; korelasi request sulit; volume log tidak terkelola. Menyulitkan PRR-P1-1 (observability).
+- **Recommendation:** Standarisasi ke `slog` terstruktur (JSON di production) dengan `request_id` di-inject dari middleware ke context logger. Dokumentasikan cara agregasi.
+- **Complexity:** Medium
+
+#### PRR-P2-2. Retry/Timeout Belum Konsisten untuk Integrasi Eksternal Selain AI
+
+- **Root Cause:** AI client punya timeout 35s + retry di MCP mock. Namun N8N trigger (`triggerN8N`) dan DOKU webhook handling belum punya strategi retry/timeout/circuit-breaker eksplisit. Context propagation juga belum menyambung timeout klien (SEC-26).
+- **Impact:** Kegagalan sementara integrasi eksternal (N8N down, network flake) tidak di-retry → event/automasi hilang. Atau sebaliknya request menggantung tanpa timeout ketat. Mengurangi reliability.
+- **Recommendation:** Definisikan timeout + retry dengan backoff + (opsional) circuit breaker untuk HTTP call keluar (N8N, dan bila nanti DOKU API aktif). Sambungkan `c.Request.Context()` (SEC-26) agar cancel menyebar.
+- **Complexity:** Medium
+
+#### PRR-P2-3. Tidak Ada Konfigurasi Deploy Formal untuk Frontend
+
+- **Root Cause:** Hanya backend yang punya pipeline deploy (Dockerfile/compose/systemd). Kedua Next.js app (`frontend/`, `backoffice-frontend/`) tidak punya Dockerfile/konfigurasi deploy di repo.
+- **Impact:** Deploy frontend manual/berbeda tiap lingkungan; tidak ada artifact reproducible; production readiness keseluruhan tidak lengkap (backend siap, frontend tidak).
+- **Recommendation:** Tambahkan Dockerfile (output standalone Next.js) + compose/entry untuk kedua frontend, atau dokumentasikan target deploy (Vercel/PM2/dsb) secara eksplisit.
+- **Complexity:** Low-Medium
+
+### P3 — Nice-to-Have
+
+#### PRR-P3-1. Tidak Ada Alerting/Runbook Insiden
+
+- **Root Cause:** Belum ada aturan alert (error rate, latensi, DB down) maupun runbook penanganan insiden.
+- **Impact:** Respon insiden lambat/ad-hoc. Bergantung PRR-P1-1 (metrics) dulu.
+- **Recommendation:** Setelah metrics ada, definisikan alert dasar + runbook singkat di `deployment.md`.
+- **Complexity:** Medium
+
+#### PRR-P3-2. Tidak Ada CI/CD Pipeline di Repo
+
+- **Root Cause:** Tidak ada GitHub Actions/CI untuk build, test, lint, image build/push.
+- **Impact:** Build/release manual; risiko inkonsistensi artifact; tidak ada gate kualitas otomatis.
+- **Recommendation:** Tambahkan workflow CI minimal: `go build`/`go vet`/`gofmt`/`go test` + `tsc --noEmit` frontend, lalu build & push image.
+- **Complexity:** Medium
+
 ---
 
 ## A.9 Temuan Audit AI Workflow (26 Jul 2026)
@@ -745,6 +936,11 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 
 | Prioritas | Item | Alasan |
 |---|---|---|
+| 🔴 **P0** | PRR-P0-1 TLS bergantung reverse proxy tanpa fail-safe | Wajib reverse proxy + contoh config; atau TLS langsung via env |
+| 🔴 **P0** | PRR-P0-2 Tidak ada backup/restore DB + uploads | `pg_dump` terjadwal + snapshot volume + prosedur restore terdokumentasi |
+| 🟠 **P1** | PRR-P1-1 Observability (metrics/Prometheus/tracing) | Konfirmasi #16; middleware Prometheus + `/metrics` + OTel |
+| 🟠 **P1** | PRR-P1-2 Health tak bedakan liveness/readiness | Pisah `/healthz` vs `/readyz` untuk probe K8s |
+| 🟠 **P1** | PRR-P1-3 Belum siap multi-instance/K8s | Redis bus, rate limit Redis, ticker off, manifest K8s (lihat ARCH-3) |
 | 🟠 **Tinggi** | #7 Event bus in-memory | SSE realtime putus di arsitektur load balancer; ganti ke Redis Pub/Sub |
 | 🟡 Sedang | ARCH-1 Handler akses repo langsung | Logika guest session tersebar di handler; pindah ke service (bukan redesign) |
 | 🟡 Sedang | AIW-1 Indirect prompt injection katalog | Konfirmasi AI-1; sanitasi tool result + delimiter system prompt |
