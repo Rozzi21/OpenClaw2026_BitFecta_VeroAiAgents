@@ -8,6 +8,57 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 ---
 
+## A.4 Temuan Audit Keamanan Baru (Belum Diperbaiki - 26 Jul 2026)
+
+### SEC-22. KRITIS — DOKU Webhook Signature Bypass (Body Terkonsumsi)
+
+- **Severity:** Critical
+- **Root Cause:** Pada `handlers.go` (`PaymentWebhook`), fungsi `bind(c, &req)` (`c.ShouldBindJSON`) membaca habis `c.Request.Body`. Ketika `c.GetRawData()` dipanggil setelahnya, stream body sudah di-consume sehingga mengembalikan `[]byte{}` (kosong). Akibatnya, `rawBody` yang diteruskan ke `payment_service.go` selalu string kosong. HMAC signature diverifikasi hanya menggunakan `timestamp + "|"` tanpa isi body request sebenarnya.
+- **Impact:** Attacker dapat mem-bypass autentikasi webhook. Dengan menangkap satu webhook valid dari log (signature + timestamp), attacker dapat mengirim ulang payload tersebut dengan mengubah isi body (misalnya merubah `"status": "paid"` atau memanipulasi `amount`), dan validasi signature server akan tetap `true` karena body manipulasi tersebut tidak pernah di-hash oleh server.
+- **Exploit Scenario:** 
+  1. Attacker mendapatkan satu payload webhook valid (timestamp + signature) hasil transaksi kecil.
+  2. Attacker mengirim POST ke `/api/v1/payments/webhook` menggunakan signature yang sama namun memanipulasi JSON payload menjadi instruksi untuk membayar booking ID jutaan rupiah.
+  3. Server memverifikasi body kosong dengan signature dan timestamp yang cocok, dan menyetujui transaksi tersebut.
+- **Affected Files:** 
+  - `backend/internal/handlers/handlers.go` (`PaymentWebhook`)
+  - `backend/internal/services/payment_service.go` (`verifyDokuSignature`)
+- **Recommendation:** Gunakan `c.GetRawData()` di awal handler untuk membaca body mentah, lalu lakukan `json.Unmarshal` secara manual ke dalam `req`, ATAU gunakan `c.ShouldBindBodyWith(&req, binding.JSON)` agar stream body disalin dan bisa dibaca ulang.
+- **Implementation Complexity:** Low
+- **OWASP Mapping:** API2:2023 Broken Authentication, API10:2023 Unsafe Consumption of APIs
+
+### SEC-23. TINGGI — Race Condition (TOCTOU) pada Transisi Status Booking
+
+- **Severity:** High
+- **Root Cause:** Pada `BookingService.UpdateStatus`, status dibaca dari database dan ditampung ke memori (`current := booking.BookingStatus`). Validasi `allowedTransitions` dilakukan di memori. Setelah itu, status baru disimpan dengan `s.repo.UpdateBooking(&booking)`. Tidak ada atomicity di level query (optimistic locking atau atomic update constraint) yang menjamin bahwa status di database belum berubah ketika proses update dijalankan.
+- **Impact:** Terjadinya *Time-of-Check to Time-of-Use* (TOCTOU) *race condition*. Dua instruksi bersamaan dapat menimpa data satu sama lain dan menghasilkan transisi state logistik yang dilarang.
+- **Exploit Scenario:** 
+  1. Dua administrator/request paralel mengakses status pesanan yang sama secara bersamaan (keduanya membaca status `pending`).
+  2. Request pertama memerintahkan transisi `pending` -> `processing` dan lewat validasi.
+  3. Request kedua memerintahkan `pending` -> `cancelled` dan lewat validasi.
+  4. Keduanya melakukan update ke DB yang menyebabkan status saling bertumpuk (data inkonsisten / invalid workflow).
+- **Affected Files:** 
+  - `backend/internal/services/booking_service.go` (`UpdateStatus`)
+- **Recommendation:** Lakukan atomic update berbasis kondisi pada database. Misalnya menggunakan *Optimistic Locking* dengan field `version`, atau menggunakan where clause pada `status`: `db.Model(&booking).Where("id = ? AND booking_status = ?", id, current).Update("booking_status", target)`. Pastikan mengecek nilai `RowsAffected`.
+- **Implementation Complexity:** Low
+- **OWASP Mapping:** API4:2023 Unrestricted Resource Consumption (Concurrency/Race Condition), API6:2023 Unrestricted Access to Sensitive Business Flows
+
+### SEC-24. SEDANG — Risiko Kolisi UUID dan Weak Randomness pada Guest User
+
+- **Severity:** Medium
+- **Root Cause:** Fungsi pembuatan guest user (`AuthService.GuestUser`) memotong `uuid.NewString()` menjadi 8 karakter saja: `"guest-" + guestID[:8] + "@vero.local"`. Berdasarkan *Birthday Paradox*, probabilitas kolisi pada ruang 8 karakter hex sangat tinggi (kemungkinan bertabrakan setelah sekitar ~65.000 iterasi). Selain itu, password di-generate dari `uuid.NewString()` yang secara matematis tidak terdesain sebagai *Cryptographically Secure Pseudo-Random Number Generator* (CSPRNG).
+- **Impact:** Begitu terjadi kolisi karakter `guestID`, `FirstOrCreateUser` akan mengasumsikan guest tersebut sudah ada di database. Alih-alih membuat user baru, sistem akan menetapkan booking ID ke user lama. Hal ini menghancurkan isolasi dan privasi pesanan guest.
+- **Exploit Scenario:** 
+  1. Sistem melayani ribuan guest order seiring waktu.
+  2. *Collision* terjadi di 8 karakter hex UUID. Sistem mengembalikan user_id tamu sebelumnya.
+  3. Pesanan tamu B terekam di akun tamu A, mengacaukan riwayat kepemilikan transaksi di database.
+- **Affected Files:** 
+  - `backend/internal/services/auth_service.go` (`GuestUser`)
+- **Recommendation:** Jangan memotong UUID. Gunakan `uuid.NewString()` secara utuh (36 karakter) untuk pembuatan guest email. Gunakan library `crypto/rand` untuk mengenerate string password yang keamanannya terjamin secara kriptografi.
+- **Implementation Complexity:** Low
+- **OWASP Mapping:** API2:2023 Broken Authentication, API9:2023 Improper Inventory Management (Data Integrity)
+
+---
+
 ## A.2 Celah Keamanan — SELESAI (Batch 21 Jul 2026)
 
 Temuan batch audit 21 Jul 2026 yang sudah diperbaiki pada hari yang sama dan diverifikasi `go build`/`go vet`/`gofmt`.
