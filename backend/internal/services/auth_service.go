@@ -20,6 +20,12 @@ type AuthService struct {
 	cfg  config.Config
 }
 
+// refreshRotationConcurrentWindow bounds how recently a session must have been
+// revoked to be treated as a benign concurrent-refresh race loser rather than
+// token theft/reuse. Two tabs auto-refreshing within milliseconds lose the
+// rotation race; a revoked token resurfacing minutes later signals reuse.
+const refreshRotationConcurrentWindow = 1 * time.Minute
+
 func (s *AuthService) auditFields(meta AuthRequestMeta, extra map[string]any) map[string]any {
 	fields := map[string]any{
 		"ip":         meta.IP,
@@ -139,48 +145,47 @@ func (s *AuthService) Refresh(refreshToken string, meta AuthRequestMeta) (AuthIs
 		return AuthIssueResult{}, ErrInvalidRefreshToken
 	}
 
-	session, err := s.repo.FindSessionByJTI(claims.ID)
+	// BUG-1 fix: rotate the session atomically in a single UPDATE. Only the
+	// request that wins the race (rowsAffected == 1) proceeds to issue a new
+	// token pair; concurrent duplicate refreshes lose the race and are rejected
+	// WITHOUT triggering reuse-detection revoke-all (they are not theft).
+	rotated, err := s.repo.RotateSession(claims.ID)
 	if err != nil {
-		auth.LogSecurity(auth.EventRefreshFailed, s.auditFields(meta, map[string]any{
-			"user_id": claims.UserID.String(),
-			"email":   claims.Email,
-			"jti":     claims.ID,
-			"error":   "session not found",
-		}))
-		return AuthIssueResult{}, ErrRefreshTokenRevoked
-	}
-	if session.RevokedAt != nil {
-		// A refresh token that was already rotated (revoked) is being used again.
-		// This is a strong indicator of token theft, so we defensively revoke every
-		// active session for this user, forcing a fresh login on all devices.
-		_ = s.repo.RevokeAllActiveSessionsByUser(claims.UserID)
-		auth.LogSecurity(auth.EventRefreshTokenReuseDetected, s.auditFields(meta, map[string]any{
-			"user_id": claims.UserID.String(),
-			"email":   claims.Email,
-			"jti":     claims.ID,
-		}))
-		return AuthIssueResult{}, ErrRefreshTokenRevoked
-	}
-	if session.ExpiresAt.Before(time.Now()) {
-		auth.LogSecurity(auth.EventRefreshTokenRevoked, s.auditFields(meta, map[string]any{
-			"user_id": claims.UserID.String(),
-			"email":   claims.Email,
-			"jti":     claims.ID,
-		}))
-		return AuthIssueResult{}, ErrRefreshTokenRevoked
-	}
-
-	if _, err := s.repo.FindActiveSessionByJTI(claims.ID); err != nil {
-		auth.LogSecurity(auth.EventRefreshTokenRevoked, s.auditFields(meta, map[string]any{
-			"user_id": claims.UserID.String(),
-			"email":   claims.Email,
-			"jti":     claims.ID,
-		}))
-		return AuthIssueResult{}, ErrRefreshTokenRevoked
-	}
-
-	if err := s.repo.RevokeSessionByJTI(claims.ID); err != nil {
 		return AuthIssueResult{}, err
+	}
+	if !rotated {
+		// Lost the rotation race: the session is already revoked (by a parallel
+		// refresh or earlier rotation), expired, or unknown. We must distinguish
+		// a benign concurrent refresh (recent rotation) from genuine token reuse
+		// (a revoked token surfacing long after rotation = theft signal).
+		session, findErr := s.repo.FindSessionByJTI(claims.ID)
+		logFields := map[string]any{
+			"user_id": claims.UserID.String(),
+			"email":   claims.Email,
+			"jti":     claims.ID,
+		}
+		switch {
+		case findErr != nil:
+			logFields["error"] = "session not found"
+			auth.LogSecurity(auth.EventRefreshFailed, s.auditFields(meta, logFields))
+		case session.RevokedAt != nil:
+			// Rotation happened recently → almost certainly a concurrent refresh
+			// race loser (e.g. two tabs auto-refreshing). Reject WITHOUT
+			// revoke-all; the rotation winner holds the valid new token.
+			// Rotation is stale (longer than the concurrent window) → treat as
+			// reuse/theft and defensively revoke all sessions.
+			if time.Since(*session.RevokedAt) <= refreshRotationConcurrentWindow {
+				logFields["error"] = "concurrent refresh: session already rotated"
+				auth.LogSecurity(auth.EventRefreshFailed, s.auditFields(meta, logFields))
+			} else {
+				_ = s.repo.RevokeAllActiveSessionsByUser(claims.UserID)
+				auth.LogSecurity(auth.EventRefreshTokenReuseDetected, s.auditFields(meta, logFields))
+			}
+		default:
+			logFields["error"] = "session expired"
+			auth.LogSecurity(auth.EventRefreshTokenRevoked, s.auditFields(meta, logFields))
+		}
+		return AuthIssueResult{}, ErrRefreshTokenRevoked
 	}
 
 	user, err := s.repo.FindUserByID(claims.UserID)

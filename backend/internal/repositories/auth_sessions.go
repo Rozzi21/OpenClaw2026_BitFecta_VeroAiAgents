@@ -40,6 +40,22 @@ func (r *Repository) RevokeSessionByJTI(tokenJTI string) error {
 		Update("revoked_at", now).Error
 }
 
+// RotateSession atomically revokes an active (non-revoked, non-expired) session
+// in a single UPDATE. It reports whether THIS caller won the rotation race
+// (rowsAffected == 1). A loser of the race (rowsAffected == 0) is NOT proof of
+// token theft: a concurrent legitimate refresh may have rotated the session
+// first, so callers must not escalate to revoke-all solely from !rotated.
+func (r *Repository) RotateSession(tokenJTI string) (rotated bool, err error) {
+	now := time.Now()
+	result := r.DB.Model(&models.AuthSession{}).
+		Where("token_jti = ? AND revoked_at IS NULL AND expires_at > ?", tokenJTI, now).
+		Update("revoked_at", now)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
 // RevokeAllActiveSessionsByUser revokes every active (non-revoked) session for a
 // user. Used as a defensive measure when refresh token reuse is detected, which
 // is a strong indicator of token theft: invalidating all sessions forces a fresh

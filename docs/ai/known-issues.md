@@ -8,22 +8,27 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit arsitektur backend: 26 Jul 2026 — layering, package dependency, DI, coupling/cohesion, scalability. Kesimpulan: **arsitektur secara keseluruhan baik, tidak perlu redesign**. Temuan arsitektur dicatat di bagian A.8. Temuan teknis spesifik (context propagation, god object, dll) yang overlap dengan SEC-22..SEC-32 tidak diduplikasi — lihat bagian A.4.
 
-> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`.
+> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1 telah diperbaiki (27 Jul 2026); sisanya masih terbuka.
 
 ---
 
-## A.11 Temuan Bug Hunting Backend (Belum Diperbaiki - 27 Jul 2026)
+## A.11 Temuan Bug Hunting Backend (27 Jul 2026)
 
 Bug baru yang tidak tercakup audit sebelumnya. Detail reproduksi per item ada di `backend/docs/bug-hunt-2026-07-27.md`. Ringkasan:
 
-### BUG-1. TINGGI — Race Condition Double-Rotation pada `AuthService.Refresh` (Session Failure)
+### BUG-1. ✅ TINGGI — Race Condition Double-Rotation pada `AuthService.Refresh` (FIXED 27 Jul 2026)
 
-- **Severity:** High
-- **Root Cause:** `Refresh()` menjalankan cek `RevokedAt` → `RevokeSessionByJTI` → `issueSession` tanpa transaksi/locking. Dua refresh bersamaan dengan token sama (dua tab auto-refresh) sama-sama lolos validasi dan sama-sama membuat sesi token baru; sesi pertama jadi token liar. Saat token lama dipakai lagi, reuse-detection salah mengira pencurian → `RevokeAllActiveSessionsByUser` → logout paksa semua perangkat (false positive).
-- **Impact:** Concurrent refresh yang sah memicu force-logout global; sesi token ganda.
-- **Affected Files:** `backend/internal/services/auth_service.go` (`Refresh`), `backend/internal/repositories/auth_sessions.go` (`RevokeSessionByJTI`)
-- **Recommendation:** Rotasi atomik: `UPDATE ... SET revoked_at=now() WHERE token_jti=? AND revoked_at IS NULL` + cek `RowsAffected==1`. Bila 0 → sudah dirotasi request paralel (bukan reuse jahat), jangan revoke-all.
-- **Complexity:** Medium
+**Lokasi:** `backend/internal/services/auth_service.go` (`Refresh`), `backend/internal/repositories/auth_sessions.go` (`RotateSession` baru).
+
+Dulu `Refresh()` menjalankan cek `RevokedAt` → `RevokeSessionByJTI` → `issueSession` tanpa transaksi/locking. Dua refresh bersamaan dengan token sama (dua tab auto-refresh) sama-sama lolos validasi dan sama-sama membuat sesi token baru; sesi pertama jadi token liar. Saat token lama dipakai lagi, reuse-detection salah mengira pencurian → `RevokeAllActiveSessionsByUser` → logout paksa semua perangkat (false positive).
+
+Perbaikan:
+
+1. `RotateSession(jti)` (repo baru) — rotasi atomik satu query: `UPDATE auth_sessions SET revoked_at=now() WHERE token_jti=? AND revoked_at IS NULL AND expires_at > now()`, mengembalikan `rotated = RowsAffected==1`. Hanya pemenang race yang menerbitkan token baru; tidak ada lagi sesi ganda.
+2. Yang kalah race (`rotated=false`) **tidak** lagi otomatis memicu revoke-all. `Refresh()` membaca ulang sesi untuk membedakan: rotasi baru-baru ini (≤ `refreshRotationConcurrentWindow` = 1 menit) → race sah (dua tab), ditolak tanpa eskalasi; rotasi lebih tua dari window → tetap diperlakukan sebagai reuse/pencurian → `RevokeAllActiveSessionsByUser` + `EventRefreshTokenReuseDetected` (perlindungan theft tidak hilang).
+3. Cek `FindActiveSessionByJTI` yang redundant dihapus — kondisi aktif+unexpired kini bagian dari UPDATE atomik.
+
+Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
 
 ### BUG-2. TINGGI — Panic: Event Bus `Unsubscribe` Close Channel vs `Publish` Send (Data Race)
 
