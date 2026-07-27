@@ -52,7 +52,7 @@ Tanggung jawab: register, login, refresh, logout, profil, guest user.
 
 Poin penting:
 - `issueSession()` menghasilkan token pair (access + refresh) dan menyimpan refresh JTI sebagai `AuthSession` di DB.
-- `Refresh()` mengimplementasikan **rotasi token** + **reuse detection**: token refresh yang sudah dirotasi (revoked) bila dipakai lagi memicu `RevokeAllActiveSessionsByUser()` (cabut semua sesi user) dan log `refresh_token_reuse_detected`.
+- `Refresh()` mengimplementasikan **rotasi token atomik** (sejak BUG-1, 27 Jul 2026): `RotateSession()` me-revoke sesi lama dalam satu `UPDATE ... WHERE token_jti=? AND revoked_at IS NULL AND expires_at > now()`; hanya request pemenang (`RowsAffected==1`) yang menerbitkan token baru, sehingga concurrent refresh (dua tab auto-refresh) tidak menghasilkan sesi ganda. Yang kalah race ditolak tanpa eskalasi — **reuse detection** hanya memicu `RevokeAllActiveSessionsByUser()` + log `refresh_token_reuse_detected` bila sesi di-revoke LEBIH LAMA dari `refreshRotationConcurrentWindow` (1 menit); revokasi dalam window dianggap race sah (bukan pencurian).
 - `GuestUser()` membuat/menemukan user "Guest Traveler" (`guest@vero.local`) via `FirstOrCreateUser` untuk guest chat.
 - Semua aksi auth mencatat audit via `auth.LogSecurity()`.
 

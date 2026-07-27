@@ -996,6 +996,7 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 | #14 Error HTML Saat JSON | ✅ Cek `Content-Type` + try-catch di `api.ts` |
 | #15 Refresh Promise Timeout | ✅ AbortController 10s di `refreshAccessToken` |
 | #19 Cleanup orphan records | ✅ Unscoped Delete `chat_messages`, `tool_calls`, `ai_logs` sblm hapus session |
+| BUG-1 Race double-rotation refresh | ✅ `RotateSession` atomik + window reuse detection di `AuthService.Refresh` |
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.
 

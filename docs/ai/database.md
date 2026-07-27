@@ -135,7 +135,8 @@ File:
 | `FindBookingBySession(sessionID)` | Cek booking terakhir yang terkait dengan session (opsional) |
 | `CreateAuthSession` | Simpan sesi refresh saat login/refresh |
 | `FindActiveSessionByJTI` | Sesi yang belum revoked & belum expired |
-| `RevokeSessionByJTI` | Revoke satu sesi (rotation saat refresh) |
+| `RotateSession` | **Rotasi atomik** sesi (dipakai `Refresh`): single `UPDATE` dengan kondisi `revoked_at IS NULL AND expires_at > now()`, return `RowsAffected==1` untuk membedakan pemenang/kalah race (fix BUG-1) |
+| `RevokeSessionByJTI` | Revoke satu sesi (dipakai logout via `RevokeSessionByJTIIfExists`) |
 | `RevokeAllActiveSessionsByUser` | **Revoke semua sesi user** saat reuse refresh token terdeteksi (proteksi pencurian token) |
 
 ### Pola transaksi

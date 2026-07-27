@@ -94,8 +94,8 @@ Catatan penting:
 
 Lihat [api.md](api.md) bagian Authentication Flow untuk diagram lengkap. Ringkas:
 - Login/Register menerbitkan access token (audience `access`, TTL 15 menit) + refresh token (audience `refresh`, TTL 720 jam) yang disimpan sebagai `AuthSession` di DB dan dikirim sebagai cookie HttpOnly path `/api/v1/auth`.
-- Refresh dirotasi: setiap refresh mencabut session lama dan menerbitkan yang baru.
-- Reuse detection: jika refresh token yang sudah dirotasi dipakai lagi (indikasi pencurian), SEMUA sesi user dicabut.
+- Refresh dirotasi atomik: setiap refresh mencabut session lama dan menerbitkan yang baru dalam satu UPDATE bersyarat (`RotateSession`, fix BUG-1); concurrent refresh tidak menghasilkan sesi ganda.
+- Reuse detection: jika refresh token yang sudah dirotasi dipakai lagi >1 menit setelah rotasi (indikasi pencurian), SEMUA sesi user dicabut; reuse dalam window 1 menit dianggap race sah (tidak revoke-all).
 
 ### 3.3 Pembayaran (booking -> payment -> webhook)
 

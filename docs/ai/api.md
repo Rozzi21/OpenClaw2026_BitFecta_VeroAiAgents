@@ -77,7 +77,7 @@ Poin penting:
 - Dua token dipisah by **audience claim**: `access` (TTL default 15 menit) dan `refresh` (TTL default 720 jam).
 - Refresh token disimpan sebagai `AuthSession` di DB (punya `TokenJTI`), dikirim sebagai **cookie HttpOnly** di path `/api/v1/auth`. Tidak pernah masuk ke JS.
 - Setiap refresh **merotasi** session (revoke lama, terbitkan baru).
-- **Reuse detection**: jika refresh token yang sudah dirotasi dipakai lagi (indikasi pencurian), SEMUA sesi user dicabut + log `refresh_token_reuse_detected`. Lihat `AuthService.Refresh()` di [services.go](../../backend/internal/services/services.go).
+- **Reuse detection**: jika refresh token yang sudah dirotasi dipakai lagi LEBIH DARI 1 menit setelah rotasi (`refreshRotationConcurrentWindow`) — indikasi pencurian — SEMUA sesi user dicabut + log `refresh_token_reuse_detected`. Rotasi di bawah window (concurrent refresh dua tab) hanya ditolak tanpa revoke-all (fix BUG-1; rotasi atomik via `RotateSession`). Lihat `AuthService.Refresh()` di [auth_service.go](../../backend/internal/services/auth_service.go).
 - Guest chat membuat user "Guest Traveler" otomatis tanpa login.
 - Implementasi JWT: [backend/internal/auth/jwt.go](../../backend/internal/auth/jwt.go); cookie: [backend/internal/auth/cookie.go](../../backend/internal/auth/cookie.go); audit: [backend/internal/auth/audit.go](../../backend/internal/auth/audit.go).
 
