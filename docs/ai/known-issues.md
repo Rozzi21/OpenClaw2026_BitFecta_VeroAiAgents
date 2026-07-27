@@ -8,7 +8,7 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit arsitektur backend: 26 Jul 2026 — layering, package dependency, DI, coupling/cohesion, scalability. Kesimpulan: **arsitektur secara keseluruhan baik, tidak perlu redesign**. Temuan arsitektur dicatat di bagian A.8. Temuan teknis spesifik (context propagation, god object, dll) yang overlap dengan SEC-22..SEC-32 tidak diduplikasi — lihat bagian A.4.
 
-> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1 telah diperbaiki (27 Jul 2026); sisanya masih terbuka.
+> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1 dan BUG-2 telah diperbaiki (27 Jul 2026); sisanya masih terbuka.
 
 ---
 
@@ -30,14 +30,19 @@ Perbaikan:
 
 Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
 
-### BUG-2. TINGGI — Panic: Event Bus `Unsubscribe` Close Channel vs `Publish` Send (Data Race)
+### BUG-2. ✅ TINGGI — Panic: Event Bus `Unsubscribe` Close Channel vs `Publish` Send (Data Race) (FIXED 27 Jul 2026)
 
-- **Severity:** High
-- **Root Cause:** `Unsubscribe` memanggil `close(ch)` di bawah `Lock()`, tetapi `Publish` mengirim di bawah `RLock()`. Race: `Publish` mengirim ke channel yang tepat saat itu ditutup `Unsubscribe` → `panic: send on closed channel`. Terpicu saat SSE disconnect berbarengan dengan event publish. Panic terjadi di goroutine publisher, tidak ter-catch `Recovery()`.
-- **Impact:** Panic intermittent saat client SSE putus berbarengan event → potensi crash request/handler.
-- **Affected Files:** `backend/internal/events/bus.go` (`Unsubscribe`, `Publish`); pemicu `handlers.go` (`EventStream`)
-- **Recommendation:** Jangan `close(ch)` di `Unsubscribe`; cukup `delete(b.clients, ch)` dan biarkan `EventStream` berhenti via `c.Request.Context().Done()`.
-- **Complexity:** Low
+**Lokasi:** `backend/internal/events/bus.go` (`Unsubscribe`, `Publish`), `backend/internal/handlers/handlers.go` (`EventStream`).
+
+Dulu `Unsubscribe` memanggil `close(ch)` di bawah `Lock()`, sedangkan `Publish` mengirim ke channel di bawah `RLock()`. Saat client SSE putus berbarengan dengan publish event, `Publish` bisa mengirim ke channel yang tepat saat itu ditutup `Unsubscribe` → `panic: send on closed channel`. Panic terjadi di goroutine publisher (di luar request handler), jadi tidak ter-catch `Recovery()` middleware → potensi crash request/handler intermittent.
+
+Perbaikan:
+
+1. `Unsubscribe` **tidak lagi menutup channel** — hanya `delete(b.clients, ch)` di bawah `Lock()`. Setelah dihapus dari map, bus tidak mengirim lagi ke channel itu, sehingga tidak mungkin ada send-ke-channel-tertutup. Komentar penjelas ditambahkan di `bus.go`.
+2. Subscriber (`EventStream`) tidak bergantung pada channel close untuk berhenti — sudah keluar via `c.Request.Context().Done()` (client disconnect) atau heartbeat. `defer Unsubscribe(client)` kini murni melepas registrasi; sisa event yang masih di-buffer channel di-GC bersama channel saat `EventStream` return.
+3. `Publish` tak berubah (tetap `select { case ch <- event: default: }` non-blocking, aman karena channel tidak pernah ditutup).
+
+Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih. Race-diverifikasi via test ad-hoc `go test -race` (Publish vs Unsubscribe paralel 100×, tidak ada panic/data-race).
 
 ### BUG-3. SEDANG — Resource Leak: HTTP Body `triggerN8N` Tidak Ditutup
 
@@ -997,6 +1002,7 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 | #15 Refresh Promise Timeout | ✅ AbortController 10s di `refreshAccessToken` |
 | #19 Cleanup orphan records | ✅ Unscoped Delete `chat_messages`, `tool_calls`, `ai_logs` sblm hapus session |
 | BUG-1 Race double-rotation refresh | ✅ `RotateSession` atomik + window reuse detection di `AuthService.Refresh` |
+| BUG-2 Panic event bus `Unsubscribe` close channel | ✅ `Unsubscribe` tak tutup channel; `Publish` tak bisa kirim ke channel tertutup |
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.
 

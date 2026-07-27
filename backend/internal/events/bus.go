@@ -31,10 +31,14 @@ func (b *Bus) Subscribe() chan Event {
 	return ch
 }
 
+// Unsubscribe melepas subscriber dari bus. Channel SENGAJA tidak ditutup:
+// Publish mengirim di bawah RLock sehingga close(ch) bisa berpacu dengan send
+// dan memicu "panic: send on closed channel" (BUG-2). Setelah dihapus dari map,
+// bus tidak lagi mengakses channel; subscriber berhenti via context request dan
+// sisa event di-buffer di-GC.
 func (b *Bus) Unsubscribe(ch chan Event) {
 	b.mu.Lock()
 	delete(b.clients, ch)
-	close(ch)
 	b.mu.Unlock()
 }
 
