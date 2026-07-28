@@ -108,9 +108,25 @@ func (s *AIService) Chat(chatCtx ChatContext, req dto.ChatRequest) (ChatResult, 
 		response = "Maaf, saya belum berhasil membuat pesanan Anda karena terjadi kendala pada sistem. Silakan coba beberapa saat lagi."
 	}
 
-	// Refresh selected trip in case this process loaded a stale session pointer.
-	chatSession, _ := s.repo.FindChatSession(sessionID)
-	selectedTripID := chatSession.SelectedTripID
+	// BUG-5 (fixed 28 Jul 2026): fail-closed re-fetch of session state.
+	// The first FindChatSession at the top of Chat() is already validated; this
+	// second fetch refreshes SelectedTripID in case select_package ran during
+	// the tool loop (the in-memory `session` struct is not mutated by the loop).
+	// Previously this used `chatSession, _ := ...`, swallowing the error: on a
+	// transient DB failure chatSession was zero-valued -> selectedTripID=nil ->
+	// the "package already selected" guard below was skipped -> new
+	// recommendations were sent even though the user had already picked a
+	// package (fail-open). Now, on fetch failure we log and suppress
+	// recommendations entirely (state unknown) instead of guessing.
+	var selectedTripID *uuid.UUID
+	sessionStateUnknown := false
+	chatSession, ferr := s.repo.FindChatSession(sessionID)
+	if ferr != nil {
+		log.Printf("[ai] failed to re-fetch chat session %s for recommendation state: %v; suppressing recommendations (fail-closed)", sessionID, ferr)
+		sessionStateUnknown = true
+	} else {
+		selectedTripID = chatSession.SelectedTripID
+	}
 
 	// Compute recommendation control based solely on tool results.
 	showRecommendations := false
@@ -132,6 +148,15 @@ func (s *AIService) Chat(chatCtx ChatContext, req dto.ChatRequest) (ChatResult, 
 	}
 
 	if hasSuccessfulCreateBooking(toolResults) {
+		showRecommendations = false
+		recommendationReason = ""
+		recommendedPackages = nil
+	}
+
+	// BUG-5: fail-closed — if session state could not be re-fetched, do not
+	// emit recommendations (we cannot safely tell whether a package is already
+	// selected). The AI text response is still returned above.
+	if sessionStateUnknown {
 		showRecommendations = false
 		recommendationReason = ""
 		recommendedPackages = nil
@@ -429,14 +454,14 @@ func (s *AIService) refreshMemorySummary(sessionID uuid.UUID) error {
 		parts = append(parts, message.Role+": "+message.Content)
 	}
 	summary := strings.Join(parts, "\n")
-	
+
 	// SEC-21: convert to rune slice before slicing to avoid breaking multi-byte UTF-8 chars
 	runes := []rune(summary)
 	if len(runes) > s.cfg.AIMemoryMaxChars {
 		runes = runes[len(runes)-s.cfg.AIMemoryMaxChars:]
 		summary = string(runes)
 	}
-	
+
 	session.MemorySummary = summary
 	return s.repo.UpdateChatSession(&session)
 }

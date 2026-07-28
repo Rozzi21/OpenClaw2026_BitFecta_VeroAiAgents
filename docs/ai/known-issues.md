@@ -8,7 +8,7 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit arsitektur backend: 26 Jul 2026 — layering, package dependency, DI, coupling/cohesion, scalability. Kesimpulan: **arsitektur secara keseluruhan baik, tidak perlu redesign**. Temuan arsitektur dicatat di bagian A.8. Temuan teknis spesifik (context propagation, god object, dll) yang overlap dengan SEC-22..SEC-32 tidak diduplikasi — lihat bagian A.4.
 
-> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1, BUG-2, dan BUG-4 telah diperbaiki; sisanya masih terbuka.
+> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1, BUG-2, BUG-4, dan BUG-5 telah diperbaiki; sisanya masih terbuka.
 
 ---
 
@@ -71,14 +71,19 @@ Tidak diubah (disengaja, lihat ARCH-3): `http.Server.WriteTimeout=0` tetap globa
 
 Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih. Diff hanya menyentuh `handlers.go` (`EventStream`) + `events/bus.go` (`Subscribe`/`MaxSubscribers`).
 
-### BUG-5. SEDANG — Error Ditelan: `AIService.Chat` Silent-Fail `FindChatSession` → Logic Bypass Rekomendasi
+### BUG-5. ✅ SEDANG — Error Ditelan: `AIService.Chat` Silent-Fail `FindChatSession` → Logic Bypass Rekomendasi (FIXED 28 Jul 2026)
 
-- **Severity:** Medium
-- **Root Cause:** `ai_service.go` baris ~112 `chatSession, _ := s.repo.FindChatSession(sessionID)` mengabaikan error. Bila query gagal sesaat, `selectedTripID=nil` → guard "paket sudah dipilih" dilewati → rekomendasi baru terkirim padahal user sudah memilih (fail-open).
-- **Impact:** Inkonsistensi workflow rekomendasi pada DB flake.
-- **Affected Files:** `backend/internal/services/ai_service.go` (`Chat()`)
-- **Recommendation:** Tangani error; fail-closed (`showRecommendations=false`) atau kembalikan error 500. Jangan telan `_`.
-- **Complexity:** Low
+**Lokasi:** `backend/internal/services/ai_service.go` (`Chat()`).
+
+Dulu `Chat()` menulis `chatSession, _ := s.repo.FindChatSession(sessionID)` — error ditelan. Bila query gagal sesaat (DB flake / pool habis), `chatSession` zero-struct → `selectedTripID=nil` → guard "paket sudah dipilih" dilewati → rekomendasi baru terkirim padahal user sudah memilih paket. Fail-open, bukan fail-closed.
+
+Perbaikan:
+
+1. Error re-fetch kini ditangani eksplisit. Bila `FindChatSession` kedua gagal, service meng-log (`[ai] failed to re-fetch chat session ... suppressing recommendations (fail-closed)`), menandai `sessionStateUnknown=true`.
+2. **Fail-closed**: saat state tidak terverifikasi, seluruh rekomendasi ditekan (`showRecommendations=false`, `recommendationReason=""`, `recommendedPackages=nil`) karena tidak bisa dipastikan apakah paket sudah dipilih. Guard "paket sudah dipilih" tidak lagi bisa di-bypass oleh kegagalan DB sesaat.
+3. Respons teks AI tetap dikirim ke user (tidak 500) agar UX tidak putus pada flake sesaat.
+
+Verifikasi: `go build ./...` + `go vet ./...` + `gofmt` bersih. Diff hanya menyentuh `ai_service.go` (`Chat()`).
 
 ### BUG-6. SEDANG — Race: Guest Session Dihapus Cleanup Saat Request In-Flight
 
@@ -1013,6 +1018,7 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 | BUG-1 Race double-rotation refresh | ✅ `RotateSession` atomik + window reuse detection di `AuthService.Refresh` |
 | BUG-2 Panic event bus `Unsubscribe` close channel | ✅ `Unsubscribe` tak tutup channel; `Publish` tak bisa kirim ke channel tertutup |
 | BUG-4 Context leak SSE zombie (`WriteTimeout=0`) | ✅ Write-error detection (`ResponseController`+deadline) + max lifetime 30mnt + cap subscriber 100 + `time.NewTicker` |
+| BUG-5 Silent-fail `FindChatSession` bypass rekomendasi | ✅ Error ditangani; gagal re-fetch → suppress rekomendasi (fail-closed) di `AIService.Chat` |
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.
 
