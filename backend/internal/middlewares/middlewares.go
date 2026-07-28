@@ -1,6 +1,7 @@
 package middlewares
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
@@ -48,6 +49,8 @@ func RequestID() gin.HandlerFunc {
 		}
 		c.Header("X-Request-ID", requestID)
 		c.Set("request_id", requestID)
+		ctx := context.WithValue(c.Request.Context(), "request_id", requestID)
+		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}
 }

@@ -134,3 +134,67 @@ ufw reload
 For production, put Nginx/Caddy in front and expose HTTPS instead of opening
 port `8080` directly.
 
+### A. Contoh Konfigurasi Nginx (`/etc/nginx/sites-available/vero-travel`)
+```nginx
+server {
+    listen 80;
+    server_name api.rozzi.my.id;
+
+    # Redirect all HTTP requests to HTTPS
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name api.rozzi.my.id;
+
+    ssl_certificate /etc/letsencrypt/live/api.rozzi.my.id/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.rozzi.my.id/privkey.pem;
+
+    # Security Headers
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        
+        # Websocket and SSE support
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Request-ID $request_id;
+        
+        # Disable buffering for SSE (Server-Sent Events)
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 24h;
+    }
+}
+```
+
+### B. Contoh Konfigurasi Caddy (`/etc/caddy/Caddyfile`)
+```caddy
+api.rozzi.my.id {
+    # Auto TLS via Let's Encrypt / ZeroSSL
+
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+    }
+
+    reverse_proxy 127.0.0.1:8080 {
+        header_up Host {host}
+        header_up X-Real-IP {remote}
+        header_up X-Forwarded-For {client_ip}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+```
+

@@ -169,3 +169,135 @@ flowchart LR
 8. Ganti semua nilai dev placeholder di `.env.example`; jangan menyalin `.env` atau `.env.example` ke image.
 9. Set `TRUSTED_PROXIES` ke CIDR reverse proxy yang sah (load balancer/nginx/Caddy) agar `c.ClientIP()` akurat dan rate limit per-IP efektif (SEC-14). Kosongkan hanya jika API langsung terpapar ke internet tanpa proxy.
 10. Rotasi password database dan secret setelah deployment pertama.
+
+---
+
+## Strategi Backup & Restore (PRR-P0-2)
+
+Untuk mencegah kehilangan data transaksi, booking, dan media, berikut adalah strategi backup dan restore yang direkomendasikan untuk production.
+
+### 1. Backup PostgreSQL (Database)
+Gunakan utilitas `pg_dump` untuk melakukan ekspor basis data secara berkala (misalnya harian).
+
+**Skrip Backup Otomatis (`backup-db.sh`):**
+```bash
+#!/bin/bash
+BACKUP_DIR="/var/backups/postgres"
+TIMESTAMP=$(date +%F_%H%M%S)
+DATABASE_URL="postgres://vero_user:password_anda@127.0.0.1:5432/vero_travel"
+
+mkdir -p "$BACKUP_DIR"
+pg_dump "$DATABASE_URL" | gzip > "$BACKUP_DIR/vero_travel_$TIMESTAMP.sql.gz"
+
+# Hapus backup yang lebih tua dari 30 hari
+find "$BACKUP_DIR" -type f -name "*.sql.gz" -mtime +30 -delete
+```
+
+Pasang di Cron untuk berjalan setiap hari jam 2 pagi:
+```cron
+0 2 * * * /opt/vero-travel-agents/scripts/backup-db.sh
+```
+
+**Prosedur Restore:**
+```bash
+# Ekstrak backup
+gunzip /var/backups/postgres/vero_travel_xxxx.sql.gz
+
+# Drop database saat ini dan buat ulang (WARNING: Data saat ini hilang)
+dropdb -h 127.0.0.1 -U vero_user vero_travel
+createdb -h 127.0.0.1 -U vero_user vero_travel
+
+# Restore data
+psql -h 127.0.0.1 -U vero_user -d vero_travel -f /var/backups/postgres/vero_travel_xxxx.sql
+```
+
+### 2. Backup File Media (`uploads/`)
+Gunakan utilitas snapshot atau alat sinkronisasi berkala seperti `restic` atau `rclone` untuk mencadangkan direktori `backend/uploads/` ke Object Storage (seperti AWS S3 atau Cloudflare R2).
+
+**Backup Sederhana dengan Rclone:**
+```bash
+rclone sync /opt/vero-travel-agents/backend/uploads remote-s3:vero-travel-uploads-backup
+```
+
+---
+
+## Panduan Scaling & Horizontal Multi-Instance (PRR-P1-3)
+
+Aplikasi saat ini dirancang untuk berjalan sebagai single-instance. Sebelum melakukan horizontal scaling (misalnya di Kubernetes HPA), beberapa komponen stateful in-memory harus dimigrasi:
+
+1. **Event Bus (Realtime/SSE)**
+   - *Masalah*: Event bus `events.Bus` berjalan in-memory. Jika pengguna terhubung ke Instance A, mereka tidak akan menerima event yang dipublikasikan dari Instance B.
+   - *Solusi*: Ganti implementasi `Bus` di `backend/internal/events/bus.go` menggunakan Redis Pub/Sub sebagai message broker pusat.
+2. **Rate Limiter Per-IP**
+   - *Masalah*: Rate limiter disimpan di `sync.Map` in-memory per-instance. Budget rate limit efektif menjadi `N × limit` di mana N adalah jumlah instance.
+   - *Solusi*: Ubah middleware rate limiter untuk memeriksa kuota menggunakan Redis (misalnya dengan skrip sliding window Redis).
+3. **Cleanup Chat Sessions Ticker**
+   - *Masalah*: Fungsi `startChatSessionCleanup` berjalan di internal ticker Go. Saat multi-instance, job pembersihan ini akan berpacu dan membebani database secara redundan.
+   - *Solusi*: Matikan internal ticker di `main.go` untuk production. Delegasikan jalannya pembersihan sesi (`CleanupExpiredChatSessions`) ke external scheduler seperti **Kubernetes CronJob** atau Cron systemd server.
+4. **Terminasi TLS & Load Balancer**
+   - Gunakan Kubernetes Ingress Controller (seperti Nginx Ingress) atau Cloud Load Balancer untuk terminasi SSL/TLS dan mendistribusikan traffic ke pod API secara merata menggunakan algoritma round-robin.
+
+---
+
+## Panduan Deploy Frontend (PRR-P2-3)
+
+Kedua frontend Next.js (`frontend/` dan `backoffice-frontend/`) dapat di-deploy secara reproducible menggunakan Docker standalone build.
+
+### Dockerfile Standalone Next.js (Contoh untuk `frontend`)
+```dockerfile
+FROM node:20-alpine AS base
+
+# Install dependencies only when needed
+FROM base AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Rebuild the source code only when needed
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+# Production image, copy all the files and run next
+FROM base AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]
+```
+
+---
+
+## Observability, Alerting, dan Runbook Insiden (PRR-P1-1, PRR-P3-1)
+
+Sistem memantau kesehatan melalui `/healthz` (liveness), `/readyz` (readiness), dan metrik di `/metrics`.
+
+### 1. Kebijakan Alerting Utama (Recommended Prometheus Alerts)
+- **High Error Rate**: Memicu alert jika persentase HTTP Status `5xx` di `/metrics` melebihi `5%` dalam jangka waktu 5 menit.
+- **Latency Spike**: Memicu alert jika durasi HTTP Request `p95` melebihi `5 detik` dalam 5 menit (mengindikasikan delay AI provider / DB bottleneck).
+- **Database Down**: Memicu alert jika `/readyz` mengembalikan kode selain `200` atau database health check mengembalikan error.
+
+### 2. Runbook Insiden Dasar
+- **Kasus `/readyz` Gagal (Database Down)**:
+  1. Periksa log backend: `journalctl -u vero-travel-api -f` atau periksa log pod Kubernetes.
+  2. Periksa status PostgreSQL: `systemctl status postgresql` atau konektivitas DB.
+  3. Periksa apakah pool koneksi database penuh (atur `MaxOpenConns` lebih besar jika beban tinggi).
+- **Kasus Latency Spike (Respons AI Lambat)**:
+  1. Periksa status upstream AI provider (misalnya OpenAI status page).
+  2. Jika upstream AI mengalami overload, sistem akan otomatis mengembalikan respons fallback lokal atau timeout 35s. Administrator dapat mengganti model ke yang lebih ringan melalui variabel env `AI_MODEL`.

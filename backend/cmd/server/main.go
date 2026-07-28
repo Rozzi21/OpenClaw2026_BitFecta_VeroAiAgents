@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"log/slog"
+
+	"github.com/rozzi/vero-ai-travel-agents/backend/internal/utils"
 	"errors"
 	"log"
 	"net/http"
@@ -27,9 +30,16 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("invalid configuration: %v", err)
 	}
+
+	// Initialize structured logging with slog and inject context handler (PRR-P2-1)
+	var logHandler slog.Handler
 	if cfg.AppEnv == "production" {
+		logHandler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
 		gin.SetMode(gin.ReleaseMode)
+	} else {
+		logHandler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
 	}
+	slog.SetDefault(slog.New(utils.NewContextHandler(logHandler)))
 
 	db, err := database.Connect(cfg)
 	if err != nil {
@@ -68,7 +78,8 @@ func main() {
 		middlewares.SecureHeaders(),
 		middlewares.CORS(cfg.CORSAllowedOrigins),
 		middlewares.RateLimit(),
-		gin.Logger(),
+		middlewares.Metrics(), // Record Prometheus metrics (PRR-P1-1)
+		middlewares.StructuredLogger(), // Structured request logs with slog (PRR-P2-1)
 		middlewares.Recovery(),
 	)
 	router.Static("/uploads", "./uploads")

@@ -2,6 +2,7 @@ package routes
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/handlers"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/middlewares"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/models"
@@ -11,6 +12,9 @@ import (
 func Register(router *gin.Engine, h *handlers.Handler, s *services.Services) {
 	router.GET("/health", h.Health)
 	router.GET("/health/database", h.DatabaseHealth)
+	router.GET("/healthz", h.Liveness)
+	router.GET("/readyz", h.Readiness)
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	router.GET("/openapi.json", h.OpenAPI)
 	router.GET("/docs", h.ScalarDocs)
 

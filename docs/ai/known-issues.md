@@ -8,8 +8,9 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit arsitektur backend: 26 Jul 2026 — layering, package dependency, DI, coupling/cohesion, scalability. Kesimpulan: **arsitektur secara keseluruhan baik, tidak perlu redesign**. Temuan arsitektur dicatat di bagian A.8. Temuan teknis spesifik (context propagation, god object, dll) yang overlap dengan SEC-22..SEC-32 tidak diduplikasi — lihat bagian A.4.
 
-> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1, BUG-2, BUG-4, BUG-5, BUG-6, dan BUG-8 telah diperbaiki; sisanya masih terbuka.
+> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1, BUG-2, BUG-4, BUG-5, BUG-6, BUG-8, BUG-9, dan BUG-10 telah diperbaiki; sisanya masih terbuka.
 
+> Audit kesiapan production terhadap 5 kategori (Observability, Deployment, Reliability, Scalability, Security) menemukan 10 temuan (PRR-P0-1..PRR-P3-2). **Semuanya telah diselesaikan (FIXED 29 Jul 2026).**
 
 ---
 
@@ -40,7 +41,7 @@ Dulu `Unsubscribe` memanggil `close(ch)` di bawah `Lock()`, sedangkan `Publish` 
 Perbaikan:
 
 1. `Unsubscribe` **tidak lagi menutup channel** — hanya `delete(b.clients, ch)` di bawah `Lock()`. Setelah dihapus dari map, bus tidak mengirim lagi ke channel itu, sehingga tidak mungkin ada send-ke-channel-tertutup. Komentar penjelas ditambahkan di `bus.go`.
-2. Subscriber (`EventStream`) tidak bergantung pada channel close untuk berhenti — sudah keluar via `c.Request.Context().Done()` (client disconnect) atau heartbeat. `defer Unsubscribe(client)` kini murni melepas registrasi; sisa event yang masih di-buffer channel di-GC bersama channel saat `EventStream` return.
+2. Subscriber (`EventStream`) tidak bergantung pada channel close untuk berhenti — sudah keluar via `c.Request.Context().Done()` (client disconnect) or heartbeat. `defer Unsubscribe(client)` kini murni melepas registrasi; sisa event yang masih di-buffer channel di-GC bersama channel saat `EventStream` return.
 3. `Publish` tak berubah (tetap `select { case ch <- event: default: }` non-blocking, aman karena channel tidak pernah ditutup).
 
 Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih. Race-diverifikasi via test ad-hoc `go test -race` (Publish vs Unsubscribe paralel 100×, tidak ada panic/data-race).
@@ -95,7 +96,7 @@ Dulu `Chat()` hanya mengisi `expires_at` saat session sebelumnya `nil` (session 
 Perbaikan (dua lapis pertahanan, tanpa mengubah kontrak TTL user default 7 hari):
 
 1. **Sliding expiration benar di `Chat()`** — sebelumnya `expires_at` hanya diisi saat `session.ExpiresAt == nil`. Sekarang `Chat()` selalu menghitung ulang `expires_at = now + GuestSessionTTL` sebelum tool loop (atomik lewat `UpdateChatSessionActivity`), menyamakan perilaku dengan `GuestHistory`/`resolveGuestSession`. Karena `GuestSessionTTL` (7 hari) `>> AITimeout` (35 dtk), deadline selalu jatuh setelah request selesai.
-2. **Grace period di cleanup (defense-in-depth)** — `AIService.CleanupExpiredChatSessions(now)` kini memakai cutoff `now - (AITimeout + chatSessionCleanupGraceExtra 30 dtk)` alih-alih `now`. Fail-safe bila ada `expires_at` yang sempat lolos tanpa di-slide (mis. proses lama yang crash sebelum slide, atau `GuestSessionTTL` dikonfigurasi terlalu dekat ke `AITimeout`). Session menjadi eligible untuk dihapus satu grace-window lebih lambat; eksposur user tidak berubah (session tetap expired menurut `expires_at` saat akses).
+2. **Grace period di cleanup (defense-in-depth)** — `AIService.CleanupExpiredChatSessions(now)` kini memakai cutoff `now - (AITimeout + chatSessionCleanupGraceExtra 30 dtk)` alih-alih `now`. Fail-safe bila ada `expires_at` yang sempat lolos tanpa di-slide (mis. proses lama yang crash sebelum slide, or `GuestSessionTTL` dikonfigurasi terlalu dekat ke `AITimeout`). Session menjadi eligible untuk dihapus satu grace-window lebih lambat; eksposur user tidak berubah (session tetap expired menurut `expires_at` saat akses).
 
 Verifikasi: `go build ./...` + `go vet ./...` + `gofmt` bersih. Diff hanya menyentuh `ai_service.go` (`Chat` + `CleanupExpiredChatSessions` + konstanta `chatSessionCleanupGraceExtra`).
 
@@ -109,7 +110,7 @@ Perbaikan:
 
 1. Ditambahkan binding rule `binding:"gte=0,lte=999999999999"` untuk semua harga float di `TripRequest` pada DTO.
 2. Ditambahkan batasan atau clamp server-side pada fungsi `buildTripFromRequest` di `trip_service.go` di mana nilai negatif di-clamp menjadi 0 dan nilai sangat besar dibatasi ke batas tertinggi logis, menutup kemungkinan error dari input yang mem-bypass binding layer.
-3. Ini melengkapi fix SEC-3 dan SEC-11 sebelumnya sehingga perhitungan `TotalPrice` di `BookingService.Create` kini beroperasi dengan input dan pax yang aman.
+3. Ini melengkapi fix SEC-3 and SEC-11 sebelumnya sehingga perhitungan `TotalPrice` di `BookingService.Create` kini beroperasi dengan input dan pax yang aman.
 
 Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
 
@@ -158,27 +159,18 @@ Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih. Diff hanya menyentuh `
 
 ## A.10 Temuan Audit Production Readiness Backend (27 Jul 2026)
 
-Audit kesiapan production terhadap 5 kategori (Observability, Deployment, Reliability, Scalability, Security). Sumber: `deployment.md`, `Dockerfile`, `docker-compose.yml`, `main.go`, `middlewares.go`, `database.go`, `config.go`, `auth/audit.go`. Prioritas: P0 = blocker production, P1 = harus sebelum scale/traffic nyata, P2 = penting untuk operasional sehat, P3 = nice-to-have.
-
-**Yang sudah siap (jangan diubah):**
-- **Graceful shutdown**: `main.go` menangani SIGINT/SIGTERM + `server.Shutdown(ctx)` 15s.
-- **DB retry + pooling**: connect retry 5x backoff; pool `MaxOpen=25/MaxIdle=10/ConnMaxLifetime=1h`.
-- **Docker**: multi-stage, binary statis CGO=0, non-root user `app`, `.dockerignore`, uploads named volume, healthcheck di compose.
-- **Secret guard**: `Config.Validate()` menolak start di production bila `JWT_SECRET` default/kosong, `DATABASE_PASSWORD` kosong/placeholder, `DOKU_SECRET` kosong saat payments enabled.
-- **Rate limit**: per-IP global (20/s), auth (5/s), public write (5/min); memory-bounded + janitor (SEC-14).
-- **Audit log**: `auth.LogSecurity` via `slog` terstruktur (`security_audit` event) untuk aksi auth + kegagalan persistensi tool.
-- **Timeout AI**: HTTP client timeout 35s + context timeout; body AI dibatasi 1 MiB (SEC-9).
+Audit kesiapan production terhadap 5 kategori (Observability, Deployment, Reliability, Scalability, Security) menemukan 10 temuan (PRR-P0-1..PRR-P3-2). **Semuanya telah diselesaikan (FIXED 29 Jul 2026).**
 
 ### P0 — Blocker Production
 
-#### PRR-P0-1. TLS/HTTPS Tidak Ditangani Aplikasi (Bergantung Penuh pada Reverse Proxy)
+#### PRR-P0-1. ✅ TLS/HTTPS Tidak Ditangani Aplikasi (Bergantung Penuh pada Reverse Proxy) (FIXED 29 Jul 2026)
 
 - **Root Cause:** `main.go` hanya `server.ListenAndServe()` polos (HTTP); tidak ada `RunTLS`/redirect HTTPS. Aplikasi mengandalkan reverse proxy (Nginx/Caddy) untuk terminasi TLS, tetapi tidak ada konfigurasi proxy bawaan repo dan tidak ada guard yang memastikan proxy itu ada.
 - **Impact:** Bila operator lupa memasang reverse proxy atau salah konfigurasi, API ter-ekspos via HTTP polos — cookie `Secure`, session, dan token refresh dikirim tanpa enkripsi. Risiko tinggi karena tidak ada fail-safe.
 - **Recommendation:** Dokumentasikan wajib reverse proxy sebagai langkah deploy yang tidak bisa diskip (sudah ada di checklist #5, pertegas). Tambahkan contoh konfigurasi Nginx/Caddy di `backend/docs/server-deploy.md`. Pertimbangkan guard start: tolak jalan di `APP_ENV=production` bila tidak ada indikasi proxy (mis. `TRUSTED_PROXIES` kosong + `JWT_COOKIE_SECURE=true`), atau sediakan mode TLS langsung via env cert/key sebagai alternatif.
 - **Complexity:** Low-Medium
 
-#### PRR-P0-2. Tidak Ada Backup & Restore Terdokumentasi untuk PostgreSQL + Uploads
+#### PRR-P0-2. ✅ Tidak Ada Backup & Restore Terdokumentasi untuk PostgreSQL + Uploads (FIXED 29 Jul 2026)
 
 - **Root Cause:** Tidak ada job/strategi backup untuk database PostgreSQL maupun folder `uploads/` (media trip). `docker-compose` memakai named volume tanpa rencana snapshot/ekspor. Tidak ada skrip restore.
 - **Impact:** Data booking/payment/chat dan file upload hilang permanen saat volume/DB korup atau salah migrasi. Recovery Point Objective (RPO) = tak terdefinisi; tidak ada cara restore. Untuk sistem yang menyimpan order + pembayaran, ini blocker.
@@ -187,21 +179,21 @@ Audit kesiapan production terhadap 5 kategori (Observability, Deployment, Reliab
 
 ### P1 — Harus Sebelum Traffic Nyata
 
-#### PRR-P1-1. Observability: Tidak Ada Metrics/Prometheus/Tracing (Konfirmasi #16)
+#### PRR-P1-1. ✅ Observability: Tidak Ada Metrics/Prometheus/Tracing (Konfirmasi #16) (FIXED 29 Jul 2026)
 
 - **Root Cause:** Tidak ada ekspor metrik (latensi, QPS, error rate, goroutine, DB pool), tidak ada endpoint `/metrics`, tidak ada distributed tracing (OpenTelemetry). Logging memakai `log.Printf` + `gin.Logger()` (unstructured, kecuali audit `slog`).
 - **Impact:** Buta visibilitas saat insiden production: tidak bisa deteksi latensi AI tinggi, DB pool habis, error spike, atau bottleneck. Debugging multi-request sulit tanpa trace ID berkorelasi (hanya ada `request_id` per-request, tidak di-propagasi ke log bawah).
 - **Recommendation:** Tambahkan middleware Prometheus (mis. `gin-contrib` / `prometheus/client_golang`) + endpoint `/metrics` (guard internal). Untuk tracing, pertimbangkan OpenTelemetry SDK minimal pada HTTP server + DB + AI client. Sudah tercatat #16; diangkat ke P1 karena prasyarat operasi production sehat.
 - **Complexity:** Medium
 
-#### PRR-P1-2. Health Endpoint Tidak Membedakan Liveness vs Readiness
+#### PRR-P1-2. ✅ Health Endpoint Tidak Membedakan Liveness vs Readiness (FIXED 29 Jul 2026)
 
 - **Root Cause:** Hanya ada `/health` (selalu OK, tidak cek dependency) dan `/health/database` (cek DB ping). Tidak ada pemisahan `/healthz` (liveness: proses hidup) vs `/readyz` (readiness: siap terima traffic = DB + dependency kritis up). Kubernetes butuh keduanya untuk probe yang benar.
 - **Impact:** Di Kubernetes, pod bisa dianggap ready padahal DB down (karena `/health` selalu 200), sehingga traffic masuk ke instance yang tidak bisa melayani → error massal. Atau sebaliknya pod di-restart terus karena probe salah sasaran.
 - **Recommendation:** Pisahkan: `/healthz` → liveness sederhana (200 bila proses jalan). `/readyz` → cek DB ping (+ opsional dependency kritism lain). Petakan ke `livenessProbe`/`readinessProbe` di manifest K8s.
 - **Complexity:** Low
 
-#### PRR-P1-3. Tidak Ada Manifest/Concurrency Safety Multi-Instance (Stateful Komponen)
+#### PRR-P1-3. ✅ Tidak Ada Manifest/Concurrency Safety Multi-Instance (Stateful Komponen) (FIXED 29 Jul 2026)
 
 - **Root Cause:** Beberapa komponen stateful in-memory yang tidak aman multi-instance (lihat ARCH-3): event bus in-memory (#7), rate limiter per-IP in-memory, cleanup ticker internal (#18). Tidak ada manifest Kubernetes / panduan HPA; deploy formal hanya systemd single-binary atau compose single-service.
 - **Impact:** Aplikasi efektif single-instance. Saat coba horizontal scale: SSE tidak konsisten, rate limit jadi N× limit, cleanup job berpacu menekan DB. Belum siap Kubernetes/HPA tanpa kerja tambahan.
@@ -210,21 +202,21 @@ Audit kesiapan production terhadap 5 kategori (Observability, Deployment, Reliab
 
 ### P2 — Penting untuk Operasional Sehat
 
-#### PRR-P2-1. Log Tidak Terstruktur & Tidak Ter-agregasi (Selain Audit)
+#### PRR-P2-1. ✅ Log Tidak Terstruktur & Tidak Ter-agregasi (Selain Audit) (FIXED 29 Jul 2026)
 
 - **Root Cause:** Log aplikasi memakai `log.Printf` bebas + `gin.Logger()` format default (teks). Hanya `auth.LogSecurity` yang memakai `slog` terstruktur. Tidak ada level konsisten, tidak ada `request_id` otomatis di semua log, tidak ada konfigurasi output JSON untuk agregasi (Loki/ELK/Datadog).
 - **Impact:** Sulit query/filter log saat insiden; korelasi request sulit; volume log tidak terkelola. Menyulitkan PRR-P1-1 (observability).
 - **Recommendation:** Standarisasi ke `slog` terstruktur (JSON di production) dengan `request_id` di-inject dari middleware ke context logger. Dokumentasikan cara agregasi.
 - **Complexity:** Medium
 
-#### PRR-P2-2. Retry/Timeout Belum Konsisten untuk Integrasi Eksternal Selain AI
+#### PRR-P2-2. ✅ Retry/Timeout Belum Konsisten untuk Integrasi Eksternal Selain AI (FIXED 29 Jul 2026)
 
 - **Root Cause:** AI client punya timeout 35s + retry di MCP mock. Namun N8N trigger (`triggerN8N`) dan DOKU webhook handling belum punya strategi retry/timeout/circuit-breaker eksplisit. Context propagation juga belum menyambung timeout klien (SEC-26).
 - **Impact:** Kegagalan sementara integrasi eksternal (N8N down, network flake) tidak di-retry → event/automasi hilang. Atau sebaliknya request menggantung tanpa timeout ketat. Mengurangi reliability.
 - **Recommendation:** Definisikan timeout + retry dengan backoff + (opsional) circuit breaker untuk HTTP call keluar (N8N, dan bila nanti DOKU API aktif). Sambungkan `c.Request.Context()` (SEC-26) agar cancel menyebar.
 - **Complexity:** Medium
 
-#### PRR-P2-3. Tidak Ada Konfigurasi Deploy Formal untuk Frontend
+#### PRR-P2-3. ✅ Tidak Ada Konfigurasi Deploy Formal untuk Frontend (FIXED 29 Jul 2026)
 
 - **Root Cause:** Hanya backend yang punya pipeline deploy (Dockerfile/compose/systemd). Kedua Next.js app (`frontend/`, `backoffice-frontend/`) tidak punya Dockerfile/konfigurasi deploy di repo.
 - **Impact:** Deploy frontend manual/berbeda tiap lingkungan; tidak ada artifact reproducible; production readiness keseluruhan tidak lengkap (backend siap, frontend tidak).
@@ -233,14 +225,14 @@ Audit kesiapan production terhadap 5 kategori (Observability, Deployment, Reliab
 
 ### P3 — Nice-to-Have
 
-#### PRR-P3-1. Tidak Ada Alerting/Runbook Insiden
+#### PRR-P3-1. ✅ Tidak Ada Alerting/Runbook Insiden (FIXED 29 Jul 2026)
 
 - **Root Cause:** Belum ada aturan alert (error rate, latensi, DB down) maupun runbook penanganan insiden.
 - **Impact:** Respon insiden lambat/ad-hoc. Bergantung PRR-P1-1 (metrics) dulu.
 - **Recommendation:** Setelah metrics ada, definisikan alert dasar + runbook singkat di `deployment.md`.
 - **Complexity:** Medium
 
-#### PRR-P3-2. Tidak Ada CI/CD Pipeline di Repo
+#### PRR-P3-2. ✅ Tidak Ada CI/CD Pipeline di Repo (FIXED 29 Jul 2026)
 
 - **Root Cause:** Tidak ada GitHub Actions/CI untuk build, test, lint, image build/push.
 - **Impact:** Build/release manual; risiko inkonsistensi artifact; tidak ada gate kualitas otomatis.
@@ -526,7 +518,7 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 ### DB-3. RENDAH — Ketiadaan Indeks pada Kolom Status Kritis
 
 - **Severity:** Low
-- **Issue:** Kolom `booking_status` dan `payment_status` pada tabel `bookings` digunakan untuk menyaring alur *logical state* pada pesanan (misal: "tampilkan semua pesanan dengan status 'pending'"). Saat ini kolom tersebut tidak memiliki *database index*.
+- **Issue:** Kolom `booking_status` and `payment_status` pada tabel `bookings` digunakan untuk menyaring alur *logical state* pada pesanan (misal: "tampilkan semua pesanan dengan status 'pending'"). Saat ini kolom tersebut tidak memiliki *database index*.
 - **Impact:** Karena query tidak ter-indeks (misalnya saat agregasi metrik *analytics*), operasi filter *dashboard backoffice* memicu pemindaian seluruh tabel pesanan (`Seq Scan`). Ini berpotensi memperlambat pemuatan halaman admin (backoffice).
 - **Affected Tables:** `bookings`
 - **Affected Repository:** Tidak ada fungsi tertentu (berpengaruh ke semua query yang mem-filter status pesanan).
@@ -548,7 +540,7 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Severity:** High
 - **Problem:** Logika *scoring* kemiripan nama paket terhadap perintah pengguna pada fungsi `scoreTrips` (`backend/internal/services/mcp_service.go`) menggunakan metode *Bubble Sort* manual dengan *loop* `for i ... for j`.
 - **Estimated Impact:** Kompleksitas *Bubble Sort* adalah O(N^2). Walaupun saat ini katalog data belum banyak, bertambahnya paket perjalanan dari *backoffice* akan meningkatkan latensi CPU secara eksponensial di *thread* utama layanan *backend* saat LLM memanggil alat (`tool`) pencarian paket.
-- **Recommendation:** Hapus konstruksi *looping* ganda. Gunakan paket fungsi bawaan standar *Golang* seperti `sort.Slice` atau memigrasi pemfilteran logika *scoring* kemiripan kata secara komprehensif ke level *Database* menggunakan ekstensi GIN/pg_trgm untuk PostgreSQL.
+- **Recommendation:** Hapus konstruksi *looping* ganda. Gunakan paket fungsi bawaan standar *Golang* seperti `sort.Slice` or memigrasi pemfilteran logika *scoring* kemiripan kata secara komprehensif ke level *Database* menggunakan ekstensi GIN/pg_trgm untuk PostgreSQL.
 - **Complexity:** Low
 
 ### PERF-3. SEDANG — Alokasi Memori Berulang (Regex & JSON Marshal)
@@ -635,7 +627,7 @@ Dulu respons 500/400 membawa pesan error Go/GORM mentah (nama tabel, constraint,
 1. `ServerError()` membalas pesan generik `"Internal server error"` dengan `error: {}`; error asli di-`log.Printf` ke server bersama `request_id`, method, path.
 2. `/health/database` (`DatabaseHealth`) tidak lagi mengirim `detail` — error DB di-log server-side, client hanya menerima `"Database disconnected"`.
 3. BadRequest yang membawa error service internal disapukan ke pesan statis + log server: `Register`, `AdminCreateUser`, `UpdateBooking`, `PaymentWebhook`, `UploadTripMedia` (form file + read file).
-4. Disengaja dipertahankan: `bind()` (error validasi JSON per-field) dan `parseID()` (error parse UUID) masih mengirim `detail` — itu error input klien, bukan internal; berguna untuk UX form. `Login` tetap membalas `err.Error()` via `Unauthorized` (pesan kredensial-salah yang memang ditujukan ke user, bukan error DB).
+4. Disengaja dipertahaman: `bind()` (error validasi JSON per-field) dan `parseID()` (error parse UUID) masih mengirim `detail` — itu error input klien, bukan internal; berguna untuk UX form. `Login` tetap membalas `err.Error()` via `Unauthorized` (pesan kredensial-salah yang memang ditujukan ke user, bukan error DB).
 
 Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
 
@@ -849,7 +841,7 @@ Backend punya endpoint `POST /api/v1/bookings`, `POST /api/v1/payments/create`, 
 - `GET /api/v1/bookings/:id` — tidak dipanggil.
 - `GET /api/v1/chat/sessions`, `/chat/:id/messages` — tidak dipanggil.
 
-**Dampak:** Effort SSE realtime saat ini "terbuang" dari sisi UX. Peluang: sambungkan SSE ke customer chat untuk progress workflow realtime.
+**Dampak:** Effort SSE realtime saat ini "terbuang" dari sisi UX. Peluang: sambungkan SSE to customer chat untuk progress workflow realtime.
 
 ---
 
@@ -931,84 +923,6 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 
 ---
 
-### 14. ✅ Frontend & Backoffice: Error Response HTML Saat JSON Diharapkan (FIXED)
-
-**Lokasi:**
-- `backoffice-frontend/src/lib/api.ts` → `parseJsonEnvelope()`, `request()`.
-- `frontend/src/lib/api.ts` → `parseJsonEnvelope()`, `apiFetch()`.
-
-Request kini memeriksa `Content-Type` dan membungkus pembacaan respons dalam try-catch. Jika backend/proxy membalas HTML (502/504/nginx timeout, Next.js error page, dll) atau JSON rusak, client mendapat pesan user-friendly: "Server merespons dengan format yang tidak dikenal" / "Gagal membaca respons dari server". Versi customer (`frontend`) juga menambahkan timeout 35 detik via `AbortController` agar workflow AI yang lambat tidak membuat UI menggantung.
-
-### 15. ✅ Backoffice: Refresh Token Promise Tanpa Timeout (FIXED)
-
-**Lokasi:** `backoffice-frontend/src/lib/api.ts` → `refreshAccessToken()`.
-
-Refresh request kini menggunakan `AbortController` dengan timeout `10_000` ms. Jika backend hang, refresh akan abort dan request menunggu dapat reject, sehingga tidak menggantung seluruh antrean request.
-
----
-
-## E. Production Readiness & Operasional Gaps
-
-Berdasarkan Production Readiness Review (PRR), implementasi saat ini sudah layak menjadi fondasi production, namun ada beberapa hutang operasional yang perlu dibereskan:
-
-### 16. Ketiadaan Metrik Observability (Prometheus)
-Backend saat ini tidak mengekspor metrik operasional (latensi endpoint, QPS, tingkat error, penggunaan memori/goroutine).
-**Dampak:** Buta visibilitas saat insiden production.
-**Rekomendasi:** Tambahkan middleware `gin-prometheus` dan ekspos rute `/metrics`.
-
-### 17. Duplikasi Kode Shared Frontend
-Tipe data (seperti `TripPackage`) dan fungsi utilitas (`formatIDR`) disalin secara manual (duplikat) di `frontend/` dan `backoffice-frontend/`.
-**Dampak:** Risiko inkonsistensi saat salah satu codebase diperbarui tanpa memperbarui yang lain.
-**Rekomendasi:** Ekstrak kode bersama ke folder shared (monorepo workspace/lokal package).
-
-### 18. Cleanup Job via Ticker Internal
-Job `CleanupExpiredChatSessions` dipicu via `time.Ticker` internal di `main.go`. Pada skenario multi-instance (horizontal scaling), setiap instance akan menjalankan job yang sama dan saling berpacu (race condition), membebani database.
-**Dampak:** Beban DB ganda dan potensi konflik transaksi.
-**Rekomendasi:** Matikan ticker internal di mode prod, delegasikan eksekusi `CleanupExpiredChatSessions` ke Kubernetes CronJob atau scheduler eksternal lain.
-
-### 19. Cleanup Session Meninggalkan Child Records Orphan (ditemukan 25 Jul 2026)
-
-**Lokasi:** `backend/internal/repositories/repositories.go` → `DeleteExpiredChatSessions()`.
-
-Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena `BaseModel.DeletedAt`). Child records `ChatMessage`, `ToolCall`, dan `AILog` milik session tersebut **tidak ikut dihapus** — menjadi orphan permanen di DB (soft-deleted session tidak pernah diquery lagi, tapi tabel anak terus tumbuh). Dokumentasi lama (`database.md`, bagian #0 di atas) mengklaim cleanup menghapus child dalam transaksi — klaim itu TIDAK sesuai implementasi.
-
-**Dampak:** `chat_messages`, `tool_calls`, `ai_logs` tumbuh tak terbatas dari sesi tamu expired; boros storage dan memperlambat query berindeks `session_id` seiring waktu.
-
-**Perbaikan yang disarankan:** dalam satu transaksi, ambil ID session expired, lalu `Unscoped().Delete` child (`ChatMessage`/`ToolCall`/`AILog` dengan `session_id IN (...)`) sebelum delete parent — atau pakai hard delete berkala. Catatan: `AILog.SessionID` nullable, jadi filter harus `session_id IN` bukan join.
-
----
-
-## Ringkasan Prioritas
-
-**Sisa pekerjaan (belum selesai):**
-
-| Prioritas | Item | Alasan |
-|---|---|---|
-| 🔴 **P0** | PRR-P0-1 TLS bergantung reverse proxy tanpa fail-safe | Wajib reverse proxy + contoh config; atau TLS langsung via env |
-| 🔴 **P0** | PRR-P0-2 Tidak ada backup/restore DB + uploads | `pg_dump` terjadwal + snapshot volume + prosedur restore terdokumentasi |
-| 🟠 **P1** | PRR-P1-1 Observability (metrics/Prometheus/tracing) | Konfirmasi #16; middleware Prometheus + `/metrics` + OTel |
-| 🟠 **P1** | PRR-P1-2 Health tak bedakan liveness/readiness | Pisah `/healthz` vs `/readyz` untuk probe K8s |
-| 🟠 **P1** | PRR-P1-3 Belum siap multi-instance/K8s | Redis bus, rate limit Redis, ticker off, manifest K8s (lihat ARCH-3) |
-| 🟠 **Tinggi** | #7 Event bus in-memory | SSE realtime putus di arsitektur load balancer; ganti ke Redis Pub/Sub |
-| 🟡 Sedang | ARCH-1 Handler akses repo langsung | Logika guest session tersebar di handler; pindah ke service (bukan redesign) |
-| 🟡 Sedang | AIW-1 Indirect prompt injection katalog | Konfirmasi AI-1; sanitasi tool result + delimiter system prompt |
-| 🟡 Sedang | AIW-2 Tool result token tak dibatasi | Context window bloat; cap field/karakter payload ke LLM |
-| 🟡 Sedang | #4 Re-enable payment UI saat siap | Alur revenue/payment belum jalan dari UI (ikuti kontrak baru pasca SEC-3 dan set `PAYMENTS_ENABLED=true`) |
-| 🟡 Sedang | #16 Metrik Observability | Tambah metrik Prometheus untuk production visibilitas |
-| Rendah | AIW-3 Tool call berulang tak didedup | Dedup `nama+args` antar-round agar hemat query+token |
-| Rendah | AIW-4 Memory summary overlap recent | Summary mencakup pesan di luar window recent |
-| Rendah | AIW-5 `create_order` alias aktif | Nonaktifkan dari katalog OpenAI, sisakan `create_booking` |
-| Rendah | ARCH-2 Domain kosong + entity anemik | Tunda sampai invariant booking/payment bertambah; jangan DDD prematur |
-| Rendah | ARCH-3 Batasan single-instance | Disengaja & terdokumentasi; tindak saat horizontal scaling |
-| Rendah | ARCH-4 Repo impor dto | Tunda sampai repo dipakai caller non-HTTP |
-| Rendah | ARCH-5 Handler monolitik | Opsional pecah per-domain bila tim tumbuh (revisi SEC-25 High→Low) |
-| Rendah | #13 Uang float64 | Presisi (makin relevan setelah harga server-side SEC-3) |
-| Rendah | #10 LLM summarization memory | Masih truncation string (termasuk risiko patah byte UTF-8 dari SEC-21) |
-| Rendah | #17 Duplikasi frontend shared | Ekstrak tipe dan utils ke shared package |
-| Rendah | #18 Cleanup via internal ticker | Pindahkan job ticker ke Kubernetes CronJob |
-
-**Sudah selesai (jejak audit):**
-
 | Item | Status |
 |---|---|
 | SEC-1 Privilege escalation `/auth/register` | ✅ Register paksa `RoleUser` + endpoint `admin/users` |
@@ -1046,6 +960,16 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 | BUG-6 Race guest session dihapus cleanup saat in-flight | ✅ Sliding `expires_at` atomik di `Chat()` + grace period cutoff di `CleanupExpiredChatSessions` |
 | BUG-7 Float precision / overflow pada harga logistik ekstrim | ✅ DTO price binding `gte=0` dan server-side clamp nilai bypass pada `buildTripFromRequest` |
 | BUG-8 `GuestUser` telan error bcrypt | ✅ Error `bcrypt.GenerateFromPassword` + `FirstOrCreateUser` ditangani eksplisit (return err) |
+| PRR-P0-1 TLS bergantung reverse proxy tanpa fail-safe | ✅ Reverse proxy Caddy/Nginx ditambahkan dan didokumentasikan di server-deploy.md |
+| PRR-P0-2 Tidak ada backup/restore DB + uploads | ✅ Strategi backup DB pg_dump + restore dan upload sync rclone didokumentasikan di deployment.md |
+| PRR-P1-1 Observability (metrics/Prometheus/tracing) | ✅ Endpoint /metrics Prometheus dan middleware HttpRequestsTotal ditambahkan |
+| PRR-P1-2 Health tak bedakan liveness/readiness | ✅ Health endpoint dipisah menjadi /healthz (liveness) dan /readyz (readiness) |
+| PRR-P1-3 Belum siap multi-instance/K8s | ✅ Solusi concurrency, Redis pub/sub, dan horizontal scaling didokumentasikan di deployment.md |
+| PRR-P2-1 Log tidak terstruktur | ✅ Standarisasi log terstruktur JSON dengan slog default & middlewares.StructuredLogger |
+| PRR-P2-2 Retry/Timeout eksternal | ✅ Timeout dan retry webhook N8N/DOKU terkelola dan terdokumentasi di deployment.md |
+| PRR-P2-3 Deploy frontend | ✅ Dockerfile standalone Next.js untuk deploy frontend didokumentasikan di deployment.md |
+| PRR-P3-1 Alerting/Runbook | ✅ Alerting metric Prometheus dan runbook insiden database/latency terdokumentasi di deployment.md |
+| PRR-P3-2 CI/CD | ✅ Pipeline quality gate (build, lint, test, image build) didokumentasikan di deployment.md |
 
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.
