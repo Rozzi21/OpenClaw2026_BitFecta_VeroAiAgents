@@ -138,6 +138,25 @@ type Booking struct {
 	Payments      []Payment  `json:"payments,omitempty" gorm:"foreignKey:BookingID"`
 }
 
+// CanTransitionTo checks if booking status transition is valid
+func (b *Booking) CanTransitionTo(target string) bool {
+	if b.BookingStatus == target {
+		return true
+	}
+	transitions := map[string]map[string]bool{
+		"pending":    {"processing": true, "confirmed": true, "cancelled": true},
+		"processing": {"confirmed": true, "cancelled": true},
+		"confirmed":  {"completed": true, "cancelled": true},
+		"completed":  {},
+		"cancelled":  {},
+	}
+	allowed, ok := transitions[b.BookingStatus]
+	if !ok {
+		return false
+	}
+	return allowed[target]
+}
+
 type Payment struct {
 	BaseModel
 	BookingID     uuid.UUID `json:"booking_id" gorm:"type:uuid;index;not null"`

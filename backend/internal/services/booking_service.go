@@ -84,19 +84,6 @@ func (s *BookingService) Find(id, userID uuid.UUID, isStaff bool) (models.Bookin
 	return booking, nil
 }
 
-// allowedTransitions defines the valid status moves for backoffice order
-// management. Terminal/completed states cannot transition backwards except
-// through cancellation from intermediate states.
-func allowedTransitions() map[string]map[string]bool {
-	return map[string]map[string]bool{
-		"pending":    {"processing": true, "confirmed": true, "cancelled": true},
-		"processing": {"confirmed": true, "cancelled": true},
-		"confirmed":  {"completed": true, "cancelled": true},
-		"completed":  {},
-		"cancelled":  {},
-	}
-}
-
 // UpdateStatus allows backoffice staff to advance a booking through the
 // internal workflow. It enforces allowed transitions server-side and returns
 // the updated booking.
@@ -113,8 +100,7 @@ func (s *BookingService) UpdateStatus(id, userID uuid.UUID, isStaff bool, req dt
 		return booking, nil
 	}
 
-	transitions, ok := allowedTransitions()[current]
-	if !ok || !transitions[target] {
+	if !booking.CanTransitionTo(target) {
 		return models.Booking{}, fmt.Errorf("invalid status transition from %s to %s", current, target)
 	}
 

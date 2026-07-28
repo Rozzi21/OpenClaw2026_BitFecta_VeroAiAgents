@@ -300,13 +300,11 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Impact:** Melanggar aturan `coding-rules.md` §1.1 ("handler TIDAK boleh akses DB langsung"). Logika ownership/expiry guest session tersebar di handler (`GuestHistory`, `resolveGuestSession`, `ChatMessages` masing-masing mengulang cek `UserID == nil` + `ExpiresAt`), bukan terpusat di service — inkonsistensi ownership check mudah muncul saat aturan berubah.
 - **Fix (29 Jul 2026):** Memindahkan logika query, validasi session, dan pembaruan aktivitas dari handler ke dalam method-method `AIService` (`ListSessions`, `GetSessionMessages`, `GetGuestHistory`, `ResolveGuestSession`). Handler kini hanya mengelola cookie, request parsing, HTTP response mapping, dan memanggil API service.
 
-### ARCH-2. SEDANG — Domain Boundary Kosong + Entity Anemik
+### ARCH-2. ✅ SEDANG — Domain Boundary Kosong + Entity Anemik (FIXED 29 Jul 2026)
 
 - **Severity:** Medium
 - **Finding:** `backend/internal/domain/` kosong (hanya `.gitkeep`). Entity GORM di `models/models.go` anemik (struct + tag, tanpa behavior); semua business rule hidup di service. Untuk domain sederhana (CRUD trip/booking) ini pragmatis dan dapat diterima. Namun state machine booking (`allowedTransitions` di `booking_service.go`) adalah domain logic murni yang layak pindah ke entity/domain method bila aturan transisi makin kompleks.
-- **Impact:** Belum merugikan hari ini. Risiko muncul saat invariant domain bertambah (mis. aturan cancel + refund + komisi): tanpa domain layer, invariant tersebar di banyak service dan sulit diuji terisolasi.
-- **Recommendation:** Pertahankan pragmatisme sekarang. Bila invariant booking/payment bertambah, pindahkan `allowedTransitions` + validasi transisi ke method pada `models.Booking` atau package `domain` — tanpa mengubah kontrak service. Jangan paksakan DDD penuh.
-- **Complexity:** Low (saat dibutuhkan)
+- **Fix (29 Jul 2026):** Pindahkan logika transisi status booking `allowedTransitions` dan validasinya ke method `CanTransitionTo` pada struct `models.Booking` di `backend/internal/models/models.go`. `BookingService.UpdateStatus` kini memanggil method tersebut untuk validasi transisi status booking.
 
 ### ARCH-3. RENDAH — Scalability: Batasan Single-Instance yang Disengaja
 
@@ -947,6 +945,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | PRR-P3-1 Alerting/Runbook | ✅ Alerting metric Prometheus dan runbook insiden database/latency terdokumentasi di deployment.md |
 | PRR-P3-2 CI/CD | ✅ Pipeline quality gate (build, lint, test, image build) didokumentasikan di deployment.md |
 | ARCH-1 Akses DB langsung dari handler | ✅ Pindahkan logika DB session guest & authenticated ke AIService |
+| ARCH-2 Domain boundary kosong / entity anemik | ✅ Pindahkan allowedTransitions ke method CanTransitionTo pada models.Booking |
 
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.
