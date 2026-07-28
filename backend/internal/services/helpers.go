@@ -53,6 +53,41 @@ func firstNonZero(values ...float64) float64 {
 	return 0
 }
 
+func sanitizePromptInjection(s string) string {
+	// Strip characters/words often used in prompt injection.
+	// Also clean potential HTML/JS tags, and common command override words.
+	lower := strings.ToLower(s)
+	if strings.Contains(lower, "ignore previous instructions") ||
+		strings.Contains(lower, "abaikan instruksi") ||
+		strings.Contains(lower, "system prompt") {
+		// Neutralize known injection phrases
+		s = strings.ReplaceAll(s, "ignore previous instructions", "[removed phrase]")
+		s = strings.ReplaceAll(s, "Ignore previous instructions", "[removed phrase]")
+		s = strings.ReplaceAll(s, "abaikan instruksi", "[removed phrase]")
+		s = strings.ReplaceAll(s, "Abaikan instruksi", "[removed phrase]")
+	}
+	// Limit special control characters that might confuse delimiters
+	s = strings.ReplaceAll(s, "`", "'")
+	s = strings.ReplaceAll(s, "<", "[")
+	s = strings.ReplaceAll(s, ">", "]")
+	return s
+}
+
+func limitString(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) > maxLen {
+		return string(runes[:maxLen]) + "..."
+	}
+	return s
+}
+
+func limitSlice(slice []string, maxItems int) []string {
+	if len(slice) > maxItems {
+		return slice[:maxItems]
+	}
+	return slice
+}
+
 func parseDate(value string) *time.Time {
 	if strings.TrimSpace(value) == "" {
 		return nil

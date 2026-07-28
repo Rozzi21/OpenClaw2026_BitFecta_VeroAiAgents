@@ -38,7 +38,7 @@ func Catalog() []ToolDefinition {
 		{Name: ToolSelectPackage, Description: "Mark a package as selected by the user. Call this when the user explicitly chooses a package by name or ID. Once a package is selected, stop recommending other packages unless the user asks for alternatives.", Inputs: []string{"trip_id"}, Enabled: true},
 		{Name: ToolCollectOrderDetail, Description: "Record order details collected from the user (pax, travel date, contact). Call this while gathering information before creating the actual booking. Does NOT create an order.", Inputs: []string{"trip_id", "adult_pax", "child_pax", "travel_date", "contact_name", "contact_email", "contact_phone"}, Enabled: true},
 		{Name: ToolCreateBooking, Description: "Create the final order in the database. Call this only when all required info is complete: trip_id, adult_pax, child_pax, travel_date, and contact_email OR contact_phone. Returns success=true with order_id only after database save succeeds.", Inputs: []string{"trip_id", "adult_pax", "child_pax", "travel_date", "contact_name", "contact_email", "contact_phone"}, Enabled: true},
-		{Name: ToolCreateOrder, Description: "Alias of create_booking.", Inputs: []string{"trip_id", "adult_pax", "child_pax", "travel_date", "contact_name", "contact_email", "contact_phone"}, Enabled: true},
+		{Name: ToolCreateOrder, Description: "Alias of create_booking. Disabled from OpenAI catalog to prevent model confusion.", Inputs: []string{"trip_id", "adult_pax", "child_pax", "travel_date", "contact_name", "contact_email", "contact_phone"}, Enabled: false},
 
 		// Legacy mock tools — disabled from the OpenAI catalog.
 		{Name: ToolSearchDestination, Description: "Legacy tool.", Inputs: []string{"prompt", "budget", "season"}, Enabled: false},

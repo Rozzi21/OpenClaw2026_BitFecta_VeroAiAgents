@@ -146,18 +146,24 @@ func (s *MCPService) executeSearchTrips(sessionID uuid.UUID, payload map[string]
 
 	results := make([]map[string]interface{}, 0, len(scored))
 	for _, trip := range scored {
+		// AIW-2: Limit fields returned to LLM to prevent context window bloat.
+		// AIW-1: Sanitize content strings to prevent indirect prompt injection.
+		sanitizedSummary := sanitizePromptInjection(trip.Summary)
+		var sanitizedHighlights []string
+		for _, h := range trip.Highlights {
+			sanitizedHighlights = append(sanitizedHighlights, sanitizePromptInjection(h))
+		}
+
 		results = append(results, map[string]interface{}{
 			"id":          trip.ID.String(),
-			"title":       trip.Title,
-			"slug":        trip.Slug,
-			"destination": trip.Destination,
-			"location":    trip.Location,
-			"category":    trip.Category,
-			"duration":    trip.Duration,
-			"summary":     trip.Summary,
+			"title":       sanitizePromptInjection(trip.Title),
+			"destination": sanitizePromptInjection(trip.Destination),
+			"location":    sanitizePromptInjection(trip.Location),
+			"category":    sanitizePromptInjection(trip.Category),
+			"duration":    sanitizePromptInjection(trip.Duration),
+			"summary":     limitString(sanitizedSummary, 150),
 			"price":       firstNonZero(trip.BasePrice, trip.EstimatedPrice),
-			"highlights":  trip.Highlights,
-			"image_url":   trip.ImageURL,
+			"highlights":  limitSlice(sanitizedHighlights, 3),
 		})
 	}
 
