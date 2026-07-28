@@ -141,14 +141,18 @@ Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih. Diff hanya menyentuh `
   2. `mcp_service.go` (`executeCreateBooking`) memvalidasi parser output sebelum memanggil `bookings.Create`. Jika parsing gagal (mengembalikan `nil`), eksekusi tool dihentikan dan me-return error format tanggal tidak valid ke LLM.
   Verifikasi: `go build ./...` + `go test ./...` bersih.
 
-### BUG-10. RENDAH — Concurrent Request: Lost Update `MemorySummary` via GORM `Save`
+### BUG-10. ✅ RENDAH — Concurrent Request: Lost Update `MemorySummary` via GORM `Save` (FIXED 28 Jul 2026)
 
 - **Severity:** Low
 - **Root Cause:** `refreshMemorySummary` memakai `UpdateChatSession(&session)` (GORM `Save` menulis semua kolom, overlap DB-2) atas struct session yang dibaca sebelumnya; berpacu dengan `UpdateChatSessionActivity`/`UpdateChatSessionSelectedTrip` yang memakai `Updates` kolom tertentu → field `selected_trip_id`/`last_activity_at` yang baru diubah bisa tertimpa.
 - **Impact:** Lost update state session pada chat paralel cepat.
-- **Affected Files:** `backend/internal/services/ai_service.go` (`refreshMemorySummary`), `backend/internal/repositories/repositories.go` (`UpdateChatSession`)
+- **Affected Files:** `backend/internal/services/ai_service.go` (`refreshMemorySummary`), `backend/internal/repositories/repositories.go` (`UpdateChatSession` - kini dipisah ke `UpdateChatSessionMemorySummary`)
 - **Recommendation:** Update hanya kolom `memory_summary` (`Updates(map)` / `Select`), jangan `Save` seluruh struct.
 - **Complexity:** Low
+- **Fix (28 Jul 2026):**
+  1. Repositori menambahkan metode `UpdateChatSessionMemorySummary(sessionID, summary)` yang hanya memperbarui kolom `memory_summary` menggunakan `.Update()`.
+  2. `refreshMemorySummary` memanggil `UpdateChatSessionMemorySummary(sessionID, summary)` alih-alih `UpdateChatSession(&session)`.
+  Verifikasi: `go build ./...` + `go test ./...` bersih.
 
 ---
 

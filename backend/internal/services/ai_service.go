@@ -465,10 +465,6 @@ func (s *AIService) refreshMemorySummary(sessionID uuid.UUID) error {
 	if err != nil || count < int64(s.cfg.AIMemorySummaryAfter) {
 		return err
 	}
-	session, err := s.repo.FindChatSession(sessionID)
-	if err != nil {
-		return err
-	}
 	tailLimit := s.cfg.AIMemoryMaxChars / 200
 	if tailLimit < 20 {
 		tailLimit = 20
@@ -490,6 +486,5 @@ func (s *AIService) refreshMemorySummary(sessionID uuid.UUID) error {
 		summary = string(runes)
 	}
 
-	session.MemorySummary = summary
-	return s.repo.UpdateChatSession(&session)
+	return s.repo.UpdateChatSessionMemorySummary(sessionID, summary)
 }

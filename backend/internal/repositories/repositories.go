@@ -52,6 +52,10 @@ func (r *Repository) UpdateChatSession(session *models.ChatSession) error {
 	return r.DB.Save(session).Error
 }
 
+func (r *Repository) UpdateChatSessionMemorySummary(sessionID uuid.UUID, summary string) error {
+	return r.DB.Model(&models.ChatSession{}).Where("id = ?", sessionID).Update("memory_summary", summary).Error
+}
+
 func (r *Repository) UpdateChatSessionSelectedTrip(sessionID uuid.UUID, tripID *uuid.UUID) error {
 	return r.DB.Model(&models.ChatSession{}).Where("id = ?", sessionID).Update("selected_trip_id", tripID).Error
 }
