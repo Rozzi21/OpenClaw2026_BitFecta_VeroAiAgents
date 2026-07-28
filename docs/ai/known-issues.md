@@ -128,7 +128,7 @@ Perbaikan:
 Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih. Diff hanya menyentuh `auth_service.go` (`GuestUser`).
 
 
-### BUG-9. RENDAH — Invalid Input: `parseDate` Mengembalikan `nil` Diam-diam untuk `travel_date` AI
+### BUG-9. ✅ RENDAH — Invalid Input: `parseDate` Mengembalikan `nil` Diam-diam untuk `travel_date` AI (FIXED 28 Jul 2026)
 
 - **Severity:** Low
 - **Root Cause:** `parseDate` mengembalikan `nil` untuk format selain RFC3339/`2006-01-02`. Tool `create_booking` meneruskan `travel_date` teks natural LLM ("12 Agustus 2026") yang sering gagal parse → `TravelDate=NULL` tanpa error; booking sukses tanpa tanggal.
@@ -136,6 +136,10 @@ Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih. Diff hanya menyentuh `
 - **Affected Files:** `backend/internal/services/helpers.go` (`parseDate`), `backend/internal/services/booking_service.go` (`Create`), `backend/internal/services/mcp_service.go` (`executeCreateBooking`)
 - **Recommendation:** Normalisasi/validasi `travel_date` di `executeCreateBooking` (minta ISO ke LLM, parse lebih banyak layout) atau error tool bila tanggal wajib gagal parse.
 - **Complexity:** Low-Medium
+- **Fix (28 Jul 2026):**
+  1. `helpers.go` (`parseDate`) dimodifikasi untuk mem-parse lebih banyak layout tanggal (termasuk natural Indonesian dan English month names, standard slash/dot/dash format).
+  2. `mcp_service.go` (`executeCreateBooking`) memvalidasi parser output sebelum memanggil `bookings.Create`. Jika parsing gagal (mengembalikan `nil`), eksekusi tool dihentikan dan me-return error format tanggal tidak valid ke LLM.
+  Verifikasi: `go build ./...` + `go test ./...` bersih.
 
 ### BUG-10. RENDAH — Concurrent Request: Lost Update `MemorySummary` via GORM `Save`
 

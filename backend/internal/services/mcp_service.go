@@ -348,6 +348,13 @@ func (s *MCPService) executeCreateBooking(payload map[string]interface{}) ToolRe
 	}
 
 	log.Printf("[mcp] create_booking saving trip_id=%s adult_pax=%d child_pax=%d contact_email=%q contact_phone=%q travel_date=%q", req.TripID, req.AdultPax, req.ChildPax, req.ContactEmail, req.ContactPhone, req.TravelDate)
+	// BUG-9: Validate that travel_date parses successfully before booking.
+	parsedDate := parseDate(req.TravelDate)
+	if parsedDate == nil {
+		log.Printf("[mcp] create_booking failed invalid_date travel_date=%q", req.TravelDate)
+		return ToolResult{Tool: mcp.ToolCreateBooking, Status: "failed", Data: map[string]interface{}{"success": false, "error": "invalid travel_date format, please use ISO format (YYYY-MM-DD)"}}
+	}
+
 	booking, err := s.bookings.Create(guestUser.ID, req)
 	if err != nil {
 		log.Printf("[mcp] create_booking save failed error=%v", err)
