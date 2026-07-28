@@ -84,7 +84,7 @@ func (s *PaymentService) Webhook(req dto.PaymentWebhookRequest) (models.Payment,
 		if err != nil {
 			return models.Payment{}, errors.New("invalid timestamp format")
 		}
-		
+
 		now := time.Now().UTC()
 		if timestamp.Before(now.Add(-5*time.Minute)) || timestamp.After(now.Add(5*time.Minute)) {
 			return models.Payment{}, errors.New("webhook timestamp expired")
@@ -145,12 +145,12 @@ func (s *PaymentService) verifyDokuSignature(body []byte, timestamp string, sign
 	// Standard DOKU signature uses Digest = Base64(SHA256(Body))
 	// Then Signature = HMAC_SHA256(Secret, "Client-Id:" + "Request-Id:" + "Request-Timestamp:" + "Request-Target:" + "Digest")
 	// Since we only receive Signature and Timestamp in req, we'll verify the old way or a simplified DOKU way.
-	// Let's assume the signature passed is HMAC_SHA256 of (Timestamp + Body) for this fix, 
-	// or properly verify the string-to-sign. 
-	
+	// Let's assume the signature passed is HMAC_SHA256 of (Timestamp + Body) for this fix,
+	// or properly verify the string-to-sign.
+
 	// Because full DOKU implementation needs Client-ID etc., and we just need replay protection (SEC-12),
 	// we will hash timestamp + raw body.
-	
+
 	message := timestamp + "|" + string(body)
 	mac := hmac.New(sha256.New, []byte(s.cfg.DOKUSecret))
 	_, _ = mac.Write([]byte(message))

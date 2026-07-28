@@ -72,9 +72,11 @@ Poin penting:
 
 Guest ownership: handler membuat atau memvalidasi anonymous `ChatSession` berdasarkan cookie HttpOnly `vero_chat_session`, lalu meneruskan `ChatContext{SessionID, UserID:nil}`. `UserID` nullable membedakan guest dari session authenticated tanpa shared guest account. Aktivitas chat memperbarui `LastActivityAt` dan `ExpiresAt` secara sliding (default 7 hari). `GET /chat/history` memakai cookie yang sama dan tidak menerima/menampilkan session ID.
 
+Sliding expiration kini konsisten (sejak BUG-6, 28 Jul 2026): `Chat()` selalu menghitung ulang `expires_at = now + GuestSessionTTL` **sebelum** tool loop — dulu hanya diisi saat `ExpiresAt==nil` sehingga session near-expiry mempertahankan deadline lama dan bisa terhapus cleanup di tengah proses. Atomik lewat `UpdateChatSessionActivity`, menyamakan perilaku `GuestHistory`/`resolveGuestSession`. Karena `GuestSessionTTL` (7 hari) `>> AITimeout` (35 dtk), deadline selalu jatuh setelah request selesai.
+
 Memory management: `refreshMemorySummary()` membuat ringkasan percakapan setelah >= `AI_MEMORY_SUMMARY_AFTER` (default 12) pesan, dibatasi `AI_MEMORY_MAX_CHARS` (default 1800). Alih-alih memuat SEMUA pesan sesi, method ini memakai `TailChatMessages()` untuk mengambil hanya pesan terakhir (estimasi berdasarkan `AIMemoryMaxChars / 200`), lalu memotong string ke maksimum karakter. Ini menghindari loading ribuan row pada sesi panjang.
 
-Cleanup session dijalankan sementara oleh ticker satu jam di `cmd/server/main.go`, tetapi memanggil `AIService.CleanupExpiredChatSessions()` sehingga scheduler eksternal (cron/systemd/Kubernetes CronJob) dapat menggantikan adapter tanpa memindahkan SQL.
+Cleanup session dijalankan sementara oleh ticker satu jam di `cmd/server/main.go`, tetapi memanggil `AIService.CleanupExpiredChatSessions()` sehingga scheduler eksternal (cron/systemd/Kubernetes CronJob) dapat menggantikan adapter tanpa memindahkan SQL. Sejak BUG-6 (28 Jul 2026), method ini memakai cutoff `now - (AITimeout + chatSessionCleanupGraceExtra 30 dtk)` — bukan `now` — sebagai fail-safe agar ticker tidak pernah menghapus session yang masih ditulis request in-flight (repo `DeleteExpiredChatSessions` tidak diubah; geseran cutoff dilakukan di service agar repo tetap generik).
 
 ### MCPService
 

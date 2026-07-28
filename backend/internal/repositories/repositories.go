@@ -82,23 +82,23 @@ func (r *Repository) DeleteExpiredChatSessions(before time.Time) (int64, error) 
 	if tx.Error != nil {
 		return 0, tx.Error
 	}
-	
+
 	var sessions []models.ChatSession
 	if err := tx.Select("id").Where("expires_at IS NOT NULL AND expires_at < ?", before).Find(&sessions).Error; err != nil {
 		tx.Rollback()
 		return 0, err
 	}
-	
+
 	if len(sessions) == 0 {
 		tx.Rollback()
 		return 0, nil
 	}
-	
+
 	var ids []string
 	for _, s := range sessions {
 		ids = append(ids, s.ID.String())
 	}
-	
+
 	// Unscoped() is used to hard delete the orphans, since keeping soft deleted
 	// records for anonymous guest sessions just wastes space.
 	if err := tx.Unscoped().Where("session_id IN ?", ids).Delete(&models.ChatMessage{}).Error; err != nil {
@@ -113,17 +113,17 @@ func (r *Repository) DeleteExpiredChatSessions(before time.Time) (int64, error) 
 		tx.Rollback()
 		return 0, err
 	}
-	
+
 	result := tx.Where("id IN ?", ids).Delete(&models.ChatSession{})
 	if result.Error != nil {
 		tx.Rollback()
 		return 0, result.Error
 	}
-	
+
 	if err := tx.Commit().Error; err != nil {
 		return 0, err
 	}
-	
+
 	return result.RowsAffected, nil
 }
 

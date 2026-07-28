@@ -8,7 +8,7 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit arsitektur backend: 26 Jul 2026 — layering, package dependency, DI, coupling/cohesion, scalability. Kesimpulan: **arsitektur secara keseluruhan baik, tidak perlu redesign**. Temuan arsitektur dicatat di bagian A.8. Temuan teknis spesifik (context propagation, god object, dll) yang overlap dengan SEC-22..SEC-32 tidak diduplikasi — lihat bagian A.4.
 
-> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1, BUG-2, BUG-4, dan BUG-5 telah diperbaiki; sisanya masih terbuka.
+> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1, BUG-2, BUG-4, BUG-5, dan BUG-6 telah diperbaiki; sisanya masih terbuka.
 
 ---
 
@@ -85,14 +85,18 @@ Perbaikan:
 
 Verifikasi: `go build ./...` + `go vet ./...` + `gofmt` bersih. Diff hanya menyentuh `ai_service.go` (`Chat()`).
 
-### BUG-6. SEDANG — Race: Guest Session Dihapus Cleanup Saat Request In-Flight
+### BUG-6. ✅ SEDANG — Race: Guest Session Dihapus Cleanup Saat Request In-Flight (FIXED 28 Jul 2026)
 
-- **Severity:** Medium
-- **Root Cause:** `Chat()` memvalidasi expiry di awal lalu menjalankan tool loop hingga ~35 dtk. Ticker `CleanupExpiredChatSessions` bisa menghapus session tepat saat melewati expiry di tengah proses → penulisan pesan/selected trip gagal atau data hilang, error intermiten sulit direproduksi.
-- **Impact:** Booking/chat gagal/hilang acak pada session mendekati expiry.
-- **Affected Files:** `backend/internal/services/ai_service.go` (`Chat`), `backend/internal/repositories/repositories.go` (`DeleteExpiredChatSessions`), `backend/cmd/server/main.go` (ticker)
-- **Recommendation:** Tandai session in-flight (skip cleanup) atau pastikan TTL >> `AITimeout`; perpanjang `expires_at` atomik sebelum tool loop.
-- **Complexity:** Medium
+**Lokasi:** `backend/internal/services/ai_service.go` (`Chat`, `CleanupExpiredChatSessions`). Repo `DeleteExpiredChatSessions` dan ticker `main.go` tidak diubah (cutoff digeser dari service agar repo tetap generik).
+
+Dulu `Chat()` hanya mengisi `expires_at` saat session sebelumnya `nil` (session baru). Session eksisting *near-expiry* mempertahankan `expires_at` lama — berbeda dari `GuestHistory`/`resolveGuestSession` yang selalu `now + TTL`. Ticker `CleanupExpiredChatSessions` (tiap jam) menghapus session saat `expires_at < now`; bila session melewati expiry tepat di tengah tool loop (hingga ~35 dtk), `AddChatMessage` assistant akhir / `UpdateChatSessionSelectedTrip` gagal atau data hilang → booking/chat gagal/hilang acak, error intermiten sulit direproduksi.
+
+Perbaikan (dua lapis pertahanan, tanpa mengubah kontrak TTL user default 7 hari):
+
+1. **Sliding expiration benar di `Chat()`** — sebelumnya `expires_at` hanya diisi saat `session.ExpiresAt == nil`. Sekarang `Chat()` selalu menghitung ulang `expires_at = now + GuestSessionTTL` sebelum tool loop (atomik lewat `UpdateChatSessionActivity`), menyamakan perilaku dengan `GuestHistory`/`resolveGuestSession`. Karena `GuestSessionTTL` (7 hari) `>> AITimeout` (35 dtk), deadline selalu jatuh setelah request selesai.
+2. **Grace period di cleanup (defense-in-depth)** — `AIService.CleanupExpiredChatSessions(now)` kini memakai cutoff `now - (AITimeout + chatSessionCleanupGraceExtra 30 dtk)` alih-alih `now`. Fail-safe bila ada `expires_at` yang sempat lolos tanpa di-slide (mis. proses lama yang crash sebelum slide, atau `GuestSessionTTL` dikonfigurasi terlalu dekat ke `AITimeout`). Session menjadi eligible untuk dihapus satu grace-window lebih lambat; eksposur user tidak berubah (session tetap expired menurut `expires_at` saat akses).
+
+Verifikasi: `go build ./...` + `go vet ./...` + `gofmt` bersih. Diff hanya menyentuh `ai_service.go` (`Chat` + `CleanupExpiredChatSessions` + konstanta `chatSessionCleanupGraceExtra`).
 
 ### BUG-7. SEDANG — Float Precision / Overflow: `total` Booking pada Harga Ekstrem (Tanpa Guard Harga)
 
@@ -1019,6 +1023,7 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 | BUG-2 Panic event bus `Unsubscribe` close channel | ✅ `Unsubscribe` tak tutup channel; `Publish` tak bisa kirim ke channel tertutup |
 | BUG-4 Context leak SSE zombie (`WriteTimeout=0`) | ✅ Write-error detection (`ResponseController`+deadline) + max lifetime 30mnt + cap subscriber 100 + `time.NewTicker` |
 | BUG-5 Silent-fail `FindChatSession` bypass rekomendasi | ✅ Error ditangani; gagal re-fetch → suppress rekomendasi (fail-closed) di `AIService.Chat` |
+| BUG-6 Race guest session dihapus cleanup saat in-flight | ✅ Sliding `expires_at` atomik di `Chat()` + grace period cutoff di `CleanupExpiredChatSessions` |
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.
 

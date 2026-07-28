@@ -35,11 +35,30 @@ type ChatResult struct {
 	RecommendedPackages  []models.Trip `json:"recommended_packages"`
 }
 
+// chatSessionCleanupGraceExtra is the safety buffer added on top of AITimeout
+// for the cleanup grace window. It covers the non-LLM work that still runs
+// after the tool loop (persist assistant message, memory summary refresh,
+// handler cookie write) before the request fully finishes.
+const chatSessionCleanupGraceExtra = 30 * time.Second
+
 // CleanupExpiredChatSessions is intentionally a small service operation so an
 // in-process ticker can be replaced by cron/systemd/Kubernetes later without
 // duplicating cleanup SQL outside the repository.
+//
+// BUG-6 (fixed 28 Jul 2026): the effective cutoff is `now - (AITimeout +
+// graceExtra)` instead of `now`. Chat() already slides expires_at forward
+// before the tool loop, but a request could in theory still be in-flight when
+// a stale expires_at slips through (e.g. an old process that crashed before
+// the slide, or a config where GuestSessionTTL is set close to AITimeout).
+// Deleting only sessions expired longer than one full request budget makes it
+// impossible for the hourly ticker to delete a session that an in-flight
+// request is still writing to (fail-safe / defense-in-depth on top of the
+// sliding fix). Sessions become eligible for deletion one grace window later;
+// expiry semantics for users are unchanged.
 func (s *AIService) CleanupExpiredChatSessions(now time.Time) (int64, error) {
-	return s.repo.DeleteExpiredChatSessions(now)
+	grace := s.cfg.AITimeout + chatSessionCleanupGraceExtra
+	cutoff := now.Add(-grace)
+	return s.repo.DeleteExpiredChatSessions(cutoff)
 }
 
 func (s *AIService) Chat(chatCtx ChatContext, req dto.ChatRequest) (ChatResult, error) {
@@ -59,10 +78,19 @@ func (s *AIService) Chat(chatCtx ChatContext, req dto.ChatRequest) (ChatResult, 
 	if session.ExpiresAt != nil && !session.ExpiresAt.After(now) {
 		return ChatResult{}, errors.New("chat session expired")
 	}
-	if session.ExpiresAt == nil {
-		expiresAt := now.Add(s.cfg.GuestSessionTTL)
-		session.ExpiresAt = &expiresAt
-	}
+	// BUG-6 (fixed 28 Jul 2026): always slide expires_at forward before the
+	// (up to AITimeout-long) tool loop, not just when it was nil. Previously a
+	// near-expiry session kept its old expires_at, so the hourly
+	// CleanupExpiredChatSessions ticker could delete the session mid-loop
+	// (atomic AddChatMessage / UpdateChatSessionSelectedTrip then failed or
+	// data vanished -> intermittent chat/booking failures). Recomputing
+	// expires_at = now + TTL here makes the cleanup cutoff (grace-guarded,
+	// see CleanupExpiredChatSessions) always land after this request finishes,
+	// since TTL >> AITimeout. This matches the sliding behaviour already used
+	// by GuestHistory. The single UPDATE below is atomic, so no extra locking
+	// is needed.
+	expiresAt := now.Add(s.cfg.GuestSessionTTL)
+	session.ExpiresAt = &expiresAt
 	session.LastActivityAt = &now
 	if err := s.repo.UpdateChatSessionActivity(session.ID, *session.ExpiresAt, now); err != nil {
 		return ChatResult{}, err
