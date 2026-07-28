@@ -69,6 +69,38 @@ func (s *TripService) Update(id uuid.UUID, req dto.TripRequest) (models.Trip, er
 func (s *TripService) Delete(id uuid.UUID) error { return s.repo.DeleteTrip(id) }
 
 func buildTripFromRequest(trip models.Trip, req dto.TripRequest) models.Trip {
+	// BUG-7: Clamp invalid price values from bypassers.
+	if req.BasePrice < 0 {
+		req.BasePrice = 0
+	}
+	if req.EstimatedPrice < 0 {
+		req.EstimatedPrice = 0
+	}
+	if req.DiscountPrice < 0 {
+		req.DiscountPrice = 0
+	}
+	if req.ChildPrice < 0 {
+		req.ChildPrice = 0
+	}
+	if req.ChildDiscountPrice < 0 {
+		req.ChildDiscountPrice = 0
+	}
+	if req.BasePrice > 999999999999 {
+		req.BasePrice = 999999999999
+	}
+	if req.EstimatedPrice > 999999999999 {
+		req.EstimatedPrice = 999999999999
+	}
+	if req.DiscountPrice > 999999999999 {
+		req.DiscountPrice = 999999999999
+	}
+	if req.ChildPrice > 999999999999 {
+		req.ChildPrice = 999999999999
+	}
+	if req.ChildDiscountPrice > 999999999999 {
+		req.ChildDiscountPrice = 999999999999
+	}
+
 	trip.Title = req.Title
 	trip.Slug = req.Slug
 	trip.Destination = firstNonEmpty(req.Destination, req.Location)

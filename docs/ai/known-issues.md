@@ -99,14 +99,19 @@ Perbaikan (dua lapis pertahanan, tanpa mengubah kontrak TTL user default 7 hari)
 
 Verifikasi: `go build ./...` + `go vet ./...` + `gofmt` bersih. Diff hanya menyentuh `ai_service.go` (`Chat` + `CleanupExpiredChatSessions` + konstanta `chatSessionCleanupGraceExtra`).
 
-### BUG-7. SEDANG — Float Precision / Overflow: `total` Booking pada Harga Ekstrem (Tanpa Guard Harga)
+### BUG-7. ✅ SEDANG — Float Precision / Overflow: `total` Booking pada Harga Ekstrem (Tanpa Guard Harga) (FIXED 28 Jul 2026)
 
-- **Severity:** Medium
-- **Root Cause:** `BookingService.Create` menghitung `total` dari harga `float64` DB tanpa batas atas; `TripRequest` tidak memvalidasi harga (boleh negatif/sangat besar). Harga ekstrem × pax → kehilangan presisi float64 atau gagal insert `numeric(14,2)`; harga negatif → total negatif.
-- **Impact:** Total salah/negatif/error DB dari harga katalog invalid.
-- **Affected Files:** `backend/internal/services/booking_service.go` (`Create`), `backend/internal/dto/dto.go` (`TripRequest`), `backend/internal/services/trip_service.go` (`buildTripFromRequest`)
-- **Recommendation:** Validasi harga trip non-negatif + batas atas di DTO & service; pertimbangkan integer sen (lihat #13).
-- **Complexity:** Low-Medium
+**Lokasi:** `backend/internal/services/booking_service.go` (`Create`), `backend/internal/dto/dto.go` (`TripRequest`), `backend/internal/services/trip_service.go` (`buildTripFromRequest`).
+
+Dulu harga trip di `TripRequest` tidak memiliki batasan (boleh negatif atau teramat besar), yang berisiko pada saat dikalikan dengan pax di `BookingService.Create` menghasilkan overflow, nilai negatif, atau kegagalan insert ke `numeric(14,2)`.
+
+Perbaikan:
+
+1. Ditambahkan binding rule `binding:"gte=0,lte=999999999999"` untuk semua harga float di `TripRequest` pada DTO.
+2. Ditambahkan batasan atau clamp server-side pada fungsi `buildTripFromRequest` di `trip_service.go` di mana nilai negatif di-clamp menjadi 0 dan nilai sangat besar dibatasi ke batas tertinggi logis, menutup kemungkinan error dari input yang mem-bypass binding layer.
+3. Ini melengkapi fix SEC-3 dan SEC-11 sebelumnya sehingga perhitungan `TotalPrice` di `BookingService.Create` kini beroperasi dengan input dan pax yang aman.
+
+Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih.
 
 ### BUG-8. ✅ RENDAH — Error Handling: `GuestUser` Mengabaikan Error `bcrypt.GenerateFromPassword` (FIXED 28 Jul 2026)
 
@@ -1031,6 +1036,7 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 | BUG-4 Context leak SSE zombie (`WriteTimeout=0`) | ✅ Write-error detection (`ResponseController`+deadline) + max lifetime 30mnt + cap subscriber 100 + `time.NewTicker` |
 | BUG-5 Silent-fail `FindChatSession` bypass rekomendasi | ✅ Error ditangani; gagal re-fetch → suppress rekomendasi (fail-closed) di `AIService.Chat` |
 | BUG-6 Race guest session dihapus cleanup saat in-flight | ✅ Sliding `expires_at` atomik di `Chat()` + grace period cutoff di `CleanupExpiredChatSessions` |
+| BUG-7 Float precision / overflow pada harga logistik ekstrim | ✅ DTO price binding `gte=0` dan server-side clamp nilai bypass pada `buildTripFromRequest` |
 | BUG-8 `GuestUser` telan error bcrypt | ✅ Error `bcrypt.GenerateFromPassword` + `FirstOrCreateUser` ditangani eksplisit (return err) |
 
 

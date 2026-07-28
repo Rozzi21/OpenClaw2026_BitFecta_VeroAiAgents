@@ -63,11 +63,11 @@ type TripRequest struct {
 	Duration             string             `json:"duration"`
 	AdultPax             int                `json:"adult_pax"`
 	ChildPax             int                `json:"child_pax"`
-	EstimatedPrice       float64            `json:"estimated_price"`
-	BasePrice            float64            `json:"base_price"`
-	DiscountPrice        float64            `json:"discount_price"`
-	ChildPrice           float64            `json:"child_price"`
-	ChildDiscountPrice   float64            `json:"child_discount_price"`
+	EstimatedPrice       float64            `json:"estimated_price" binding:"gte=0,lte=999999999999"`
+	BasePrice            float64            `json:"base_price" binding:"gte=0,lte=999999999999"`
+	DiscountPrice        float64            `json:"discount_price" binding:"gte=0,lte=999999999999"`
+	ChildPrice           float64            `json:"child_price" binding:"gte=0,lte=999999999999"`
+	ChildDiscountPrice   float64            `json:"child_discount_price" binding:"gte=0,lte=999999999999"`
 	DiscountEnabled      bool               `json:"discount_enabled"`
 	ChildDiscountEnabled bool               `json:"child_discount_enabled"`
 	ImageURL             string             `json:"image_url"`
