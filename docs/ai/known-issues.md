@@ -293,13 +293,12 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - Cleanup session sudah scheduler-agnostic (`AIService.CleanupExpiredChatSessions` dipanggil ticker adapter di `main.go`).
 - `ChatContext` memisahkan boundary session (guest vs authenticated) dari service AI — kontrak bersih.
 
-### ARCH-1. SEDANG — Akses DB Langsung dari Handler (Bypass Service Layer)
+### ARCH-1. ✅ SEDANG — Akses DB Langsung dari Handler (Bypass Service Layer) (FIXED 29 Jul 2026)
 
 - **Severity:** Medium
 - **Finding:** Beberapa handler memanggil `h.Services.Repo.*` langsung, melewati service: `ChatSessions` (`Repo.ListChatSessions`), `ChatMessages` (`Repo.FindChatSession` + `Repo.ListChatMessages`), `GuestHistory` (`Repo.FindChatSession` + `Repo.UpdateChatSessionActivity` + `Repo.ListChatMessages`), `resolveGuestSession` (`Repo.FindChatSession` + `Repo.CreateChatSession`).
 - **Impact:** Melanggar aturan `coding-rules.md` §1.1 ("handler TIDAK boleh akses DB langsung"). Logika ownership/expiry guest session tersebar di handler (`GuestHistory`, `resolveGuestSession`, `ChatMessages` masing-masing mengulang cek `UserID == nil` + `ExpiresAt`), bukan terpusat di service — inkonsistensi ownership check mudah muncul saat aturan berubah.
-- **Recommendation:** Pindahkan logika session guest (resolve/validate/activity-update/list messages) ke method `AIService` atau `AuthService`; handler hanya parse cookie + panggil service. Bukan redesign — hanya memindahkan kode yang sudah ada.
-- **Complexity:** Low
+- **Fix (29 Jul 2026):** Memindahkan logika query, validasi session, dan pembaruan aktivitas dari handler ke dalam method-method `AIService` (`ListSessions`, `GetSessionMessages`, `GetGuestHistory`, `ResolveGuestSession`). Handler kini hanya mengelola cookie, request parsing, HTTP response mapping, dan memanggil API service.
 
 ### ARCH-2. SEDANG — Domain Boundary Kosong + Entity Anemik
 
@@ -947,6 +946,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | PRR-P2-3 Deploy frontend | ✅ Dockerfile standalone Next.js untuk deploy frontend didokumentasikan di deployment.md |
 | PRR-P3-1 Alerting/Runbook | ✅ Alerting metric Prometheus dan runbook insiden database/latency terdokumentasi di deployment.md |
 | PRR-P3-2 CI/CD | ✅ Pipeline quality gate (build, lint, test, image build) didokumentasikan di deployment.md |
+| ARCH-1 Akses DB langsung dari handler | ✅ Pindahkan logika DB session guest & authenticated ke AIService |
 
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.

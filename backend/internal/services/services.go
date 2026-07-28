@@ -74,4 +74,6 @@ var (
 	ErrRefreshTokenRevoked = errors.New("refresh token revoked")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	ErrPaymentsDisabled    = errors.New("payment feature temporarily disabled")
+	ErrChatSessionNotFound = errors.New("chat session not found")
+	ErrChatSessionExpired  = errors.New("chat session expired")
 )

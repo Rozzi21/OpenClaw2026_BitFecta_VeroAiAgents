@@ -190,7 +190,7 @@ func (h *Handler) GuestChat(c *gin.Context) {
 }
 
 func (h *Handler) ChatSessions(c *gin.Context) {
-	sessions, err := h.Services.Repo.ListChatSessions(currentUserID(c))
+	sessions, err := h.Services.AI.ListSessions(currentUserID(c))
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -203,13 +203,12 @@ func (h *Handler) ChatMessages(c *gin.Context) {
 	if !ok {
 		return
 	}
-	session, err := h.Services.Repo.FindChatSession(id)
-	if err != nil || session.UserID == nil || *session.UserID != currentUserID(c) || (session.ExpiresAt != nil && !session.ExpiresAt.After(time.Now())) {
-		utils.NotFound(c, "Chat session not found")
-		return
-	}
-	messages, err := h.Services.Repo.ListChatMessages(id)
+	messages, err := h.Services.AI.GetSessionMessages(id, currentUserID(c))
 	if err != nil {
+		if errors.Is(err, services.ErrChatSessionNotFound) || errors.Is(err, services.ErrChatSessionExpired) {
+			utils.NotFound(c, "Chat session not found")
+			return
+		}
 		utils.ServerError(c, err)
 		return
 	}
@@ -224,20 +223,13 @@ func (h *Handler) GuestHistory(c *gin.Context) {
 		utils.Success(c, http.StatusOK, "Chat history", gin.H{"messages": []models.ChatMessage{}})
 		return
 	}
-	session, err := h.Services.Repo.FindChatSession(id)
-	if err != nil || session.UserID != nil || (session.ExpiresAt != nil && !session.ExpiresAt.After(time.Now())) {
-		auth.ClearGuestSessionCookie(c, h.Services.Config)
-		utils.Success(c, http.StatusOK, "Chat history", gin.H{"messages": []models.ChatMessage{}})
-		return
-	}
-	now := time.Now()
-	expiresAt := now.Add(h.Services.Config.GuestSessionTTL)
-	if err := h.Services.Repo.UpdateChatSessionActivity(id, expiresAt, now); err != nil {
-		utils.ServerError(c, err)
-		return
-	}
-	messages, err := h.Services.Repo.ListChatMessages(id)
+	messages, err := h.Services.AI.GetGuestHistory(id)
 	if err != nil {
+		if errors.Is(err, services.ErrChatSessionNotFound) || errors.Is(err, services.ErrChatSessionExpired) {
+			auth.ClearGuestSessionCookie(c, h.Services.Config)
+			utils.Success(c, http.StatusOK, "Chat history", gin.H{"messages": []models.ChatMessage{}})
+			return
+		}
 		utils.ServerError(c, err)
 		return
 	}
@@ -252,22 +244,22 @@ func (h *Handler) GuestHistory(c *gin.Context) {
 }
 
 func resolveGuestSession(h *Handler, c *gin.Context) (uuid.UUID, error) {
+	var sessionID uuid.UUID
 	if cookieID := auth.GetGuestSessionCookie(c); cookieID != "" {
-		id, err := uuid.Parse(cookieID)
-		if err != nil {
+		if parsedID, err := uuid.Parse(cookieID); err == nil {
+			sessionID = parsedID
+		} else {
 			auth.ClearGuestSessionCookie(c, h.Services.Config)
-		} else if session, err := h.Services.Repo.FindChatSession(id); err == nil && session.UserID == nil && (session.ExpiresAt == nil || session.ExpiresAt.After(time.Now())) {
-			return id, nil
 		}
 	}
-	now := time.Now()
-	expiresAt := now.Add(h.Services.Config.GuestSessionTTL)
-	session := models.ChatSession{Title: "Guest chat", ExpiresAt: &expiresAt, LastActivityAt: &now}
-	if err := h.Services.Repo.CreateChatSession(&session); err != nil {
+	resolvedID, isNew, err := h.Services.AI.ResolveGuestSession(sessionID)
+	if err != nil {
 		return uuid.Nil, err
 	}
-	auth.SetGuestSessionCookie(c, h.Services.Config, session.ID.String(), int(h.Services.Config.GuestSessionTTL.Seconds()))
-	return session.ID, nil
+	if isNew {
+		auth.SetGuestSessionCookie(c, h.Services.Config, resolvedID.String(), int(h.Services.Config.GuestSessionTTL.Seconds()))
+	}
+	return resolvedID, nil
 }
 
 func (h *Handler) ListTrips(c *gin.Context) {

@@ -72,11 +72,11 @@ func (s *AIService) Chat(chatCtx ChatContext, req dto.ChatRequest) (ChatResult, 
 		return ChatResult{}, err
 	}
 	if !sessionOwnedByContext(session, chatCtx) {
-		return ChatResult{}, errors.New("chat session not found")
+		return ChatResult{}, ErrChatSessionNotFound
 	}
 	now := time.Now()
 	if session.ExpiresAt != nil && !session.ExpiresAt.After(now) {
-		return ChatResult{}, errors.New("chat session expired")
+		return ChatResult{}, ErrChatSessionExpired
 	}
 	// BUG-6 (fixed 28 Jul 2026): always slide expires_at forward before the
 	// (up to AITimeout-long) tool loop, not just when it was nil. Previously a
@@ -543,4 +543,50 @@ func (s *AIService) refreshMemorySummary(sessionID uuid.UUID) error {
 	}
 
 	return s.repo.UpdateChatSessionMemorySummary(sessionID, summary)
+}
+
+func (s *AIService) ListSessions(userID uuid.UUID) ([]models.ChatSession, error) {
+	return s.repo.ListChatSessions(userID)
+}
+
+func (s *AIService) GetSessionMessages(sessionID uuid.UUID, userID uuid.UUID) ([]models.ChatMessage, error) {
+	session, err := s.repo.FindChatSession(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if session.UserID == nil || *session.UserID != userID || (session.ExpiresAt != nil && !session.ExpiresAt.After(time.Now())) {
+		return nil, ErrChatSessionNotFound
+	}
+	return s.repo.ListChatMessages(sessionID)
+}
+
+func (s *AIService) GetGuestHistory(sessionID uuid.UUID) ([]models.ChatMessage, error) {
+	session, err := s.repo.FindChatSession(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if session.UserID != nil || (session.ExpiresAt != nil && !session.ExpiresAt.After(time.Now())) {
+		return nil, ErrChatSessionNotFound
+	}
+	now := time.Now()
+	expiresAt := now.Add(s.cfg.GuestSessionTTL)
+	if err := s.repo.UpdateChatSessionActivity(sessionID, expiresAt, now); err != nil {
+		return nil, err
+	}
+	return s.repo.ListChatMessages(sessionID)
+}
+
+func (s *AIService) ResolveGuestSession(sessionID uuid.UUID) (uuid.UUID, bool, error) {
+	if sessionID != uuid.Nil {
+		if session, err := s.repo.FindChatSession(sessionID); err == nil && session.UserID == nil && (session.ExpiresAt == nil || session.ExpiresAt.After(time.Now())) {
+			return session.ID, false, nil
+		}
+	}
+	now := time.Now()
+	expiresAt := now.Add(s.cfg.GuestSessionTTL)
+	session := models.ChatSession{Title: "Guest chat", ExpiresAt: &expiresAt, LastActivityAt: &now}
+	if err := s.repo.CreateChatSession(&session); err != nil {
+		return uuid.Nil, false, err
+	}
+	return session.ID, true, nil
 }
