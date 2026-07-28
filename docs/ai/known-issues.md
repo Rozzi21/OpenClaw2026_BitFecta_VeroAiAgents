@@ -8,7 +8,8 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit arsitektur backend: 26 Jul 2026 — layering, package dependency, DI, coupling/cohesion, scalability. Kesimpulan: **arsitektur secara keseluruhan baik, tidak perlu redesign**. Temuan arsitektur dicatat di bagian A.8. Temuan teknis spesifik (context propagation, god object, dll) yang overlap dengan SEC-22..SEC-32 tidak diduplikasi — lihat bagian A.4.
 
-> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1, BUG-2, BUG-4, BUG-5, dan BUG-6 telah diperbaiki; sisanya masih terbuka.
+> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1, BUG-2, BUG-4, BUG-5, BUG-6, dan BUG-8 telah diperbaiki; sisanya masih terbuka.
+
 
 ---
 
@@ -107,14 +108,20 @@ Verifikasi: `go build ./...` + `go vet ./...` + `gofmt` bersih. Diff hanya menye
 - **Recommendation:** Validasi harga trip non-negatif + batas atas di DTO & service; pertimbangkan integer sen (lihat #13).
 - **Complexity:** Low-Medium
 
-### BUG-8. RENDAH — Error Handling: `GuestUser` Mengabaikan Error `bcrypt.GenerateFromPassword`
+### BUG-8. ✅ RENDAH — Error Handling: `GuestUser` Mengabaikan Error `bcrypt.GenerateFromPassword` (FIXED 28 Jul 2026)
 
-- **Severity:** Low
-- **Root Cause:** `auth_service.go` `GuestUser()`: `hash, _ := bcrypt.GenerateFromPassword(...)`. Bila gagal, user guest tersimpan tanpa hash valid (password kosong).
-- **Impact:** Latent defect; baris user dengan password kosong.
-- **Affected Files:** `backend/internal/services/auth_service.go` (`GuestUser`)
-- **Recommendation:** Tangani error bcrypt (`if err != nil { return models.User{}, err }`).
-- **Complexity:** Low
+**Lokasi:** `backend/internal/services/auth_service.go` (`GuestUser`).
+
+Dulu `GuestUser()` menulis `hash, _ := bcrypt.GenerateFromPassword(...)` — error ditelan. Bila bcrypt gagal, user guest tersimpan dengan `Password` kosong (latent defect / inkonsistensi data). Pola `_` ini juga berbahaya bila disalin ke jalur lain.
+
+Perbaikan:
+
+1. Error bcrypt kini ditangani eksplisit: `if err != nil { return models.User{}, err }` — konsisten dengan `Register`/`CreateStaff`.
+2. Error `FirstOrCreateUser` juga di-handle eksplisit (sebelumnya di-`return` langsung via variabel `err` bergaya lama) — kini dua `if err != nil` terpisah agar jelas.
+3. Komentar BUG-8 ditambahkan: `bcrypt.GenerateFromPassword` praktis hanya gagal pada input >72 byte (UUID v4 = 36 char, aman), jadi ini defensive — tapi pola `_` dihapus agar tak menyebar.
+
+Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih. Diff hanya menyentuh `auth_service.go` (`GuestUser`).
+
 
 ### BUG-9. RENDAH — Invalid Input: `parseDate` Mengembalikan `nil` Diam-diam untuk `travel_date` AI
 
@@ -1024,6 +1031,8 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 | BUG-4 Context leak SSE zombie (`WriteTimeout=0`) | ✅ Write-error detection (`ResponseController`+deadline) + max lifetime 30mnt + cap subscriber 100 + `time.NewTicker` |
 | BUG-5 Silent-fail `FindChatSession` bypass rekomendasi | ✅ Error ditangani; gagal re-fetch → suppress rekomendasi (fail-closed) di `AIService.Chat` |
 | BUG-6 Race guest session dihapus cleanup saat in-flight | ✅ Sliding `expires_at` atomik di `Chat()` + grace period cutoff di `CleanupExpiredChatSessions` |
+| BUG-8 `GuestUser` telan error bcrypt | ✅ Error `bcrypt.GenerateFromPassword` + `FirstOrCreateUser` ditangani eksplisit (return err) |
+
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.
 

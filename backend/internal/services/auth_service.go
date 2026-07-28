@@ -235,16 +235,27 @@ func (s *AuthService) Me(userID uuid.UUID) (models.User, error) {
 // GuestUser now generates an isolated user per guest booking (Fix for #8).
 // We no longer share the `guest@vero.local` dummy user across all guest orders.
 func (s *AuthService) GuestUser() (models.User, error) {
+	// BUG-8 fix: handle bcrypt errors explicitly. Previously the error was
+	// swallowed (`hash, _ :=`), which on failure would persist a guest row
+	// with an empty/invalid password hash — a latent data-integrity defect.
+	// bcrypt.GenerateFromPassword fails only on inputs exceeding 72 bytes; a
+	// UUID v4 string is 36 chars so this is defensive, but the `_` pattern is
+	// dangerous if copied elsewhere.
 	guestID := uuid.NewString()
-	hash, _ := bcrypt.GenerateFromPassword([]byte(uuid.NewString()), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(uuid.NewString()), bcrypt.DefaultCost)
+	if err != nil {
+		return models.User{}, err
+	}
 	user := models.User{
 		Name:     "Guest Traveler",
 		Email:    "guest-" + guestID[:8] + "@vero.local",
 		Password: string(hash),
 		Role:     models.RoleUser,
 	}
-	err := s.repo.FirstOrCreateUser(&user)
-	return user, err
+	if err := s.repo.FirstOrCreateUser(&user); err != nil {
+		return models.User{}, err
+	}
+	return user, nil
 }
 
 func (s *AuthService) issueSession(user models.User) (AuthIssueResult, error) {
