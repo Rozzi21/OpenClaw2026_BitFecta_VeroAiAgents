@@ -19,16 +19,37 @@ type Bus struct {
 	clients map[chan Event]struct{}
 }
 
+// BUG-4: batas maksimal subscriber SSE aktif. Mencegah map clients tumbuh tak
+// terbatas saat banyak koneksi zombie (koneksi setengah-putus yang tidak pernah
+// mengirim FIN dan tidak cepat terdeteksi). Cap 100 cukup untuk operasi
+// backoffice single-instance; client EventSource reconnect otomatis bila
+// ditolak.
+const MaxSubscribers = 100
+
 func NewBus() *Bus {
 	return &Bus{clients: make(map[chan Event]struct{})}
 }
 
-func (b *Bus) Subscribe() chan Event {
-	ch := make(chan Event, 32)
+// Subscribe mendaftarkan subscriber baru. Mengembalikan ok=false bila jumlah
+// subscriber sudah mencapai batas (BUG-4): tanpa cap, tiap koneksi SSE zombie
+// menambah satu channel buffered ke map tanpa pernah berkurang → leak memori +
+// goroutine. Caller (EventStream) menolak koneksi baru bila ok=false.
+func (b *Bus) Subscribe() (ch chan Event, ok bool) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.clients) >= MaxSubscribers {
+		return nil, false
+	}
+	ch = make(chan Event, 32)
 	b.clients[ch] = struct{}{}
-	b.mu.Unlock()
-	return ch
+	return ch, true
+}
+
+// SubscriberCount dipakai handler/logging untuk observasi beban subscriber.
+func (b *Bus) SubscriberCount() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.clients)
 }
 
 // Unsubscribe melepas subscriber dari bus. Channel SENGAJA tidak ditutup:

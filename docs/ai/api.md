@@ -211,8 +211,13 @@ Event yang dipublikasikan:
 - Workflow chat: `ai_response`, `workflow_completed` (event step individual seperti `ai_thinking` sudah dihapus dari backend.md/architecture.md karena memakai OpenAI function calling, dan tidak ada di source code selain docs OpenAPI).
 - Tool & data: `mcp_tool_executed`, `trip_created`, `booking_created`, `booking_updated`
 - Payment: `payment_created`, `payment_updated`, `booking_confirmed`
-- Keep-alive: `heartbeat` (tiap 25 detik)
+- Keep-alive: `heartbeat` (tiap 25 detik, `time.NewTicker`)
+- Lifecycle: `reconnect` (dikirim server tepat sebelum menutup koneksi saat umur maksimal tercapai — BUG-4)
+
+Perilaku koneksi (BUG-4, 28 Jul 2026):
+- **Max lifetime**: koneksi diputus setelah `sseMaxLifetime = 30 menit` (server mengirim event `reconnect` lalu menutup). Client `EventSource` browser reconnect otomatis; tidak ada aksi yang perlu dilakukan konsumen selain menangani reconnect standar SSE.
+- **Write-error detection**: tiap tulis memakai `http.NewResponseController` + `SetWriteDeadline(now+10s)` + `Flush()`. Koneksi setengah-putus (client hilang tanpa FIN — NAT timeout, laptop sleep) terdeteksi dan handler keluar; tidak menumpuk goroutine zombie.
+- **Cap subscriber**: bila jumlah koneksi SSE aktif mencapai `events.MaxSubscribers (100)`, request baru membalas `503 Too many SSE connections`. Ini mencegah map subscriber bocor tanpa batas. Naikkan konstanta package atau pindahkan ke config bila butuh lebih banyak koneksi konkuren.
+- **WriteTimeout server tetap `0`** (lihat main.go) agar koneksi long-lived tidak terputus global; tiga guard di atas menggantikan fungsi deadline global untuk SSE saja (lihat ARCH-3).
 
 Catatan: `create_payment` MCP tool dinonaktifkan, jadi `payment_created`/`booking_confirmed` hanya berasal dari API booking/payment, bukan workflow chat.
-
-> Penting: SSE membuat `WriteTimeout` server diset `0` (lihat main.go), agar koneksi long-lived tidak terputus.

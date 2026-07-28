@@ -8,7 +8,7 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit arsitektur backend: 26 Jul 2026 — layering, package dependency, DI, coupling/cohesion, scalability. Kesimpulan: **arsitektur secara keseluruhan baik, tidak perlu redesign**. Temuan arsitektur dicatat di bagian A.8. Temuan teknis spesifik (context propagation, god object, dll) yang overlap dengan SEC-22..SEC-32 tidak diduplikasi — lihat bagian A.4.
 
-> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1 dan BUG-2 telah diperbaiki (27 Jul 2026); sisanya masih terbuka.
+> Bug hunting backend: 27 Jul 2026 — 10 bug BARU (BUG-1..BUG-10) yang lolos dari review sebelumnya, dicatat di bagian A.11. Laporan lengkap dengan skenario reproduksi: `backend/docs/bug-hunt-2026-07-27.md`. BUG-1, BUG-2, dan BUG-4 telah diperbaiki; sisanya masih terbuka.
 
 ---
 
@@ -53,14 +53,23 @@ Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih. Race-diverifikasi via 
 - **Recommendation:** `res, err := client.Do(req); if err == nil { io.Copy(io.Discard, res.Body); res.Body.Close() }`; jalankan async dengan context timeout.
 - **Complexity:** Low
 
-### BUG-4. SEDANG — Context Leak: SSE `WriteTimeout=0` + Koneksi Zombie Tanpa Max Lifetime
+### BUG-4. ✅ SEDANG — Context Leak: SSE `WriteTimeout=0` + Koneksi Zombie Tanpa Max Lifetime (FIXED 28 Jul 2026)
 
-- **Severity:** Medium
-- **Root Cause:** `EventStream` hanya keluar saat client disconnect/heartbeat. Pada koneksi setengah-putus (client hilang tanpa FIN), `c.Request.Context().Done()` tidak cepat terpicu dan write ke buffer TCP masih "berhasil", sehingga goroutine SSE hidup lama → akumulasi goroutine + subscriber bus bocor. Berbeda dari SEC-31 (timer leak).
-- **Impact:** Goroutine/subscriber menumpuk pada banyak koneksi SSE zombie.
-- **Affected Files:** `backend/cmd/server/main.go` (http.Server), `backend/internal/handlers/handlers.go` (`EventStream`)
-- **Recommendation:** Deteksi write error → return false; batasi umur maksimal + jumlah koneksi SSE; pisahkan server SSE saat scaling (ARCH-3).
-- **Complexity:** Medium
+**Lokasi:** `backend/internal/handlers/handlers.go` (`EventStream`), `backend/internal/events/bus.go` (`Subscribe`, `MaxSubscribers`).
+
+Dulu `EventStream` hanya keluar saat client disconnect (`Context.Done()`) atau heartbeat. Pada koneksi setengah-putus (client hilang tanpa FIN — NAT timeout, laptop sleep), `Context.Done()` tidak cepat terpicu dan write ke buffer TCP masih "berhasil", sehingga goroutine SSE hidup lama → akumulasi goroutine + subscriber bus bocor. Berbeda dari SEC-31 (timer leak). `WriteTimeout=0` (demi SSE long-lived, lihat ARCH-3) membuat tidak ada deadline tulis global yang menyelamatkan.
+
+Perbaikan (3 lapis pertahanan, tanpa mengubah `WriteTimeout=0` agar SSE tetap hidup lama):
+
+1. **Write-error detection per-tulis**: `EventStream` memakai `http.NewResponseController(c.Writer)` + `rc.SetWriteDeadline(now+10s)` sebelum tiap `c.SSEvent` + `rc.Flush()`. Pada koneksi setengah-putus, setelah buffer TCP penuh / RST diterima, `Flush()` mengembalikan error → handler return → goroutine keluar + subscriber dilepas. `ResponseController` adalah API standar Go 1.20+ yang me-unwrap `gin.ResponseWriter` ke `http.ResponseWriter`/`http.Flusher`/deadline asli.
+2. **Max lifetime koneksi**: `time.NewTimer(sseMaxLifetime=30 menit)` memutus koneksi SSE saat umur tercapai; handler mengirim event `reconnect` lalu return. Client `EventSource` browser reconnect otomatis (kompatibel spesifikasi SSE). 30 menit cukup untuk sesi monitoring backoffice tanpa menumpuk zombie.
+3. **Cap subscriber**: `events.Bus.Subscribe()` kini `(chan Event, bool)` — menolak registrasi baru bila `len(clients) >= MaxSubscribers (100)`. `EventStream` membalas `503 Too many SSE connections` bila penuh. Mencegah map `clients` tumbuh tak terbatas dari akumulasi koneksi zombie (defense-in-depth bila write-detection tidak segera memicu — mis. NAT yang sangat lambat).
+
+Bonus: `time.After(25s)` (SEC-31, timer leak) kini diganti `time.NewTicker(sseHeartbeatInterval)` dengan `defer ticker.Stop()` — menghapus timer leak sekaligus. Komentar BUG-4 menandai perbedaan dari SEC-31 (lifetime zombie vs timer leak).
+
+Tidak diubah (disengaja, lihat ARCH-3): `http.Server.WriteTimeout=0` tetap global untuk single-instance; pisahkan server SSE saat horizontal scaling. `MaxSubscribers` dan `sseMaxLifetime` adalah konstanta package — bisa di-pindah ke `config.Config` bila perlu env-tunable.
+
+Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih. Diff hanya menyentuh `handlers.go` (`EventStream`) + `events/bus.go` (`Subscribe`/`MaxSubscribers`).
 
 ### BUG-5. SEDANG — Error Ditelan: `AIService.Chat` Silent-Fail `FindChatSession` → Logic Bypass Rekomendasi
 
@@ -1003,6 +1012,7 @@ Method ini hanya menjalankan `Delete(&models.ChatSession{})` (soft delete karena
 | #19 Cleanup orphan records | ✅ Unscoped Delete `chat_messages`, `tool_calls`, `ai_logs` sblm hapus session |
 | BUG-1 Race double-rotation refresh | ✅ `RotateSession` atomik + window reuse detection di `AuthService.Refresh` |
 | BUG-2 Panic event bus `Unsubscribe` close channel | ✅ `Unsubscribe` tak tutup channel; `Publish` tak bisa kirim ke channel tertutup |
+| BUG-4 Context leak SSE zombie (`WriteTimeout=0`) | ✅ Write-error detection (`ResponseController`+deadline) + max lifetime 30mnt + cap subscriber 100 + `time.NewTicker` |
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.
 

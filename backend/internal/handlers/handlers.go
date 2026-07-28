@@ -451,7 +451,7 @@ func (h *Handler) PaymentWebhook(c *gin.Context) {
 	if req.Timestamp == "" {
 		req.Timestamp = c.GetHeader("X-Doku-Timestamp")
 	}
-	
+
 	rawBody, err := c.GetRawData()
 	if err == nil {
 		req.RawBody = rawBody
@@ -597,26 +597,75 @@ func detectImageContentType(file *multipart.FileHeader) (string, error) {
 	return http.DetectContentType(buf[:n]), nil
 }
 
+// sseMaxLifetime adalah umur maksimal satu koneksi SSE (BUG-4). Koneksi
+// setengah-putus (client hilang tanpa FIN — NAT timeout, laptop sleep) tidak
+// cepat memicu Context.Done dan write ke buffer TCP masih "berhasil", sehingga
+// goroutine SSE bisa hidup lama. Setelah umur ini tercapai, handler menutup
+// koneksi; client EventSource akan reconnect otomatis. 30 menit cukup untuk
+// sesi monitoring backoffice tanpa menumpuk zombie.
+const sseMaxLifetime = 30 * time.Minute
+
+// sseHeartbeatInterval adalah interval heartbeat. Memakai time.NewTicker (bukan
+// time.After) agar tidak ada timer leak (SEC-31).
+const sseHeartbeatInterval = 25 * time.Second
+
 func (h *Handler) EventStream(c *gin.Context) {
+	// BUG-4: tolak koneksi baru bila bus sudah penuh (cap subscriber). Tanpa
+	// ini, koneksi zombie menumpuk tak terbatas di map clients.
+	client, ok := h.Services.Events.Subscribe()
+	if !ok {
+		utils.Error(c, http.StatusServiceUnavailable, "Too many SSE connections", gin.H{})
+		return
+	}
+	defer h.Services.Events.Unsubscribe(client)
+
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 
-	client := h.Services.Events.Subscribe()
-	defer h.Services.Events.Unsubscribe(client)
+	// BUG-4: write-error detection. Pada koneksi setengah-putus, write ke buffer
+	// TCP bisa tetap "berhasil" untuk sementara, tetapi setelah buffer penuh /
+	// RST diterima, Flush/error akan terlihat. ResponseController.SetWriteDeadline
+	// memberi deadline per-tulis; Write/Flush melewati deadline → error terdeteksi
+	// → return false → goroutine keluar, subscriber dilepas. Ini menutup celah
+	// goroutine zombie yang hidup berjam-jam menunggu RST OS.
+	rc := http.NewResponseController(c.Writer)
 
-	c.Stream(func(w io.Writer) bool {
+	heartbeat := time.NewTicker(sseHeartbeatInterval)
+	defer heartbeat.Stop()
+	deadline := time.NewTimer(sseMaxLifetime)
+	defer deadline.Stop()
+
+	send := func(typ string, event events.Event) bool {
+		// Deadline per-write; write yang menggantung (client zombie) diputus.
+		_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		c.SSEvent(typ, event)
+		// Flush mendorong bytes ke socket; error di sini = koneksi mati.
+		if err := rc.Flush(); err != nil {
+			return false
+		}
+		return true
+	}
+
+	for {
 		select {
 		case event := <-client:
-			c.SSEvent(event.Type, event)
-			return true
+			if !send(event.Type, event) {
+				return
+			}
+		case <-heartbeat.C:
+			if !send("heartbeat", events.Event{ID: uuid.NewString(), Type: "heartbeat", CreatedAt: time.Now()}) {
+				return
+			}
 		case <-c.Request.Context().Done():
-			return false
-		case <-time.After(25 * time.Second):
-			c.SSEvent("heartbeat", events.Event{ID: uuid.NewString(), Type: "heartbeat", CreatedAt: time.Now()})
-			return true
+			return
+		case <-deadline.C:
+			// BUG-4: umur maksimal tercapai. Kirim event close lalu tutup;
+			// client EventSource reconnect otomatis.
+			_ = send("reconnect", events.Event{ID: uuid.NewString(), Type: "reconnect", CreatedAt: time.Now()})
+			return
 		}
-	})
+	}
 }
 
 func authRequestMeta(c *gin.Context) services.AuthRequestMeta {
