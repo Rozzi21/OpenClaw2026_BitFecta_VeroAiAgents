@@ -5,10 +5,23 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/rozzi/vero-ai-travel-agents/backend/internal/dto"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/models"
 	"gorm.io/gorm"
 )
+
+type RepositoryFilter struct {
+	Limit  int
+	Offset int
+}
+
+type TripRepositoryFilter struct {
+	Category      string
+	Status        string
+	Search        string
+	PublishedOnly bool
+	Limit         int
+	Offset        int
+}
 
 type Repository struct {
 	DB *gorm.DB
@@ -172,7 +185,7 @@ func (r *Repository) CreateTrip(trip *models.Trip) error {
 	return r.DB.Create(trip).Error
 }
 
-func (r *Repository) ListTrips(query dto.TripListQuery) ([]models.Trip, error) {
+func (r *Repository) ListTrips(query TripRepositoryFilter) ([]models.Trip, error) {
 	var trips []models.Trip
 	db := r.DB.Preload("Itineraries").Order("created_at desc")
 	if query.Category != "" {
@@ -241,7 +254,7 @@ func (r *Repository) CreateBooking(booking *models.Booking) error {
 	return r.DB.Create(booking).Error
 }
 
-func (r *Repository) ListBookings(query dto.ListQuery) ([]models.Booking, error) {
+func (r *Repository) ListBookings(query RepositoryFilter) ([]models.Booking, error) {
 	var bookings []models.Booking
 	err := r.DB.Preload("User").Preload("Trip").Preload("Payments").
 		Order("created_at desc").Limit(query.Limit).Offset(query.Offset).Find(&bookings).Error
@@ -252,7 +265,7 @@ func (r *Repository) ListBookings(query dto.ListQuery) ([]models.Booking, error)
 // analytics dashboards. This avoids the full-table scan + 3-preload pattern that
 // ListBookings uses, keeping dashboard queries lightweight.
 func (r *Repository) RecentBookings(limit int) ([]models.Booking, error) {
-	if limit <= 0 || limit > dto.MaxListLimit {
+	if limit <= 0 {
 		limit = 10
 	}
 	var bookings []models.Booking
@@ -315,7 +328,7 @@ func (r *Repository) CreateAILog(log *models.AILog) error {
 	return r.DB.Create(log).Error
 }
 
-func (r *Repository) ListAILogs(query dto.ListQuery) ([]models.AILog, error) {
+func (r *Repository) ListAILogs(query RepositoryFilter) ([]models.AILog, error) {
 	var logs []models.AILog
 	err := r.DB.Order("created_at desc").Limit(query.Limit).Offset(query.Offset).Find(&logs).Error
 	return logs, err
@@ -325,7 +338,7 @@ func (r *Repository) CreateToolCall(call *models.ToolCall) error {
 	return r.DB.Create(call).Error
 }
 
-func (r *Repository) ListToolCalls(query dto.ListQuery) ([]models.ToolCall, error) {
+func (r *Repository) ListToolCalls(query RepositoryFilter) ([]models.ToolCall, error) {
 	var calls []models.ToolCall
 	err := r.DB.Order("created_at desc").Limit(query.Limit).Offset(query.Offset).Find(&calls).Error
 	return calls, err

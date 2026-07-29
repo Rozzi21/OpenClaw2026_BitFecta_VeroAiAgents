@@ -66,7 +66,11 @@ func (s *BookingService) Create(userID uuid.UUID, req dto.BookingRequest) (model
 	return booking, nil
 }
 func (s *BookingService) List(query dto.ListQuery) ([]models.Booking, error) {
-	return s.repo.ListBookings(query)
+	repoQuery := repositories.RepositoryFilter{
+		Limit:  query.Limit,
+		Offset: query.Offset,
+	}
+	return s.repo.ListBookings(repoQuery)
 }
 
 // Find enforces ownership for non-staff callers (SEC-2 anti-IDOR).

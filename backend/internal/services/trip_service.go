@@ -17,7 +17,15 @@ type TripService struct {
 }
 
 func (s *TripService) List(query dto.TripListQuery) ([]models.Trip, error) {
-	return s.repo.ListTrips(query)
+	repoQuery := repositories.TripRepositoryFilter{
+		Category:      query.Category,
+		Status:        query.Status,
+		Search:        query.Search,
+		PublishedOnly: query.PublishedOnly,
+		Limit:         query.Limit,
+		Offset:        query.Offset,
+	}
+	return s.repo.ListTrips(repoQuery)
 }
 func (s *TripService) Find(id uuid.UUID) (models.Trip, error) { return s.repo.FindTrip(id) }
 func (s *TripService) FindBySlugOrID(value string) (models.Trip, error) {

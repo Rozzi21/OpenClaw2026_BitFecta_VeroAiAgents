@@ -9,8 +9,16 @@ import (
 type LogService struct{ repo *repositories.Repository }
 
 func (s *LogService) Logs(query dto.ListQuery) ([]models.AILog, error) {
-	return s.repo.ListAILogs(query)
+	repoQuery := repositories.RepositoryFilter{
+		Limit:  query.Limit,
+		Offset: query.Offset,
+	}
+	return s.repo.ListAILogs(repoQuery)
 }
 func (s *LogService) ToolCalls(query dto.ListQuery) ([]models.ToolCall, error) {
-	return s.repo.ListToolCalls(query)
+	repoQuery := repositories.RepositoryFilter{
+		Limit:  query.Limit,
+		Offset: query.Offset,
+	}
+	return s.repo.ListToolCalls(repoQuery)
 }

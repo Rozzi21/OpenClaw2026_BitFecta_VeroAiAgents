@@ -133,7 +133,11 @@ func (s *MCPService) executeSearchTrips(sessionID uuid.UUID, payload map[string]
 		}}
 	}
 
-	packages, err := s.repo.ListTrips(dto.TripListQuery{PublishedOnly: true, Limit: 20})
+	repoQuery := repositories.TripRepositoryFilter{
+		PublishedOnly: true,
+		Limit:         20,
+	}
+	packages, err := s.repo.ListTrips(repoQuery)
 	if err != nil {
 		log.Printf("[mcp] search_trips failed list trips error=%v", err)
 		return ToolResult{Tool: mcp.ToolSearchTrips, Status: "failed", Data: map[string]interface{}{"error": err.Error()}}

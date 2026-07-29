@@ -313,12 +313,12 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Fix (29 Jul 2026):** `WriteTimeout` server global diubah menjadi `15 * time.Second` untuk melindungi server dari serangan slow-write secara global. Di handler SSE (`EventStream`), write timeout dinonaktifkan dinamis (`rc.SetWriteDeadline(time.Time{})`) dan dikontrol per-tulis menggunakan deadline 10 detik agar koneksi tetap long-lived secara aman.
 - **Complexity:** Low-Medium
 
-### ARCH-4. RENDAH — DTO Dipakai Repository Layer (Arah Dependency Terbalik Ringan)
+### ARCH-4. ✅ RENDAH — DTO Dipakai Repository Layer (Arah Dependency Terbalik Ringan) (FIXED 29 Jul 2026)
 
 - **Severity:** Low
 - **Finding:** `repositories` mengimpor `dto` (`ListTrips(query dto.TripListQuery)`, `ListBookings(query dto.ListQuery)`). Idealnya repository tidak tahu DTO HTTP; filter query seharusnya tipe milik repository/domain.
 - **Impact:** Coupling ringan layer bawah ke kontrak HTTP. Praktis tidak merugikan sekarang (DTO query sederhana, jarang berubah), tapi memperumit pemisahan bila nanti repository dipakai caller non-HTTP.
-- **Recommendation:** Bukan prioritas. Bila repository mulai dipakai non-HTTP, definisikan tipe filter di package repositories dan map dari DTO di service. Jangan refactor prematur.
+- **Fix (29 Jul 2026):** Dibuat tipe data query filter di repository package: `RepositoryFilter` dan `TripRepositoryFilter` agar repository tidak lagi bergantung pada package `dto`. Map/konversi DTO ke filter repository dilakukan di level service (`BookingService`, `TripService`, `LogService`, `MCPService`).
 - **Complexity:** Low
 
 ### ARCH-5. RENDAH — Satu Handler Monolitik untuk Semua Domain (Revisi SEC-25)
