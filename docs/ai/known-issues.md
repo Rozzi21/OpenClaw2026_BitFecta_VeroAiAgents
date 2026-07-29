@@ -306,13 +306,12 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Finding:** `backend/internal/domain/` kosong (hanya `.gitkeep`). Entity GORM di `models/models.go` anemik (struct + tag, tanpa behavior); semua business rule hidup di service. Untuk domain sederhana (CRUD trip/booking) ini pragmatis dan dapat diterima. Namun state machine booking (`allowedTransitions` di `booking_service.go`) adalah domain logic murni yang layak pindah ke entity/domain method bila aturan transisi makin kompleks.
 - **Fix (29 Jul 2026):** Pindahkan logika transisi status booking `allowedTransitions` dan validasinya ke method `CanTransitionTo` pada struct `models.Booking` di `backend/internal/models/models.go`. `BookingService.UpdateStatus` kini memanggil method tersebut untuk validasi transisi status booking.
 
-### ARCH-3. RENDAH — Scalability: Batasan Single-Instance yang Disengaja
+### ARCH-3. ✅ RENDAH — Scalability: Batasan Single-Instance (WriteTimeout Diperbaiki) (FIXED 29 Jul 2026)
 
 - **Severity:** Low (desain disengaja, terdokumentasi)
-- **Finding:** Batasan horizontal scaling yang sudah diketahui dan disengaja untuk single-instance: (1) event bus in-memory (#7) — event tidak lintas instance, drop saat buffer penuh; (2) rate limiter per-IP in-memory (`sync.Map`) — budget limit tidak dibagi antar instance; (3) cleanup ticker internal (#18) — duplikasi job saat multi-instance; (4) SSE `WriteTimeout=0` global — berlaku ke semua response, bukan hanya SSE.
-- **Impact:** Semua aman untuk deployment single-instance saat ini. Menjadi blocker saat horizontal scaling: SSE tidak konsisten lintas instance, rate limit efektif = N × limit, cleanup job berpacu.
-- **Recommendation:** Tidak ada tindakan sekarang. Saat scaling: ganti bus ke Redis Pub/Sub (#7), matikan ticker internal (#18), pindah rate limit ke Redis/middleware gateway, dan pisahkan SSE di server/handler terdedikasi agar `WriteTimeout` bisa diatur per-route. Semua sudah terdokumentasi; cukup referensikan saat dibutuhkan.
-- **Complexity:** Medium-High (hanya saat scaling)
+- **Finding:** Batasan horizontal scaling yang sudah diketahui untuk single-instance: (1) event bus in-memory — event tidak lintas instance; (2) rate limiter per-IP in-memory — budget limit tidak dibagi; (3) cleanup ticker internal. Dulu SSE `WriteTimeout=0` dikonfigurasi global di HTTP server.
+- **Fix (29 Jul 2026):** `WriteTimeout` server global diubah menjadi `15 * time.Second` untuk melindungi server dari serangan slow-write secara global. Di handler SSE (`EventStream`), write timeout dinonaktifkan dinamis (`rc.SetWriteDeadline(time.Time{})`) dan dikontrol per-tulis menggunakan deadline 10 detik agar koneksi tetap long-lived secara aman.
+- **Complexity:** Low-Medium
 
 ### ARCH-4. RENDAH — DTO Dipakai Repository Layer (Arah Dependency Terbalik Ringan)
 

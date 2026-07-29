@@ -90,7 +90,7 @@ func main() {
 		Addr:         ":" + cfg.Port,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 0, // SSE responses need long-lived writes.
+		WriteTimeout: 15 * time.Second, // Protect against slow-write attacks globally. Extended/disabled dynamically in handlers (e.g. SSE).
 		IdleTimeout:  60 * time.Second,
 	}
 

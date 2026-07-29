@@ -638,6 +638,10 @@ func (h *Handler) EventStream(c *gin.Context) {
 	// goroutine zombie yang hidup berjam-jam menunggu RST OS.
 	rc := http.NewResponseController(c.Writer)
 
+	// ARCH-3: Disable the global write timeout on this long-lived SSE connection
+	// by setting write deadline to zero initially.
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	heartbeat := time.NewTicker(sseHeartbeatInterval)
 	defer heartbeat.Stop()
 	deadline := time.NewTimer(sseMaxLifetime)

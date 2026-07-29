@@ -115,9 +115,9 @@ POST /api/v1/payments/webhook (dari DOKU) -> verifikasi HMAC-SHA256 (message = e
 
 ### 3.4 Realtime (SSE)
 
-`GET /api/v1/events/stream` (perlu auth, role operator/admin — SEC-18) men-subscribe ke `events.Bus` in-memory dan men-stream event ke client. Heartbeat tiap 25 detik via `time.NewTicker`. Karena SSE butuh koneksi hidup lama, `http.Server.WriteTimeout` di-set `0` (`main.go`).
+`GET /api/v1/events/stream` (perlu auth, role operator/admin — SEC-18) men-subscribe ke `events.Bus` in-memory dan men-stream event ke client. Heartbeat tiap 25 detik via `time.NewTicker`. Karena SSE butuh koneksi hidup lama, `http.Server.WriteTimeout` di-set `15 * time.Second` (`main.go`) dan dinonaktifkan secara dinamis di handler.
 
-Karena `WriteTimeout=0` tidak memberi deadline tulis global, BUG-4 (28 Jul 2026) menambahkan tiga guard koneksi zombie di handler `EventStream`: (1) write-error detection per-tulis via `http.NewResponseController` + `SetWriteDeadline(10s)` + `Flush()`; (2) max lifetime `sseMaxLifetime=30 menit` — server mengirim event `reconnect` lalu menutup; `EventSource` browser reconnect otomatis; (3) cap subscriber `events.MaxSubscribers=100` — request baru membalas 503 bila penuh. Tanpa guard ini, koneksi setengah-putus (NAT timeout/laptop sleep) tidak terdeteksi cepat → goroutine + subscriber bus bocor. Detail: lihat [backend.md](backend.md) Mekanisme Realtime dan [api.md](api.md) SSE.
+Karena didukung dynamic override di handler SSE, koneksi zombie dijaga oleh tiga guard di `EventStream` (BUG-4): (1) write-error detection per-tulis via `http.NewResponseController` + `SetWriteDeadline(10s)` + `Flush()`; (2) max lifetime `sseMaxLifetime=30 menit` — server mengirim event `reconnect` lalu menutup; `EventSource` browser reconnect otomatis; (3) cap subscriber `events.MaxSubscribers=100` — request baru membalas 503 bila penuh. Tanpa guard ini, koneksi setengah-putus (NAT timeout/laptop sleep) tidak terdeteksi cepat → goroutine + subscriber bus bocor. Detail: lihat [backend.md](backend.md) Mekanisme Realtime dan [api.md](api.md) SSE.
 
 Catatan: frontend customer saat ini TIDAK memakai SSE; efek "mengetik" di chat adalah animasi client-side. Stream SSE tersedia untuk konsumen operator/admin di masa depan.
 
@@ -176,7 +176,7 @@ Pola frontend (kedua app): **custom hook untuk data/logic** (`use-trip-form.ts`,
 3. **Guest chat tanpa auth, session anonymous.** `POST /api/v1/chat` memakai `ChatSession` ber-`UserID=NULL` yang diikat cookie HttpOnly `vero_chat_session` (bukan lagi user bersama `guest@vero.local`). User "Guest Traveler" (`guest@vero.local`) hanya masih dipakai untuk memenuhi kontrak `bookings.user_id NOT NULL` saat order dibuat.
 4. **Refresh token sebagai session DB + cookie HttpOnly.** Bukan disimpan di JS. Bisa di-revoke, dirotasi tiap refresh, dengan reuse detection revoke-all.
 5. **Access TTL pendek (15 menit).** Memperkecil dampak XSS; refresh otomatis menangani perpanjangan.
-6. **`WriteTimeout=0`** demi SSE long-lived. Karena tidak ada deadline tulis global, koneksi zombie dijaga oleh tiga guard di `EventStream` (BUG-4): write-error detection (`ResponseController` + `Flush`), max lifetime 30 menit, cap subscriber 100. Pisahkan server SSE saat horizontal scaling (ARCH-3) agar `WriteTimeout` bisa diatur per-route.
+6. **`WriteTimeout=15s`** global di HTTP server. Karena didukung override dinamis di handler SSE, koneksi zombie dijaga oleh tiga guard di `EventStream` (BUG-4): write-error detection (`ResponseController` + `Flush`), max lifetime 30 menit, cap subscriber 100.
 7. **Service dipecah per-domain** dalam package `services` (refactor 25 Jun 2026); `services.go` hanya berisi wiring + tipe bersama.
 8. **Envelope respons seragam** dipakai konsisten; frontend bergantung pada `payload.data`.
 

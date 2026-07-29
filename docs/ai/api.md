@@ -218,6 +218,6 @@ Perilaku koneksi (BUG-4, 28 Jul 2026):
 - **Max lifetime**: koneksi diputus setelah `sseMaxLifetime = 30 menit` (server mengirim event `reconnect` lalu menutup). Client `EventSource` browser reconnect otomatis; tidak ada aksi yang perlu dilakukan konsumen selain menangani reconnect standar SSE.
 - **Write-error detection**: tiap tulis memakai `http.NewResponseController` + `SetWriteDeadline(now+10s)` + `Flush()`. Koneksi setengah-putus (client hilang tanpa FIN — NAT timeout, laptop sleep) terdeteksi dan handler keluar; tidak menumpuk goroutine zombie.
 - **Cap subscriber**: bila jumlah koneksi SSE aktif mencapai `events.MaxSubscribers (100)`, request baru membalas `503 Too many SSE connections`. Ini mencegah map subscriber bocor tanpa batas. Naikkan konstanta package atau pindahkan ke config bila butuh lebih banyak koneksi konkuren.
-- **WriteTimeout server tetap `0`** (lihat main.go) agar koneksi long-lived tidak terputus global; tiga guard di atas menggantikan fungsi deadline global untuk SSE saja (lihat ARCH-3).
+- **WriteTimeout server diubah menjadi `15 * time.Second`** (lihat main.go) demi proteksi slow-write global; override dinamis di handler SSE (`rc.SetWriteDeadline(time.Time{})`) mematikan deadline tersebut agar koneksi tetap long-lived secara aman.
 
 Catatan: `create_payment` MCP tool dinonaktifkan, jadi `payment_created`/`booking_confirmed` hanya berasal dari API booking/payment, bukan workflow chat.
