@@ -1,6 +1,8 @@
 package services
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -241,14 +243,22 @@ func (s *AuthService) GuestUser() (models.User, error) {
 	// bcrypt.GenerateFromPassword fails only on inputs exceeding 72 bytes; a
 	// UUID v4 string is 36 chars so this is defensive, but the `_` pattern is
 	// dangerous if copied elsewhere.
-	guestID := uuid.NewString()
-	hash, err := bcrypt.GenerateFromPassword([]byte(uuid.NewString()), bcrypt.DefaultCost)
+	// SEC-24 fix: (1) email uses the FULL 36-char UUID — previously truncated to
+	// 8 hex chars where birthday-paradox collisions (~65k guests) would let
+	// FirstOrCreateUser return a prior guest's account, attaching booking B to
+	// guest A. (2) password material comes from crypto/rand (CSPRNG), not
+	// math/rand-backed uuid v4.
+	passwordBytes := make([]byte, 16)
+	if _, err := rand.Read(passwordBytes); err != nil {
+		return models.User{}, err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(hex.EncodeToString(passwordBytes)), bcrypt.DefaultCost)
 	if err != nil {
 		return models.User{}, err
 	}
 	user := models.User{
 		Name:     "Guest Traveler",
-		Email:    "guest-" + guestID[:8] + "@vero.local",
+		Email:    "guest-" + uuid.NewString() + "@vero.local",
 		Password: string(hash),
 		Role:     models.RoleUser,
 	}

@@ -388,19 +388,18 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Verifikasi:** `go build ./...` + `go vet ./...` + `gofmt` bersih; `go test ./...` bersih.
 - **OWASP Mapping:** API4:2023 Unrestricted Resource Consumption (Concurrency/Race Condition), API6:2023 Unrestricted Access to Sensitive Business Flows
 
-### SEC-24. SEDANG — Risiko Kolisi UUID dan Weak Randomness pada Guest User
+### SEC-24. ✅ SEDANG — Risiko Kolisi UUID dan Weak Randomness pada Guest User (FIXED 31 Jul 2026)
 
 - **Severity:** Medium
 - **Root Cause:** Fungsi pembuatan guest user (`AuthService.GuestUser`) memotong `uuid.NewString()` menjadi 8 karakter saja: `"guest-" + guestID[:8] + "@vero.local"`. Berdasarkan *Birthday Paradox*, probabilitas kolisi pada ruang 8 karakter hex sangat tinggi (kemungkinan bertabrakan setelah sekitar ~65.000 iterasi). Selain itu, password di-generate dari `uuid.NewString()` yang secara matematis tidak terdesain sebagai *Cryptographically Secure Pseudo-Random Number Generator* (CSPRNG).
 - **Impact:** Begitu terjadi kolisi karakter `guestID`, `FirstOrCreateUser` akan mengasumsikan guest tersebut sudah ada di database. Alih-alih membuat user baru, sistem akan menetapkan booking ID ke user lama. Hal ini menghancurkan isolasi dan privasi pesanan guest.
-- **Exploit Scenario:** 
-  1. Sistem melayani ribuan guest order seiring waktu.
-  2. *Collision* terjadi di 8 karakter hex UUID. Sistem mengembalikan user_id tamu sebelumnya.
-  3. Pesanan tamu B terekam di akun tamu A, mengacaukan riwayat kepemilikan transaksi di database.
 - **Affected Files:** 
   - `backend/internal/services/auth_service.go` (`GuestUser`)
-- **Recommendation:** Jangan memotong UUID. Gunakan `uuid.NewString()` secara utuh (36 karakter) untuk pembuatan guest email. Gunakan library `crypto/rand` untuk mengenerate string password yang keamanannya terjamin secara kriptografi.
-- **Implementation Complexity:** Low
+- **Fix (31 Jul 2026):**
+  1. **Email pakai UUID utuh** — `Email` sekarang `"guest-" + uuid.NewString() + "@vero.local"` (36 karakter penuh), bukan lagi truncate `guestID[:8]`. Ruang UUID v4 penuh (122 bit) menghilangkan risiko kolisi Birthday Paradox pada `FirstOrCreateUser`, sehingga booking tamu tidak mungkin lagi salah dilekatkan ke akun tamu lain.
+  2. **Password dari CSPRNG** — 16 byte dibaca dari `crypto/rand` (`rand.Read`) lalu di-`hex.EncodeToString` (32 char) sebelum `bcrypt.GenerateFromPassword`, menggantikan `uuid.NewString()` yang tidak dirancang kriptografis. Error `rand.Read` ditangani eksplisit (fail-closed).
+  3. Import `crypto/rand` + `encoding/hex` ditambahkan.
+- **Verifikasi:** `go build ./...` + `go vet ./...` + `gofmt` bersih.
 - **OWASP Mapping:** API2:2023 Broken Authentication, API9:2023 Improper Inventory Management (Data Integrity)
 
 ### SEC-25. TINGGI — God Object pada Handlers dan Repositories
@@ -970,6 +969,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | ARCH-2 Domain boundary kosong / entity anemik | ✅ Pindahkan allowedTransitions ke method CanTransitionTo pada models.Booking |
 | ARCH-5 Handler monolitik semua domain | ✅ `handlers.go` dipecah per-domain (`*_handlers.go`) dalam package `handlers`; kontrak API tak berubah |
 | SEC-23 TOCTOU race booking status | ✅ `UpdateBookingStatusAtomic` conditional UPDATE + `RowsAffected` check di `BookingService.UpdateStatus` |
+| SEC-24 Kolisi UUID + weak randomness guest user | ✅ Email pakai UUID utuh (no truncate) + password `crypto/rand` di `AuthService.GuestUser` |
 
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.
