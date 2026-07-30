@@ -321,13 +321,32 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Fix (29 Jul 2026):** Dibuat tipe data query filter di repository package: `RepositoryFilter` dan `TripRepositoryFilter` agar repository tidak lagi bergantung pada package `dto`. Map/konversi DTO ke filter repository dilakukan di level service (`BookingService`, `TripService`, `LogService`, `MCPService`).
 - **Complexity:** Low
 
-### ARCH-5. RENDAH — Satu Handler Monolitik untuk Semua Domain (Revisi SEC-25)
+### ARCH-5. ✅ RENDAH — Satu Handler Monolitik untuk Semua Domain (Revisi SEC-25) (FIXED 31 Jul 2026)
 
 - **Severity:** Low (diturunkan dari SEC-25 yang menilai High)
 - **Finding:** `handlers.go` 679 baris menampung semua domain (auth, chat, trip, booking, payment, logs, analytics, upload, SSE). SEC-25 menilai ini High; audit ini menurunkan ke Low karena: file sudah terorganisir per-domain berurutan, method handler tipis (parse→service→respond), dan service layer SUDAH dipecah per-domain (refactor 25 Jun 2026) sehingga kompleksitas bisnis tidak menumpuk di handler.
 - **Impact:** Merge conflict sesekali saat dua dev menyentuh domain berbeda di file yang sama; navigasi sedikit lebih panjang. Tidak ada dampak arsitektural (coupling/cohesion tetap baik karena handler stateless).
 - **Recommendation:** Opsional — pecah per-domain (`auth_handlers.go`, `chat_handlers.go`, dst) dalam package `handlers` yang sama bila tim tumbuh, mengikuti pola pemecahan services. Bukan keharusan.
 - **Complexity:** Low
+- **Fix (31 Jul 2026):** `handlers.go` dipecah per-domain dalam package `handlers` yang sama (mengikuti pola pemecahan `services` 25 Jun 2026). Kontrak API publik tidak berubah: nama method handler, signature, rute (`routes.go`), dan wiring `handlers.New()` semuanya identik — hanya lokasi file yang berubah.
+
+  | File baru | Method yang dipindah |
+  |---|---|
+  | `handlers.go` (18 baris) | `Handler` struct + `New()` — wiring saja |
+  | `health_handlers.go` | `Health`, `DatabaseHealth`, `Liveness`, `Readiness` |
+  | `auth_handlers.go` | `Register`, `Login`, `Refresh`, `Logout`, `Me`, `AdminCreateUser` |
+  | `chat_handlers.go` | `Chat`, `GuestChat`, `ChatSessions`, `ChatMessages`, `GuestHistory`, `resolveGuestSession` |
+  | `trip_handlers.go` | `ListTrips`, `PublicPackages`, `GetPackage`, `GetTrip`, `CreateTrip`, `UpdateTrip`, `DeleteTrip` |
+  | `booking_handlers.go` | `CreateBooking`, `GuestCreateOrder`, `ListBookings`, `GetBooking`, `UpdateBooking` |
+  | `payment_handlers.go` | `CreatePayment`, `PaymentWebhook`, `GetPayment`, `PaymentFeatureDisabled` |
+  | `logs_handlers.go` | `Logs`, `WorkflowLogs`, `ToolCalls`, `Analytics` |
+  | `upload_handlers.go` | `UploadTripMedia`, `detectImageContentType`, konstanta `maxUploadBytes` |
+  | `sse_handlers.go` | `EventStream`, konstanta `sseMaxLifetime`, `sseHeartbeatInterval` |
+  | `helpers.go` | helper bersama: `bind`, `parseID`, `currentUserID`, `isStaff`, `authRequestMeta`, `respondAuthIssue` |
+
+  `docs.go` (OpenAPI) tidak dipindah. Guard SEC/BUG yang menempel di handler (SEC-15 error sanitasi, SEC-5 upload, BUG-4 SSE zombie guard, SEC-17 session ownership) ikut file domain masing-masing — tidak ada perubahan perilaku.
+
+  Verifikasi: `go build ./...` + `go vet ./...` + `gofmt` bersih.
 
 ---
 
@@ -945,6 +964,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | PRR-P3-2 CI/CD | ✅ Pipeline quality gate (build, lint, test, image build) didokumentasikan di deployment.md |
 | ARCH-1 Akses DB langsung dari handler | ✅ Pindahkan logika DB session guest & authenticated ke AIService |
 | ARCH-2 Domain boundary kosong / entity anemik | ✅ Pindahkan allowedTransitions ke method CanTransitionTo pada models.Booking |
+| ARCH-5 Handler monolitik semua domain | ✅ `handlers.go` dipecah per-domain (`*_handlers.go`) dalam package `handlers`; kontrak API tak berubah |
 
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.

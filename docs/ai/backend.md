@@ -9,6 +9,7 @@ Dokumen ini menjelaskan lapisan backend Go: service layer, logika bisnis inti, m
 | `backend/cmd/server/main.go` | Entry point, wiring dependency, graceful shutdown |
 | `backend/internal/services/` | Service layer, dipecah per-domain (lihat di bawah) |
 | `backend/internal/services/services.go` | `Services` struct, `New()` (wiring), tipe bersama |
+| `backend/internal/handlers/` | HTTP handler, dipecah per-domain (`*_handlers.go`); `handlers.go` hanya wiring `Handler` struct + `New()` (ARCH-5, 31 Jul 2026) |
 | `backend/internal/ai/ai_client.go` | Klien AI OpenAI-compatible + fallback lokal |
 | `backend/internal/mcp/tools.go` | Katalog definisi tool MCP |
 | `backend/internal/events/bus.go` | Event bus in-memory untuk SSE |

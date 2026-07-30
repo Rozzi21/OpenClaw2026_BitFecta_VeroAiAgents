@@ -14,7 +14,7 @@ Alur dependensi selalu satu arah:
 Handler -> Service -> Repository -> GORM/PostgreSQL
 ```
 
-- **Handler** (`backend/internal/handlers/`): hanya parsing request, panggil service, format response. TIDAK boleh akses DB langsung atau berisi logika bisnis.
+- **Handler** (`backend/internal/handlers/`): hanya parsing request, panggil service, format response. TIDAK boleh akses DB langsung atau berisi logika bisnis. Handler dipecah per-domain dalam file `*_handlers.go` (`auth_handlers.go`, `chat_handlers.go`, `trip_handlers.go`, `booking_handlers.go`, `payment_handlers.go`, `logs_handlers.go`, `upload_handlers.go`, `sse_handlers.go`, `health_handlers.go`); `handlers.go` hanya berisi `Handler` struct + `New()`, `helpers.go` helper bersama. Saat menambah handler, taruh di file domain yang sesuai (ARCH-5).
 - **Service** (`backend/internal/services/`): semua logika bisnis, dipecah per-domain (`auth_service.go`, `ai_service.go`, `payment_service.go`, dst — satu package `services`). TIDAK boleh menyentuh `*gin.Context`. Saat menambah logika, taruh di file domain yang sesuai; jangan menumpuk semuanya di `services.go` (yang kini hanya berisi `Services` struct + `New()` + tipe bersama).
 - **Repository** (`backend/internal/repositories/`): satu-satunya lapisan yang menyentuh `r.DB` (GORM).
 

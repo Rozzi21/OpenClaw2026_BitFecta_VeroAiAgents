@@ -26,7 +26,7 @@ VeroAiTravelAgents/
 │   │   ├── models/models.go       → semua skema GORM (10 entity)
 │   │   ├── repositories/          → akses data (CRUD)
 │   │   ├── services/              → business logic, dipecah per-domain (*_service.go) + services.go (wiring)
-│   │   ├── handlers/              → HTTP handler + docs.go (OpenAPI)
+│   │   ├── handlers/              → HTTP handler, dipecah per-domain (*_handlers.go) + handlers.go (wiring) + docs.go (OpenAPI)
 │   │   ├── routes/routes.go       → registrasi rute + middleware
 │   │   ├── middlewares/           → Auth, Role, CORS, RateLimit, dll
 │   │   ├── auth/                  → JWTService, cookie, audit log
@@ -67,7 +67,7 @@ VeroAiTravelAgents/
 | File | Kapan disentuh |
 |---|---|
 | `backend/internal/services/*_service.go` | Business logic per-domain (auth, AI, trip, booking, payment, analytics); `services.go` untuk wiring/tipe bersama |
-| `backend/internal/handlers/handlers.go` | Menambah/ubah HTTP handler |
+| `backend/internal/handlers/*_handlers.go` | Menambah/ubah HTTP handler (per-domain; `handlers.go` hanya wiring) |
 | `backend/internal/routes/routes.go` | Menambah endpoint baru atau ubah middleware |
 | `backend/internal/handlers/docs.go` | WAJIB diperbarui saat rute berubah (OpenAPI manual) |
 | `backend/internal/models/models.go` | Ubah skema database |

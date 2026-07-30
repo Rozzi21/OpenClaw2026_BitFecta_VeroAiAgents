@@ -55,7 +55,7 @@ Modul Go: `github.com/rozzi/vero-ai-travel-agents/backend`. Pola umum: `Handler 
 
 ### `internal/handlers`
 - Tujuan: handler HTTP Gin (parsing request, panggil service, format respons) + dokumentasi OpenAPI/Scalar.
-- File penting: [`backend/internal/handlers/handlers.go`](../../backend/internal/handlers/handlers.go), [`backend/internal/handlers/docs.go`](../../backend/internal/handlers/docs.go)
+- File penting: dipecah per-domain dalam package `handlers` (ARCH-5, 31 Jul 2026) — [`handlers.go`](../../backend/internal/handlers/handlers.go) (`Handler` struct + `New()`), `health_handlers.go`, `auth_handlers.go`, `chat_handlers.go`, `trip_handlers.go`, `booking_handlers.go`, `payment_handlers.go`, `logs_handlers.go`, `upload_handlers.go`, `sse_handlers.go`, `helpers.go` (helper bersama: `bind`, `parseID`, `currentUserID`, `isStaff`, `authRequestMeta`, `respondAuthIssue`), [`docs.go`](../../backend/internal/handlers/docs.go) (OpenAPI/Scalar).
 - Bergantung pada: `services`, `database`, `utils`, `dto`, `auth`, `middlewares`, `events`.
 - Dipakai oleh: `routes`.
 

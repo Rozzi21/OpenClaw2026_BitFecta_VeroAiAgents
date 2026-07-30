@@ -1,0 +1,73 @@
+package handlers
+
+import (
+	"fmt"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/rozzi/vero-ai-travel-agents/backend/internal/auth"
+	"github.com/rozzi/vero-ai-travel-agents/backend/internal/config"
+	"github.com/rozzi/vero-ai-travel-agents/backend/internal/middlewares"
+	"github.com/rozzi/vero-ai-travel-agents/backend/internal/models"
+	"github.com/rozzi/vero-ai-travel-agents/backend/internal/services"
+	"github.com/rozzi/vero-ai-travel-agents/backend/internal/utils"
+)
+
+func authRequestMeta(c *gin.Context) services.AuthRequestMeta {
+	requestID, _ := c.Get("request_id")
+	id, _ := requestID.(string)
+	return services.AuthRequestMeta{
+		IP:        c.ClientIP(),
+		UserAgent: c.GetHeader("User-Agent"),
+		RequestID: id,
+	}
+}
+
+func respondAuthIssue(c *gin.Context, cfg config.Config, status int, message string, result services.AuthIssueResult) {
+	maxAge := int(cfg.JWTRefreshTTL.Seconds())
+	auth.SetRefreshCookie(c, cfg, result.RefreshToken, maxAge)
+	utils.Success(c, status, message, result.Response)
+}
+
+func bind(c *gin.Context, target interface{}) bool {
+	if err := c.ShouldBindJSON(target); err != nil {
+		utils.BadRequest(c, "Validation failed", gin.H{"detail": err.Error()})
+		return false
+	}
+	return true
+}
+
+func parseID(c *gin.Context, key string) (uuid.UUID, bool) {
+	id, err := uuid.Parse(c.Param(key))
+	if err != nil {
+		utils.BadRequest(c, fmt.Sprintf("Invalid %s", key), gin.H{"detail": err.Error()})
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+func currentUserID(c *gin.Context) uuid.UUID {
+	value, exists := c.Get(middlewares.ContextUserID)
+	if !exists {
+		return uuid.Nil
+	}
+	id, ok := value.(uuid.UUID)
+	if !ok {
+		return uuid.Nil
+	}
+	return id
+}
+
+// isStaff reports whether the current request belongs to an operator/admin.
+// Used for ownership checks: staff may read any resource, others only their own.
+func isStaff(c *gin.Context) bool {
+	value, exists := c.Get(middlewares.ContextRole)
+	if !exists {
+		return false
+	}
+	role, ok := value.(models.Role)
+	if !ok {
+		return false
+	}
+	return role == models.RoleOperator || role == models.RoleAdmin
+}

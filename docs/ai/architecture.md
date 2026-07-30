@@ -48,7 +48,7 @@ Lapisan dan tanggung jawabnya:
 - **`internal/models`** — skema GORM (entity).
 - **`internal/repositories`** — akses data (CRUD). Satu-satunya lapisan yang menyentuh GORM langsung (kecuali Analytics yang query agregat lewat `repo.DB`).
 - **`internal/services`** — logika bisnis, dipecah per-domain dalam satu package (`auth_service.go`, `ai_service.go`, `mcp_service.go`, `trip_service.go`, `booking_service.go`, `payment_service.go`, `log_service.go`, `analytics_service.go`, `helpers.go`); `services.go` menyisakan wiring `New()` + tipe bersama.
-- **`internal/handlers`** — HTTP handler + dokumentasi OpenAPI (`docs.go`).
+- **`internal/handlers`** — HTTP handler, dipecah per-domain dalam satu package (`auth_handlers.go`, `chat_handlers.go`, `trip_handlers.go`, `booking_handlers.go`, `payment_handlers.go`, `logs_handlers.go`, `upload_handlers.go`, `sse_handlers.go`, `health_handlers.go`); `handlers.go` hanya berisi `Handler` struct + `New()`, `helpers.go` helper bersama, `docs.go` dokumentasi OpenAPI.
 - **`internal/routes`** — registrasi rute dan penerapan middleware per-grup.
 - **`internal/middlewares`** — cross-cutting concerns.
 - **`internal/auth`** — JWTService, cookie refresh, audit log keamanan.
@@ -179,6 +179,7 @@ Pola frontend (kedua app): **custom hook untuk data/logic** (`use-trip-form.ts`,
 6. **`WriteTimeout=15s`** global di HTTP server. Karena didukung override dinamis di handler SSE, koneksi zombie dijaga oleh tiga guard di `EventStream` (BUG-4): write-error detection (`ResponseController` + `Flush`), max lifetime 30 menit, cap subscriber 100.
 7. **Service dipecah per-domain** dalam package `services` (refactor 25 Jun 2026); `services.go` hanya berisi wiring + tipe bersama.
 8. **Envelope respons seragam** dipakai konsisten; frontend bergantung pada `payload.data`.
+9. **Handler dipecah per-domain** dalam package `handlers` (refactor ARCH-5, 31 Jul 2026); `handlers.go` hanya berisi `Handler` struct + `New()`. Nama method dan kontrak API tidak berubah.
 
 ## 7. Entry Point Aplikasi
 
