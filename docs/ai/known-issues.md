@@ -402,7 +402,7 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Verifikasi:** `go build ./...` + `go vet ./...` + `gofmt` bersih.
 - **OWASP Mapping:** API2:2023 Broken Authentication, API9:2023 Improper Inventory Management (Data Integrity)
 
-### SEC-25. TINGGI — God Object pada Handlers dan Repositories
+### SEC-25. ✅ TINGGI — God Object pada Handlers dan Repositories (FIXED 31 Jul 2026)
 
 - **Severity:** High
 - **Root Cause:** Seluruh domain logic di backend dicampur dalam `handlers/handlers.go` dan `repositories/repositories.go`. Hal ini melanggar Single Responsibility Principle (SRP).
@@ -410,7 +410,22 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Affected Files:**
   - `backend/internal/handlers/handlers.go`
   - `backend/internal/repositories/repositories.go`
-- **Recommendation:** Pecah `Handler` menjadi beberapa handler spesifik domain (misalnya `AuthHandler`, `TripHandler`). Lakukan hal yang sama pada `Repository` dengan memecahnya menjadi `UserRepository`, `TripRepository`, dsb.
+- **Fix (31 Jul 2026):** Dua sisi dipecah per-domain dalam package yang sama (bukan tipe baru per-domain), sehingga permukaan API publik tidak berubah dan tidak ada perubahan callsite:
+  1. **Handlers** — sudah dipecah lebih dulu via ARCH-5 (lihat entri ARCH-5): `handlers.go` (wiring) + `*_handlers.go` per-domain.
+  2. **Repositories** — `repositories.go` (dulu 377 baris berisi semua method) kini hanya berisi `Repository` struct, `New()`, dan tipe filter (`RepositoryFilter`, `TripRepositoryFilter`). Method dipindah ke file per-domain dalam package `repositories` yang sama:
+
+     | File baru | Method |
+     |---|---|
+     | `user_repository.go` | `CreateUser`, `FindUserByEmail`, `FirstOrCreateUser`, `FindUserByID` |
+     | `chat_repository.go` | `CreateChatSession`, `FindChatSession`, `UpdateChatSession*`, `ListChatSessions`, `DeleteExpiredChatSessions`, `CountExpiredChatSessions`, `AddChatMessage`, `ListChatMessages`, `ListRecentChatMessages`, `CountChatMessages`, `TailChatMessages` |
+     | `trip_repository.go` | `CreateTrip`, `ListTrips`, `FindTrip`, `FindTripBySlugOrID`, `UpdateTrip`, `ReplaceTripItineraries`, `DeleteTrip` |
+     | `booking_repository.go` | `FindBookingBySession`, `CreateBooking`, `ListBookings`, `RecentBookings`, `FindBooking`, `FindBookingForUser`, `UpdateBooking`, `UpdateBookingStatusAtomic` |
+     | `payment_repository.go` | `CreatePayment`, `FindPayment`, `FindPaymentForUser`, `FindPaymentByExternalID`, `UpdatePayment` |
+     | `log_repository.go` | `CreateAILog`, `ListAILogs`, `CreateToolCall`, `ListToolCalls` |
+
+     `auth_sessions.go` (auth session store) sudah terpisah sebelumnya. Karena tetap satu tipe `*Repository` + satu `New()`, wiring `services.New()` dan seluruh caller tidak berubah. Guard SEC/ARCH yang menempel di method (SEC-2 `FindBookingForUser`/`FindPaymentForUser`, SEC-19 orphan cleanup, SEC-23 `UpdateBookingStatusAtomic`, ARCH-4 filter types) ikut file domain masing-masing — tidak ada perubahan perilaku.
+- **Catatan:** Ini pemecahan file, bukan pemisahan menjadi interface/tipe per-domain (SEC-27 mengusulkan interface DI untuk testability — masih terbuka, kompleksitas High).
+- **Verifikasi:** `go build ./...` + `go vet ./...` + `gofmt` + `go test ./...` bersih.
 - **Implementation Complexity:** Medium
 
 ### SEC-26. TINGGI — Context Propagation Hilang (Resource Leak Risk)
@@ -970,6 +985,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | ARCH-5 Handler monolitik semua domain | ✅ `handlers.go` dipecah per-domain (`*_handlers.go`) dalam package `handlers`; kontrak API tak berubah |
 | SEC-23 TOCTOU race booking status | ✅ `UpdateBookingStatusAtomic` conditional UPDATE + `RowsAffected` check di `BookingService.UpdateStatus` |
 | SEC-24 Kolisi UUID + weak randomness guest user | ✅ Email pakai UUID utuh (no truncate) + password `crypto/rand` di `AuthService.GuestUser` |
+| SEC-25 God object handlers + repositories | ✅ `repositories.go` dipecah per-domain (`*_repository.go`) dalam package `repositories`; kontrak API tak berubah |
 
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.
