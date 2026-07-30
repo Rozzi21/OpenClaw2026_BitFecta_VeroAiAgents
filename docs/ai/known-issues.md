@@ -368,7 +368,7 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Implementation Complexity:** Low
 - **OWASP Mapping:** API2:2023 Broken Authentication, API10:2023 Unsafe Consumption of APIs
 
-### SEC-23. TINGGI — Race Condition (TOCTOU) pada Transisi Status Booking
+### SEC-23. ✅ TINGGI — Race Condition (TOCTOU) pada Transisi Status Booking (FIXED 31 Jul 2026)
 
 - **Severity:** High
 - **Root Cause:** Pada `BookingService.UpdateStatus`, status dibaca dari database dan ditampung ke memori (`current := booking.BookingStatus`). Validasi `allowedTransitions` dilakukan di memori. Setelah itu, status baru disimpan dengan `s.repo.UpdateBooking(&booking)`. Tidak ada atomicity di level query (optimistic locking atau atomic update constraint) yang menjamin bahwa status di database belum berubah ketika proses update dijalankan.
@@ -380,8 +380,12 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
   4. Keduanya melakukan update ke DB yang menyebabkan status saling bertumpuk (data inkonsisten / invalid workflow).
 - **Affected Files:** 
   - `backend/internal/services/booking_service.go` (`UpdateStatus`)
-- **Recommendation:** Lakukan atomic update berbasis kondisi pada database. Misalnya menggunakan *Optimistic Locking* dengan field `version`, atau menggunakan where clause pada `status`: `db.Model(&booking).Where("id = ? AND booking_status = ?", id, current).Update("booking_status", target)`. Pastikan mengecek nilai `RowsAffected`.
-- **Implementation Complexity:** Low
+  - `backend/internal/repositories/repositories.go` (`UpdateBookingStatusAtomic` baru)
+- **Fix (31 Jul 2026):**
+  1. `UpdateBookingStatusAtomic(id, fromStatus, toStatus)` (repo baru) — atomic conditional update satu query: `UPDATE bookings SET booking_status = ? WHERE id = ? AND booking_status = ?`, mengembalikan `updated = RowsAffected == 1`. Hanya pemenang race yang mengubah status; tidak ada lagi transisi ganda.
+  2. `UpdateStatus()` kini memanggil `UpdateBookingStatusAtomic` alih-alih `UpdateBooking` (GORM `Save`). Bila `updated = false` (kalah race), service me-re-fetch booking untuk melaporkan status aktual ke caller, lalu mengembalikan error "concurrent status change detected" yang mencantumkan status aktual vs status yang diharapkan.
+  3. Validasi transisi `CanTransitionTo` tetap berjalan di memori sebagai guard pertama, tetapi atomic update di DB adalah guard kedua yang menjamin konsistensi bahkan bila dua request lolos validasi bersamaan.
+- **Verifikasi:** `go build ./...` + `go vet ./...` + `gofmt` bersih; `go test ./...` bersih.
 - **OWASP Mapping:** API4:2023 Unrestricted Resource Consumption (Concurrency/Race Condition), API6:2023 Unrestricted Access to Sensitive Business Flows
 
 ### SEC-24. SEDANG — Risiko Kolisi UUID dan Weak Randomness pada Guest User
@@ -965,6 +969,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | ARCH-1 Akses DB langsung dari handler | ✅ Pindahkan logika DB session guest & authenticated ke AIService |
 | ARCH-2 Domain boundary kosong / entity anemik | ✅ Pindahkan allowedTransitions ke method CanTransitionTo pada models.Booking |
 | ARCH-5 Handler monolitik semua domain | ✅ `handlers.go` dipecah per-domain (`*_handlers.go`) dalam package `handlers`; kontrak API tak berubah |
+| SEC-23 TOCTOU race booking status | ✅ `UpdateBookingStatusAtomic` conditional UPDATE + `RowsAffected` check di `BookingService.UpdateStatus` |
 
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.

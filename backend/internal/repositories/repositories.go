@@ -324,6 +324,20 @@ func (r *Repository) UpdateBooking(booking *models.Booking) error {
 	return r.DB.Save(booking).Error
 }
 
+// UpdateBookingStatusAtomic performs an atomic conditional update of the booking
+// status. It only succeeds if the current DB status matches fromStatus, preventing
+// TOCTOU race conditions (SEC-23). Returns true if the row was updated (race won),
+// false if the status had already changed (race lost).
+func (r *Repository) UpdateBookingStatusAtomic(id uuid.UUID, fromStatus, toStatus string) (bool, error) {
+	result := r.DB.Model(&models.Booking{}).
+		Where("id = ? AND booking_status = ?", id, fromStatus).
+		Update("booking_status", toStatus)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
 func (r *Repository) CreateAILog(log *models.AILog) error {
 	return r.DB.Create(log).Error
 }

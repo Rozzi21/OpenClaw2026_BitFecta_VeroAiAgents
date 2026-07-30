@@ -91,6 +91,10 @@ func (s *BookingService) Find(id, userID uuid.UUID, isStaff bool) (models.Bookin
 // UpdateStatus allows backoffice staff to advance a booking through the
 // internal workflow. It enforces allowed transitions server-side and returns
 // the updated booking.
+//
+// SEC-23 fix: uses an atomic conditional UPDATE (WHERE booking_status = current)
+// instead of read-validate-write, eliminating the TOCTOU race where two concurrent
+// requests could both pass validation and write conflicting transitions.
 func (s *BookingService) UpdateStatus(id, userID uuid.UUID, isStaff bool, req dto.UpdateBookingStatusRequest) (models.Booking, error) {
 	booking, err := s.Find(id, userID, isStaff)
 	if err != nil {
@@ -108,12 +112,22 @@ func (s *BookingService) UpdateStatus(id, userID uuid.UUID, isStaff bool, req dt
 		return models.Booking{}, fmt.Errorf("invalid status transition from %s to %s", current, target)
 	}
 
-	booking.BookingStatus = target
-	if err := s.repo.UpdateBooking(&booking); err != nil {
+	// Atomic conditional update: only succeeds if the DB status still matches
+	// what we read. If another request changed it first, RowsAffected == 0.
+	updated, err := s.repo.UpdateBookingStatusAtomic(id, current, target)
+	if err != nil {
 		return models.Booking{}, err
 	}
+	if !updated {
+		// Race lost: another request changed the status between our read and write.
+		// Re-fetch to report the actual current state to the caller.
+		fresh, fetchErr := s.Find(id, userID, isStaff)
+		if fetchErr != nil {
+			return models.Booking{}, fmt.Errorf("concurrent status change detected for booking %s", id)
+		}
+		return models.Booking{}, fmt.Errorf("concurrent status change detected: booking is now %q (expected %q)", fresh.BookingStatus, current)
+	}
 
-	// Re-fetch so the caller receives the latest persisted state with preloads.
 	// Re-fetch so the caller receives the latest persisted state with preloads.
 	fetchedBooking, err := s.Find(id, userID, isStaff)
 	if err != nil {
