@@ -171,7 +171,6 @@ type UpdateBookingStatusRequest struct {
 	BookingStatus string `json:"booking_status" binding:"required,oneof=pending processing confirmed completed cancelled"`
 }
 
-
 // PaymentWebhookRequest is the DOKU payment callback payload. Status accepts
 // any provider string; the service normalizes aliases into the canonical
 // models.PaymentStatus* constants (SEC-29).

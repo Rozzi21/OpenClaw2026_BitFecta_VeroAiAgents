@@ -33,6 +33,21 @@ DILARANG memakai `context.Background()`/`context.TODO()` di dalam jalur request 
 
 > Pengecualian yang sudah ada: `AnalyticsService.Dashboard()` mengakses `s.repo.DB` langsung untuk query agregat. Ini pengecualian sadar, bukan pola yang dianjurkan untuk ditiru.
 
+### 1.1b Sentinel Errors (WAJIB, sejak SEC-28 — 1 Agu 2026)
+
+Error domain yang mempengaruhi alur logika (bukan sekadar pesan ke user) WAJIB dideklarasikan sebagai sentinel error package-level, bukan `errors.New` inline.
+
+```go
+var ErrPaymentNotFound = errors.New("payment not found")
+```
+
+Saat mengecek jenis error di caller, WAJIB pakai `errors.Is(err, pkg.ErrName)`. DILARANG membandingkan `err.Error() == "..."` (string matching) karena rapuh terhadap perubahan teks.
+
+Sentinel yang sudah ada:
+- `services.go`: `ErrRefreshTokenRevoked`, `ErrInvalidRefreshToken`, `ErrPaymentsDisabled`, `ErrChatSessionNotFound`, `ErrChatSessionExpired`
+- `payment_service.go`: `ErrPaymentNotFound`, `ErrBookingNotFoundForPayment`, `ErrMissingSignature`, `ErrInvalidTimestampFormat`, `ErrWebhookTimestampExpired`, `ErrInvalidPaymentSignature`, `ErrWebhookSecretMissing`, `ErrPaymentAmountMismatch`, `ErrPaymentAlreadySettled`
+- `booking_service.go`: `ErrBookingNotFound`
+
 ### 1.2 Dependency Injection Manual
 
 Semua dependency di-wire di `services.New()` (`backend/internal/services/services.go`) dan `handlers.New()`. TIDAK ada framework DI. Tambah service baru dengan menambahkan field ke struct `Services` lalu inisialisasi di `New()`.

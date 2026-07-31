@@ -71,15 +71,14 @@ type ResponseFormat struct {
 }
 
 type CompletionRequest struct {
-	Messages []Message        `json:"messages"`
-	Tools    []ToolDef        `json:"tools,omitempty"`
+	Messages []Message `json:"messages"`
+	Tools    []ToolDef `json:"tools,omitempty"`
 
 	// ResponseFormat requests structured output (e.g. JSON schema) on the final
 	// assistant message instead of free-form text. Used by SEC-29 for the
 	// order-claim check so we do not parse natural language.
 	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
 }
-
 
 type CompletionResponse struct {
 	Text      string                 `json:"text"`

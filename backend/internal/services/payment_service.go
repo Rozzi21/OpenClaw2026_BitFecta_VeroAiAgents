@@ -27,6 +27,20 @@ type PaymentService struct {
 	cfg  config.Config
 }
 
+// SEC-28: sentinel errors for the payment domain. Callers (handlers, tests)
+// must match these with errors.Is, never by comparing err.Error() strings.
+var (
+	ErrPaymentNotFound           = errors.New("payment not found")
+	ErrBookingNotFoundForPayment = errors.New("booking not found")
+	ErrMissingSignature          = errors.New("missing signature or timestamp")
+	ErrInvalidTimestampFormat    = errors.New("invalid timestamp format")
+	ErrWebhookTimestampExpired   = errors.New("webhook timestamp expired")
+	ErrInvalidPaymentSignature   = errors.New("invalid payment signature")
+	ErrWebhookSecretMissing      = errors.New("payment webhook secret not configured")
+	ErrPaymentAmountMismatch     = errors.New("payment amount mismatch")
+	ErrPaymentAlreadySettled     = errors.New("payment already settled")
+)
+
 func (s *PaymentService) Create(ctx context.Context, req dto.PaymentCreateRequest) (models.Payment, error) {
 	if !s.cfg.PaymentsEnabled {
 		return models.Payment{}, ErrPaymentsDisabled
@@ -36,7 +50,7 @@ func (s *PaymentService) Create(ctx context.Context, req dto.PaymentCreateReques
 	// from the client request.
 	booking, err := s.repo.FindBooking(ctx, req.BookingID)
 	if err != nil {
-		return models.Payment{}, errors.New("booking not found")
+		return models.Payment{}, ErrBookingNotFoundForPayment
 	}
 	// SEC-29: payment statuses are now typed constants in the models package,
 	// so new code cannot drift on raw literals like "pending"/"settlement".
@@ -82,24 +96,24 @@ func (s *PaymentService) Webhook(ctx context.Context, req dto.PaymentWebhookRequ
 	// Replay prevention: timestamp must be fresh (±5 min).
 	if s.cfg.DOKUSecret != "" {
 		if req.Signature == "" || req.Timestamp == "" {
-			return models.Payment{}, errors.New("missing signature or timestamp")
+			return models.Payment{}, ErrMissingSignature
 		}
 
 		timestamp, err := time.Parse(time.RFC3339, req.Timestamp)
 		if err != nil {
-			return models.Payment{}, errors.New("invalid timestamp format")
+			return models.Payment{}, ErrInvalidTimestampFormat
 		}
 
 		now := time.Now().UTC()
 		if timestamp.Before(now.Add(-5*time.Minute)) || timestamp.After(now.Add(5*time.Minute)) {
-			return models.Payment{}, errors.New("webhook timestamp expired")
+			return models.Payment{}, ErrWebhookTimestampExpired
 		}
 
 		if !s.verifyDokuSignature(req.RawBody, req.Timestamp, req.Signature) {
-			return models.Payment{}, errors.New("invalid payment signature")
+			return models.Payment{}, ErrInvalidPaymentSignature
 		}
 	} else if s.cfg.AppEnv == "production" {
-		return models.Payment{}, errors.New("payment webhook secret not configured")
+		return models.Payment{}, ErrWebhookSecretMissing
 	}
 
 	payment, err := s.repo.FindPaymentByExternalID(ctx, req.ExternalID)
@@ -109,7 +123,7 @@ func (s *PaymentService) Webhook(ctx context.Context, req dto.PaymentWebhookRequ
 
 	// SEC-4: validate the reported amount against the stored payment if present.
 	if req.Amount != nil && *req.Amount != payment.Amount {
-		return models.Payment{}, errors.New("payment amount mismatch")
+		return models.Payment{}, ErrPaymentAmountMismatch
 	}
 
 	// SEC-4 idempotency: never downgrade an already-settled payment, and skip
@@ -119,7 +133,7 @@ func (s *PaymentService) Webhook(ctx context.Context, req dto.PaymentWebhookRequ
 	newStatus := models.NormalizePaymentStatus(req.Status)
 	if models.IsPaymentSuccess(payment.Status) {
 		if !models.IsPaymentSuccess(newStatus) {
-			return models.Payment{}, errors.New("payment already settled")
+			return models.Payment{}, ErrPaymentAlreadySettled
 		}
 		if newStatus == payment.Status {
 			return payment, nil
@@ -142,7 +156,7 @@ func (s *PaymentService) Webhook(ctx context.Context, req dto.PaymentWebhookRequ
 		}
 		payment = fresh
 		if models.IsPaymentSuccess(payment.Status) && !models.IsPaymentSuccess(newStatus) {
-			return models.Payment{}, errors.New("payment already settled")
+			return models.Payment{}, ErrPaymentAlreadySettled
 		}
 		if payment.Status == newStatus {
 			return payment, nil

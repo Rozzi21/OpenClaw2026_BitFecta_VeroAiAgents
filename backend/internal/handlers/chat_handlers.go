@@ -43,7 +43,7 @@ func (h *Handler) GuestChat(c *gin.Context) {
 	}
 	res, err := h.Services.AI.Chat(c.Request.Context(), services.ChatContext{SessionID: sessionID}, req)
 	if err != nil {
-		if err.Error() == "chat session expired" || err.Error() == "chat session not found" {
+		if errors.Is(err, services.ErrChatSessionExpired) || errors.Is(err, services.ErrChatSessionNotFound) {
 			auth.ClearGuestSessionCookie(c, h.Services.Config)
 			utils.BadRequest(c, "Chat session expired", gin.H{})
 			return

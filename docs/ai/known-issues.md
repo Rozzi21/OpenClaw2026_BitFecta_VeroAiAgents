@@ -454,15 +454,21 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Recommendation:** Buat interface per-domain untuk layer bawah dan oper (inject) instance implementasi interface tersebut melalui constructor tiap service, sehingga mempermudah mocking pada saat testing.
 - **Implementation Complexity:** High
 
-### SEC-28. SEDANG — Kurangnya Sentinel Errors (String Matching untuk Cek Error)
+### SEC-28. ✅ SEDANG — Kurangnya Sentinel Errors (String Matching untuk Cek Error) (FIXED 1 Agu 2026)
 
 - **Severity:** Medium
 - **Root Cause:** Sistem memeriksa jenis error menggunakan pencocokan teks (`string matching`). Contoh: `handlers.go` mengecek error dari DB/Service dengan membandingkan nilai string `err.Error() == "chat session expired"`.
 - **Impact:** Kode menjadi rapuh (brittle) dan berutang budi secara teknis (technical debt). Jika ada perubahan minor pada teks pesan error, flow logika pengecekan dapat terputus.
 - **Affected Files:**
-  - `backend/internal/handlers/handlers.go`
-  - `backend/internal/services/ai_service.go`
-- **Recommendation:** Gunakan Sentinel Errors. Buat variabel global konstan error (misal `var ErrSessionExpired = errors.New("...")`) pada masing-masing paket. Saat menangani error, gunakan `errors.Is(err, pkg.ErrSessionExpired)`.
+  - `backend/internal/handlers/chat_handlers.go` (`GuestChat`)
+  - `backend/internal/services/payment_service.go`
+  - `backend/internal/services/payment_service_test.go`
+- **Fix (1 Agu 2026):**
+  1. **Sentinel errors payment domain** — `payment_service.go` kini memiliki 9 sentinel: `ErrPaymentNotFound`, `ErrBookingNotFoundForPayment`, `ErrMissingSignature`, `ErrInvalidTimestampFormat`, `ErrWebhookTimestampExpired`, `ErrInvalidPaymentSignature`, `ErrWebhookSecretMissing`, `ErrPaymentAmountMismatch`, `ErrPaymentAlreadySettled`. Semua `errors.New` inline diganti dengan referensi ke sentinel ini.
+  2. **`GuestChat` handler** — `chat_handlers.go` mengganti `err.Error() == "chat session expired" || err.Error() == "chat session not found"` dengan `errors.Is(err, services.ErrChatSessionExpired) || errors.Is(err, services.ErrChatSessionNotFound)` (sentinel yang sudah ada di `services.go`).
+  3. **`payment_service_test.go`** — Tiga assertion string matching (`err.Error() != "..."`) diganti dengan `errors.Is(err, services.ErrWebhookTimestampExpired)`, `errors.Is(err, services.ErrInvalidPaymentSignature)`, dan `errors.Is(err, services.ErrPaymentAlreadySettled)`.
+  4. Komentar SEC-28 ditambahkan di deklarasi sentinel payment: "Callers (handlers, tests) must match these with errors.Is, never by comparing err.Error() strings."
+- **Verifikasi:** `go build ./...` + `go vet ./...` + `gofmt` + `go test ./...` bersih (exit 0).
 - **Implementation Complexity:** Low
 
 ### SEC-29. ✅ SEDANG — Hardcoded Magic Strings (FIXED 31 Jul 2026)
@@ -1004,6 +1010,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | SEC-24 Kolisi UUID + weak randomness guest user | ✅ Email pakai UUID utuh (no truncate) + password `crypto/rand` di `AuthService.GuestUser` |
 | SEC-25 God object handlers + repositories | ✅ `repositories.go` dipecah per-domain (`*_repository.go`) dalam package `repositories`; kontrak API tak berubah |
 | SEC-26 Context propagation hilang (resource leak) | ✅ `context.Context` di-thread Handler→Service→Repo (`WithContext`), AI loop derive timeout dari request ctx, `triggerN8N` `NewRequestWithContext`+body closed (fix BUG-3), cleanup ticker per-run ctx |
+| SEC-28 String matching untuk cek error | ✅ Sentinel errors payment domain + `errors.Is` di handler/test; aturan sentinel di `coding-rules.md` §1.1b |
 
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.

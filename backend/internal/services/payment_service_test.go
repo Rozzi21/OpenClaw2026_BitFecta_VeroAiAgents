@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 
@@ -98,7 +99,7 @@ func TestPaymentWebhookReplay(t *testing.T) {
 	}
 
 	_, err = paymentSvc.Webhook(context.Background(), reqExpired)
-	if err == nil || err.Error() != "webhook timestamp expired" {
+	if !errors.Is(err, services.ErrWebhookTimestampExpired) {
 		t.Errorf("Expected webhook timestamp expired error, got: %v", err)
 	}
 
@@ -113,7 +114,7 @@ func TestPaymentWebhookReplay(t *testing.T) {
 	}
 
 	_, err = paymentSvc.Webhook(context.Background(), reqInvalidSig)
-	if err == nil || err.Error() != "invalid payment signature" {
+	if !errors.Is(err, services.ErrInvalidPaymentSignature) {
 		t.Errorf("Expected invalid payment signature error, got: %v", err)
 	}
 }
@@ -152,7 +153,7 @@ func TestPaymentWebhookIdempotency(t *testing.T) {
 	}
 
 	_, err := paymentSvc.Webhook(context.Background(), req)
-	if err == nil || err.Error() != "payment already settled" {
+	if !errors.Is(err, services.ErrPaymentAlreadySettled) {
 		t.Errorf("Expected payment already settled error, got: %v", err)
 	}
 }
