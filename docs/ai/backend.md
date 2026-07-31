@@ -35,6 +35,8 @@ Sejak refactor 25 Jun 2026, kode dipecah **per-domain dalam satu package `servic
 
 Pola umum: tiap service adalah struct dengan dependency `repo` (repository), dan opsional `bus` (event), `cfg` (config), `jwt`, `mcp`, `client` (AI). Dependency di-inject manual via `services.New()`.
 
+**Context propagation (SEC-26, FIXED 31 Jul 2026):** Semua method service dan repository menerima `ctx context.Context` sebagai parameter pertama dan meneruskannya ke bawah. Handler meneruskan `c.Request.Context()` ke service; service meneruskan ke repository; repository menjalankan query via `r.DB.WithContext(ctx)` (termasuk transaksi `Begin`/`Transaction`). `generateWithToolLoop` me-derive `context.WithTimeout(ctx, cfg.AITimeout)` dari **request ctx** (bukan `context.Background()`), sehingga klien yang putus akan me-cancel panggilan LLM (via `ai_client.Generate` yang memakai `http.NewRequestWithContext`) dan tool/DB. Aturan: jalur HTTP WAJIB pass request ctx; jangan pakai `context.Background()` kecuali untuk background terpisah (contoh: ticker cleanup di `main.go` memakai `context.Background()`+timeout 30s; `triggerN8N` detaches ke `context.Background()`+5s karena webhook dikirim setelah respons). Integrasi eksternal HTTP keluar memakai `http.NewRequestWithContext` + tutup body.
+
 ```go
 func New(cfg config.Config, repo *repositories.Repository, jwt *auth.JWTService, bus *events.Bus) *Services {
     s := &Services{Config: cfg, Repo: repo, JWT: jwt, Events: bus}

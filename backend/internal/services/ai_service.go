@@ -55,19 +55,19 @@ const chatSessionCleanupGraceExtra = 30 * time.Second
 // request is still writing to (fail-safe / defense-in-depth on top of the
 // sliding fix). Sessions become eligible for deletion one grace window later;
 // expiry semantics for users are unchanged.
-func (s *AIService) CleanupExpiredChatSessions(now time.Time) (int64, error) {
+func (s *AIService) CleanupExpiredChatSessions(ctx context.Context, now time.Time) (int64, error) {
 	grace := s.cfg.AITimeout + chatSessionCleanupGraceExtra
 	cutoff := now.Add(-grace)
-	return s.repo.DeleteExpiredChatSessions(cutoff)
+	return s.repo.DeleteExpiredChatSessions(ctx, cutoff)
 }
 
-func (s *AIService) Chat(chatCtx ChatContext, req dto.ChatRequest) (ChatResult, error) {
+func (s *AIService) Chat(ctx context.Context, chatCtx ChatContext, req dto.ChatRequest) (ChatResult, error) {
 	sessionID := chatCtx.SessionID
 	if sessionID == uuid.Nil {
 		return ChatResult{}, errors.New("chat session is required")
 	}
 
-	session, err := s.repo.FindChatSession(sessionID)
+	session, err := s.repo.FindChatSession(ctx, sessionID)
 	if err != nil {
 		return ChatResult{}, err
 	}
@@ -92,24 +92,24 @@ func (s *AIService) Chat(chatCtx ChatContext, req dto.ChatRequest) (ChatResult, 
 	expiresAt := now.Add(s.cfg.GuestSessionTTL)
 	session.ExpiresAt = &expiresAt
 	session.LastActivityAt = &now
-	if err := s.repo.UpdateChatSessionActivity(session.ID, *session.ExpiresAt, now); err != nil {
+	if err := s.repo.UpdateChatSessionActivity(ctx, session.ID, *session.ExpiresAt, now); err != nil {
 		return ChatResult{}, err
 	}
 
-	if err := s.repo.AddChatMessage(&models.ChatMessage{SessionID: sessionID, Role: "user", Content: req.Prompt}); err != nil {
+	if err := s.repo.AddChatMessage(ctx, &models.ChatMessage{SessionID: sessionID, Role: "user", Content: req.Prompt}); err != nil {
 		return ChatResult{}, err
 	}
 
 	// Use tool-driven workflow. The LLM decides whether to call search_trips,
 	// select_package, collect_order_detail, or create_booking.
-	aiResponse, toolResults, err := s.generateWithToolLoop(sessionID, req.Prompt)
+	aiResponse, toolResults, err := s.generateWithToolLoop(ctx, sessionID, req.Prompt)
 	response := "Maaf, saya belum bisa memproses permintaan Anda saat ini. Silakan coba lagi."
 	if err != nil {
 		errorPayload, _ := json.Marshal(map[string]interface{}{
 			"error": err.Error(),
 			"mode":  "local_fallback",
 		})
-		_ = s.repo.CreateAILog(&models.AILog{
+		_ = s.repo.CreateAILog(ctx, &models.AILog{
 			SessionID: &sessionID,
 			Workflow:  "ai_generation",
 			Status:    "failed",
@@ -118,7 +118,7 @@ func (s *AIService) Chat(chatCtx ChatContext, req dto.ChatRequest) (ChatResult, 
 	} else if aiResponse.Text != "" {
 		response = aiResponse.Text
 		payload, _ := json.Marshal(aiResponse.Metadata)
-		_ = s.repo.CreateAILog(&models.AILog{
+		_ = s.repo.CreateAILog(ctx, &models.AILog{
 			SessionID: &sessionID,
 			Workflow:  "ai_generation",
 			Status:    "success",
@@ -148,7 +148,7 @@ func (s *AIService) Chat(chatCtx ChatContext, req dto.ChatRequest) (ChatResult, 
 	// recommendations entirely (state unknown) instead of guessing.
 	var selectedTripID *uuid.UUID
 	sessionStateUnknown := false
-	chatSession, ferr := s.repo.FindChatSession(sessionID)
+	chatSession, ferr := s.repo.FindChatSession(ctx, sessionID)
 	if ferr != nil {
 		log.Printf("[ai] failed to re-fetch chat session %s for recommendation state: %v; suppressing recommendations (fail-closed)", sessionID, ferr)
 		sessionStateUnknown = true
@@ -190,10 +190,10 @@ func (s *AIService) Chat(chatCtx ChatContext, req dto.ChatRequest) (ChatResult, 
 		recommendedPackages = nil
 	}
 
-	if err := s.repo.AddChatMessage(&models.ChatMessage{SessionID: sessionID, Role: "assistant", Content: response}); err != nil {
+	if err := s.repo.AddChatMessage(ctx, &models.ChatMessage{SessionID: sessionID, Role: "assistant", Content: response}); err != nil {
 		return ChatResult{}, err
 	}
-	_ = s.refreshMemorySummary(sessionID)
+	_ = s.refreshMemorySummary(ctx, sessionID)
 
 	// SEC-18: broadcast only session_id as completion signal.
 	s.bus.Publish("workflow_completed", map[string]interface{}{"session_id": sessionID})
@@ -358,11 +358,15 @@ func responseClaimsOrderCreated(response string) bool {
 // If the LLM responds with tool_calls, this function executes them via MCP,
 // appends the results back into the conversation, and calls the LLM again
 // so it can generate a final text response based on actual tool results.
-func (s *AIService) generateWithToolLoop(sessionID uuid.UUID, prompt string) (ai.CompletionResponse, []ToolResult, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.AITimeout)
+func (s *AIService) generateWithToolLoop(ctx context.Context, sessionID uuid.UUID, prompt string) (ai.CompletionResponse, []ToolResult, error) {
+	// SEC-26: derive the AI timeout from the incoming request context instead
+	// of context.Background() so a client disconnect cancels the LLM call and
+	// the tool loop's DB/tool work. Whichever fires first (client cancel or
+	// AITimeout) wins; both now propagate cancellation downstream.
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.AITimeout)
 	defer cancel()
 
-	messages := s.buildMessages(sessionID, prompt)
+	messages := s.buildMessages(ctx, sessionID, prompt)
 	tools := mcp.OpenAITools()
 
 	var allToolResults []ToolResult
@@ -421,7 +425,7 @@ func (s *AIService) generateWithToolLoop(sessionID uuid.UUID, prompt string) (ai
 			}
 			calledTools[callKey] = true
 
-			toolResult, execErr := s.mcp.Execute(sessionID, tc.Function.Name, args)
+			toolResult, execErr := s.mcp.Execute(ctx, sessionID, tc.Function.Name, args)
 			if execErr != nil {
 				log.Printf("[ai] tool execution error for %s: %v", tc.Function.Name, execErr)
 				toolResult = ToolResult{
@@ -450,7 +454,7 @@ func (s *AIService) generateWithToolLoop(sessionID uuid.UUID, prompt string) (ai
 	return resp, allToolResults, err
 }
 
-func (s *AIService) buildMessages(sessionID uuid.UUID, prompt string) []ai.Message {
+func (s *AIService) buildMessages(ctx context.Context, sessionID uuid.UUID, prompt string) []ai.Message {
 	messages := []ai.Message{
 		{
 			Role: "system",
@@ -469,13 +473,13 @@ func (s *AIService) buildMessages(sessionID uuid.UUID, prompt string) []ai.Messa
 		},
 	}
 
-	chatSession, err := s.repo.FindChatSession(sessionID)
+	chatSession, err := s.repo.FindChatSession(ctx, sessionID)
 	var memorySummary string
 	if err == nil && chatSession.MemorySummary != "" {
 		memorySummary = chatSession.MemorySummary
 	}
 
-	recent, _ := s.repo.ListRecentChatMessages(sessionID, s.cfg.AIRecentMessages)
+	recent, _ := s.repo.ListRecentChatMessages(ctx, sessionID, s.cfg.AIRecentMessages)
 
 	// AIW-4: Memory Summary Overlap Protection.
 	// If we have recent messages, we filter them out from the memory summary to avoid duplicate tokens.
@@ -516,8 +520,8 @@ func (s *AIService) buildMessages(sessionID uuid.UUID, prompt string) []ai.Messa
 	return messages
 }
 
-func (s *AIService) refreshMemorySummary(sessionID uuid.UUID) error {
-	count, err := s.repo.CountChatMessages(sessionID)
+func (s *AIService) refreshMemorySummary(ctx context.Context, sessionID uuid.UUID) error {
+	count, err := s.repo.CountChatMessages(ctx, sessionID)
 	if err != nil || count < int64(s.cfg.AIMemorySummaryAfter) {
 		return err
 	}
@@ -525,7 +529,7 @@ func (s *AIService) refreshMemorySummary(sessionID uuid.UUID) error {
 	if tailLimit < 20 {
 		tailLimit = 20
 	}
-	messages, err := s.repo.TailChatMessages(sessionID, tailLimit)
+	messages, err := s.repo.TailChatMessages(ctx, sessionID, tailLimit)
 	if err != nil {
 		return err
 	}
@@ -542,26 +546,26 @@ func (s *AIService) refreshMemorySummary(sessionID uuid.UUID) error {
 		summary = string(runes)
 	}
 
-	return s.repo.UpdateChatSessionMemorySummary(sessionID, summary)
+	return s.repo.UpdateChatSessionMemorySummary(ctx, sessionID, summary)
 }
 
-func (s *AIService) ListSessions(userID uuid.UUID) ([]models.ChatSession, error) {
-	return s.repo.ListChatSessions(userID)
+func (s *AIService) ListSessions(ctx context.Context, userID uuid.UUID) ([]models.ChatSession, error) {
+	return s.repo.ListChatSessions(ctx, userID)
 }
 
-func (s *AIService) GetSessionMessages(sessionID uuid.UUID, userID uuid.UUID) ([]models.ChatMessage, error) {
-	session, err := s.repo.FindChatSession(sessionID)
+func (s *AIService) GetSessionMessages(ctx context.Context, sessionID uuid.UUID, userID uuid.UUID) ([]models.ChatMessage, error) {
+	session, err := s.repo.FindChatSession(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	if session.UserID == nil || *session.UserID != userID || (session.ExpiresAt != nil && !session.ExpiresAt.After(time.Now())) {
 		return nil, ErrChatSessionNotFound
 	}
-	return s.repo.ListChatMessages(sessionID)
+	return s.repo.ListChatMessages(ctx, sessionID)
 }
 
-func (s *AIService) GetGuestHistory(sessionID uuid.UUID) ([]models.ChatMessage, error) {
-	session, err := s.repo.FindChatSession(sessionID)
+func (s *AIService) GetGuestHistory(ctx context.Context, sessionID uuid.UUID) ([]models.ChatMessage, error) {
+	session, err := s.repo.FindChatSession(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -570,22 +574,22 @@ func (s *AIService) GetGuestHistory(sessionID uuid.UUID) ([]models.ChatMessage, 
 	}
 	now := time.Now()
 	expiresAt := now.Add(s.cfg.GuestSessionTTL)
-	if err := s.repo.UpdateChatSessionActivity(sessionID, expiresAt, now); err != nil {
+	if err := s.repo.UpdateChatSessionActivity(ctx, sessionID, expiresAt, now); err != nil {
 		return nil, err
 	}
-	return s.repo.ListChatMessages(sessionID)
+	return s.repo.ListChatMessages(ctx, sessionID)
 }
 
-func (s *AIService) ResolveGuestSession(sessionID uuid.UUID) (uuid.UUID, bool, error) {
+func (s *AIService) ResolveGuestSession(ctx context.Context, sessionID uuid.UUID) (uuid.UUID, bool, error) {
 	if sessionID != uuid.Nil {
-		if session, err := s.repo.FindChatSession(sessionID); err == nil && session.UserID == nil && (session.ExpiresAt == nil || session.ExpiresAt.After(time.Now())) {
+		if session, err := s.repo.FindChatSession(ctx, sessionID); err == nil && session.UserID == nil && (session.ExpiresAt == nil || session.ExpiresAt.After(time.Now())) {
 			return session.ID, false, nil
 		}
 	}
 	now := time.Now()
 	expiresAt := now.Add(s.cfg.GuestSessionTTL)
 	session := models.ChatSession{Title: "Guest chat", ExpiresAt: &expiresAt, LastActivityAt: &now}
-	if err := s.repo.CreateChatSession(&session); err != nil {
+	if err := s.repo.CreateChatSession(ctx, &session); err != nil {
 		return uuid.Nil, false, err
 	}
 	return session.ID, true, nil

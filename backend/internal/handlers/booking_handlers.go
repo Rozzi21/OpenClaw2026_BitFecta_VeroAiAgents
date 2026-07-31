@@ -15,7 +15,8 @@ func (h *Handler) CreateBooking(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	booking, err := h.Services.Bookings.Create(currentUserID(c), req)
+	ctx := c.Request.Context()
+	booking, err := h.Services.Bookings.Create(ctx, currentUserID(c), req)
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -28,12 +29,13 @@ func (h *Handler) GuestCreateOrder(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	user, err := h.Services.Auth.GuestUser()
+	ctx := c.Request.Context()
+	user, err := h.Services.Auth.GuestUser(ctx)
 	if err != nil {
 		utils.ServerError(c, err)
 		return
 	}
-	booking, err := h.Services.Bookings.Create(user.ID, req)
+	booking, err := h.Services.Bookings.Create(ctx, user.ID, req)
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -45,7 +47,7 @@ func (h *Handler) ListBookings(c *gin.Context) {
 	var query dto.ListQuery
 	_ = c.ShouldBindQuery(&query)
 	query.Normalize()
-	bookings, err := h.Services.Bookings.List(query)
+	bookings, err := h.Services.Bookings.List(c.Request.Context(), query)
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -58,7 +60,7 @@ func (h *Handler) GetBooking(c *gin.Context) {
 	if !ok {
 		return
 	}
-	booking, err := h.Services.Bookings.Find(id, currentUserID(c), isStaff(c))
+	booking, err := h.Services.Bookings.Find(c.Request.Context(), id, currentUserID(c), isStaff(c))
 	if err != nil {
 		utils.NotFound(c, "Booking not found")
 		return
@@ -75,7 +77,7 @@ func (h *Handler) UpdateBooking(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	booking, err := h.Services.Bookings.UpdateStatus(id, currentUserID(c), isStaff(c), req)
+	booking, err := h.Services.Bookings.UpdateStatus(c.Request.Context(), id, currentUserID(c), isStaff(c), req)
 	if err != nil {
 		if errors.Is(err, services.ErrBookingNotFound) {
 			utils.NotFound(c, "Booking not found")

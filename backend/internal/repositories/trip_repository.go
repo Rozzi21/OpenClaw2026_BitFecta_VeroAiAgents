@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"context"
 	"strings"
 
 	"github.com/google/uuid"
@@ -8,13 +9,13 @@ import (
 	"gorm.io/gorm"
 )
 
-func (r *Repository) CreateTrip(trip *models.Trip) error {
-	return r.DB.Create(trip).Error
+func (r *Repository) CreateTrip(ctx context.Context, trip *models.Trip) error {
+	return r.DB.WithContext(ctx).Create(trip).Error
 }
 
-func (r *Repository) ListTrips(query TripRepositoryFilter) ([]models.Trip, error) {
+func (r *Repository) ListTrips(ctx context.Context, query TripRepositoryFilter) ([]models.Trip, error) {
 	var trips []models.Trip
-	db := r.DB.Preload("Itineraries").Order("created_at desc")
+	db := r.DB.WithContext(ctx).Preload("Itineraries").Order("created_at desc")
 	if query.Category != "" {
 		db = db.Where("category = ?", strings.ToLower(query.Category))
 	}
@@ -38,28 +39,28 @@ func (r *Repository) ListTrips(query TripRepositoryFilter) ([]models.Trip, error
 	return trips, err
 }
 
-func (r *Repository) FindTrip(id uuid.UUID) (models.Trip, error) {
+func (r *Repository) FindTrip(ctx context.Context, id uuid.UUID) (models.Trip, error) {
 	var trip models.Trip
-	err := r.DB.Preload("Itineraries").First(&trip, "id = ?", id).Error
+	err := r.DB.WithContext(ctx).Preload("Itineraries").First(&trip, "id = ?", id).Error
 	return trip, err
 }
 
-func (r *Repository) FindTripBySlugOrID(value string) (models.Trip, error) {
+func (r *Repository) FindTripBySlugOrID(ctx context.Context, value string) (models.Trip, error) {
 	var trip models.Trip
 	if id, err := uuid.Parse(value); err == nil {
-		err = r.DB.Preload("Itineraries").First(&trip, "id = ?", id).Error
+		err = r.DB.WithContext(ctx).Preload("Itineraries").First(&trip, "id = ?", id).Error
 		return trip, err
 	}
-	err := r.DB.Preload("Itineraries").First(&trip, "slug = ?", value).Error
+	err := r.DB.WithContext(ctx).Preload("Itineraries").First(&trip, "slug = ?", value).Error
 	return trip, err
 }
 
-func (r *Repository) UpdateTrip(trip *models.Trip) error {
-	return r.DB.Save(trip).Error
+func (r *Repository) UpdateTrip(ctx context.Context, trip *models.Trip) error {
+	return r.DB.WithContext(ctx).Save(trip).Error
 }
 
-func (r *Repository) ReplaceTripItineraries(tripID uuid.UUID, itineraries []models.Itinerary) error {
-	return r.DB.Transaction(func(tx *gorm.DB) error {
+func (r *Repository) ReplaceTripItineraries(ctx context.Context, tripID uuid.UUID, itineraries []models.Itinerary) error {
+	return r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("trip_id = ?", tripID).Delete(&models.Itinerary{}).Error; err != nil {
 			return err
 		}
@@ -73,6 +74,6 @@ func (r *Repository) ReplaceTripItineraries(tripID uuid.UUID, itineraries []mode
 	})
 }
 
-func (r *Repository) DeleteTrip(id uuid.UUID) error {
-	return r.DB.Delete(&models.Trip{}, "id = ?", id).Error
+func (r *Repository) DeleteTrip(ctx context.Context, id uuid.UUID) error {
+	return r.DB.WithContext(ctx).Delete(&models.Trip{}, "id = ?", id).Error
 }

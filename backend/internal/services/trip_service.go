@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -16,7 +17,7 @@ type TripService struct {
 	bus  *events.Bus
 }
 
-func (s *TripService) List(query dto.TripListQuery) ([]models.Trip, error) {
+func (s *TripService) List(ctx context.Context, query dto.TripListQuery) ([]models.Trip, error) {
 	repoQuery := repositories.TripRepositoryFilter{
 		Category:      query.Category,
 		Status:        query.Status,
@@ -25,13 +26,15 @@ func (s *TripService) List(query dto.TripListQuery) ([]models.Trip, error) {
 		Limit:         query.Limit,
 		Offset:        query.Offset,
 	}
-	return s.repo.ListTrips(repoQuery)
+	return s.repo.ListTrips(ctx, repoQuery)
 }
-func (s *TripService) Find(id uuid.UUID) (models.Trip, error) { return s.repo.FindTrip(id) }
-func (s *TripService) FindBySlugOrID(value string) (models.Trip, error) {
-	return s.repo.FindTripBySlugOrID(value)
+func (s *TripService) Find(ctx context.Context, id uuid.UUID) (models.Trip, error) {
+	return s.repo.FindTrip(ctx, id)
 }
-func (s *TripService) Create(req dto.TripRequest) (models.Trip, error) {
+func (s *TripService) FindBySlugOrID(ctx context.Context, value string) (models.Trip, error) {
+	return s.repo.FindTripBySlugOrID(ctx, value)
+}
+func (s *TripService) Create(ctx context.Context, req dto.TripRequest) (models.Trip, error) {
 	trip := buildTripFromRequest(models.Trip{}, req)
 	if trip.Slug == "" {
 		trip.Slug = slugify(trip.Title)
@@ -40,11 +43,11 @@ func (s *TripService) Create(req dto.TripRequest) (models.Trip, error) {
 		now := time.Now()
 		trip.PublishedAt = &now
 	}
-	err := s.repo.CreateTrip(&trip)
+	err := s.repo.CreateTrip(ctx, &trip)
 	if err == nil && len(req.Itineraries) > 0 {
-		err = s.repo.ReplaceTripItineraries(trip.ID, buildItineraries(req.Itineraries))
+		err = s.repo.ReplaceTripItineraries(ctx, trip.ID, buildItineraries(req.Itineraries))
 		if err == nil {
-			trip, _ = s.repo.FindTrip(trip.ID)
+			trip, _ = s.repo.FindTrip(ctx, trip.ID)
 		}
 	}
 	if err == nil {
@@ -52,8 +55,8 @@ func (s *TripService) Create(req dto.TripRequest) (models.Trip, error) {
 	}
 	return trip, err
 }
-func (s *TripService) Update(id uuid.UUID, req dto.TripRequest) (models.Trip, error) {
-	trip, err := s.repo.FindTrip(id)
+func (s *TripService) Update(ctx context.Context, id uuid.UUID, req dto.TripRequest) (models.Trip, error) {
+	trip, err := s.repo.FindTrip(ctx, id)
 	if err != nil {
 		return trip, err
 	}
@@ -65,16 +68,18 @@ func (s *TripService) Update(id uuid.UUID, req dto.TripRequest) (models.Trip, er
 		now := time.Now()
 		trip.PublishedAt = &now
 	}
-	err = s.repo.UpdateTrip(&trip)
+	err = s.repo.UpdateTrip(ctx, &trip)
 	if err == nil {
-		err = s.repo.ReplaceTripItineraries(trip.ID, buildItineraries(req.Itineraries))
+		err = s.repo.ReplaceTripItineraries(ctx, trip.ID, buildItineraries(req.Itineraries))
 		if err == nil {
-			trip, _ = s.repo.FindTrip(trip.ID)
+			trip, _ = s.repo.FindTrip(ctx, trip.ID)
 		}
 	}
 	return trip, err
 }
-func (s *TripService) Delete(id uuid.UUID) error { return s.repo.DeleteTrip(id) }
+func (s *TripService) Delete(ctx context.Context, id uuid.UUID) error {
+	return s.repo.DeleteTrip(ctx, id)
+}
 
 func buildTripFromRequest(trip models.Trip, req dto.TripRequest) models.Trip {
 	// BUG-7: Clamp invalid price values from bypassers.

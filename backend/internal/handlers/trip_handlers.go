@@ -11,7 +11,7 @@ import (
 func (h *Handler) ListTrips(c *gin.Context) {
 	var query dto.TripListQuery
 	_ = c.ShouldBindQuery(&query)
-	trips, err := h.Services.Trips.List(query)
+	trips, err := h.Services.Trips.List(c.Request.Context(), query)
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -23,7 +23,7 @@ func (h *Handler) PublicPackages(c *gin.Context) {
 	var query dto.TripListQuery
 	_ = c.ShouldBindQuery(&query)
 	query.PublishedOnly = true
-	trips, err := h.Services.Trips.List(query)
+	trips, err := h.Services.Trips.List(c.Request.Context(), query)
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -32,7 +32,7 @@ func (h *Handler) PublicPackages(c *gin.Context) {
 }
 
 func (h *Handler) GetPackage(c *gin.Context) {
-	trip, err := h.Services.Trips.FindBySlugOrID(c.Param("id"))
+	trip, err := h.Services.Trips.FindBySlugOrID(c.Request.Context(), c.Param("id"))
 	if err != nil || trip.Status != "published" {
 		utils.NotFound(c, "Package not found")
 		return
@@ -45,7 +45,7 @@ func (h *Handler) GetTrip(c *gin.Context) {
 	if !ok {
 		return
 	}
-	trip, err := h.Services.Trips.Find(id)
+	trip, err := h.Services.Trips.Find(c.Request.Context(), id)
 	if err != nil {
 		utils.NotFound(c, "Trip not found")
 		return
@@ -58,7 +58,7 @@ func (h *Handler) CreateTrip(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	trip, err := h.Services.Trips.Create(req)
+	trip, err := h.Services.Trips.Create(c.Request.Context(), req)
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -75,7 +75,7 @@ func (h *Handler) UpdateTrip(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	trip, err := h.Services.Trips.Update(id, req)
+	trip, err := h.Services.Trips.Update(c.Request.Context(), id, req)
 	if err != nil {
 		utils.NotFound(c, "Trip not found")
 		return
@@ -88,7 +88,7 @@ func (h *Handler) DeleteTrip(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.Services.Trips.Delete(id); err != nil {
+	if err := h.Services.Trips.Delete(c.Request.Context(), id); err != nil {
 		utils.ServerError(c, err)
 		return
 	}

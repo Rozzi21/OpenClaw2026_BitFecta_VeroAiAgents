@@ -18,7 +18,7 @@ func (h *Handler) CreatePayment(c *gin.Context) {
 	if !bind(c, &req) {
 		return
 	}
-	payment, err := h.Services.Payments.Create(req)
+	payment, err := h.Services.Payments.Create(c.Request.Context(), req)
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -47,7 +47,7 @@ func (h *Handler) PaymentWebhook(c *gin.Context) {
 		req.RawBody = rawBody
 	}
 
-	payment, err := h.Services.Payments.Webhook(req)
+	payment, err := h.Services.Payments.Webhook(c.Request.Context(), req)
 	if err != nil {
 		// SEC-15: do not echo internal/payment errors to an unauthenticated
 		// caller; log server-side.
@@ -67,7 +67,7 @@ func (h *Handler) GetPayment(c *gin.Context) {
 	if !ok {
 		return
 	}
-	payment, err := h.Services.Payments.Find(id, currentUserID(c), isStaff(c))
+	payment, err := h.Services.Payments.Find(c.Request.Context(), id, currentUserID(c), isStaff(c))
 	if err != nil {
 		utils.NotFound(c, "Payment not found")
 		return

@@ -1,6 +1,7 @@
 package services_test
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -77,7 +78,7 @@ func TestPaymentWebhookReplay(t *testing.T) {
 		Amount:     &amount,
 	}
 
-	_, err := paymentSvc.Webhook(req)
+	_, err := paymentSvc.Webhook(context.Background(), req)
 	if err != nil {
 		t.Errorf("Expected valid webhook to succeed, got: %v", err)
 	}
@@ -96,7 +97,7 @@ func TestPaymentWebhookReplay(t *testing.T) {
 		Amount:     &amount,
 	}
 
-	_, err = paymentSvc.Webhook(reqExpired)
+	_, err = paymentSvc.Webhook(context.Background(), reqExpired)
 	if err == nil || err.Error() != "webhook timestamp expired" {
 		t.Errorf("Expected webhook timestamp expired error, got: %v", err)
 	}
@@ -111,7 +112,7 @@ func TestPaymentWebhookReplay(t *testing.T) {
 		Amount:     &amount,
 	}
 
-	_, err = paymentSvc.Webhook(reqInvalidSig)
+	_, err = paymentSvc.Webhook(context.Background(), reqInvalidSig)
 	if err == nil || err.Error() != "invalid payment signature" {
 		t.Errorf("Expected invalid payment signature error, got: %v", err)
 	}
@@ -150,7 +151,7 @@ func TestPaymentWebhookIdempotency(t *testing.T) {
 		Amount:     &amount,
 	}
 
-	_, err := paymentSvc.Webhook(req)
+	_, err := paymentSvc.Webhook(context.Background(), req)
 	if err == nil || err.Error() != "payment already settled" {
 		t.Errorf("Expected payment already settled error, got: %v", err)
 	}

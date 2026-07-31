@@ -20,6 +20,17 @@ Handler -> Service -> Repository -> GORM/PostgreSQL
 
 DILARANG: handler memanggil repository langsung, atau service menerima `*gin.Context`.
 
+### 1.1a Context Propagation (WAJIB, sejak SEC-26 — 31 Jul 2026)
+
+Setiap method Service dan Repository yang menyentuh DB/network WAJIB menerima `ctx context.Context` sebagai **parameter pertama** dan meneruskannya ke bawah.
+
+- Handler meneruskan `c.Request.Context()` ke service.
+- Service meneruskan `ctx` ke repo dan ke integrasi eksternal.
+- Repository menjalankan query lewat `r.DB.WithContext(ctx)` (termasuk transaksi: `r.DB.WithContext(ctx).Begin()` / `.Transaction(...)`).
+- HTTP call keluar memakai `http.NewRequestWithContext(ctx, ...)` — contoh `ai/ai_client.go` (`Generate`) dan `payment_service.go` (`triggerN8N` — detached `context.Background()`+timeout karena webhook dikirim setelah respons request selesai).
+
+DILARANG memakai `context.Background()`/`context.TODO()` di dalam jalur request HTTP (service/repo/HTTP client). `context.Background()` hanya boleh untuk background yang memang detach dari request: ticker/scheduler (mis. `startChatSessionCleanup` di `main.go` memakai `context.Background()`+timeout 30s), atau goroutine yang sengaja hidup setelah respons.
+
 > Pengecualian yang sudah ada: `AnalyticsService.Dashboard()` mengakses `s.repo.DB` langsung untuk query agregat. Ini pengecualian sadar, bukan pola yang dianjurkan untuk ditiru.
 
 ### 1.2 Dependency Injection Manual

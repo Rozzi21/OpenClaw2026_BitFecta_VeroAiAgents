@@ -23,7 +23,7 @@ func (h *Handler) Chat(c *gin.Context) {
 		return
 	}
 	userID := currentUserID(c)
-	res, err := h.Services.AI.Chat(services.ChatContext{SessionID: *req.SessionID, UserID: &userID}, req)
+	res, err := h.Services.AI.Chat(c.Request.Context(), services.ChatContext{SessionID: *req.SessionID, UserID: &userID}, req)
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -41,7 +41,7 @@ func (h *Handler) GuestChat(c *gin.Context) {
 		utils.ServerError(c, err)
 		return
 	}
-	res, err := h.Services.AI.Chat(services.ChatContext{SessionID: sessionID}, req)
+	res, err := h.Services.AI.Chat(c.Request.Context(), services.ChatContext{SessionID: sessionID}, req)
 	if err != nil {
 		if err.Error() == "chat session expired" || err.Error() == "chat session not found" {
 			auth.ClearGuestSessionCookie(c, h.Services.Config)
@@ -56,7 +56,7 @@ func (h *Handler) GuestChat(c *gin.Context) {
 }
 
 func (h *Handler) ChatSessions(c *gin.Context) {
-	sessions, err := h.Services.AI.ListSessions(currentUserID(c))
+	sessions, err := h.Services.AI.ListSessions(c.Request.Context(), currentUserID(c))
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -69,7 +69,7 @@ func (h *Handler) ChatMessages(c *gin.Context) {
 	if !ok {
 		return
 	}
-	messages, err := h.Services.AI.GetSessionMessages(id, currentUserID(c))
+	messages, err := h.Services.AI.GetSessionMessages(c.Request.Context(), id, currentUserID(c))
 	if err != nil {
 		if errors.Is(err, services.ErrChatSessionNotFound) || errors.Is(err, services.ErrChatSessionExpired) {
 			utils.NotFound(c, "Chat session not found")
@@ -89,7 +89,7 @@ func (h *Handler) GuestHistory(c *gin.Context) {
 		utils.Success(c, http.StatusOK, "Chat history", gin.H{"messages": []models.ChatMessage{}})
 		return
 	}
-	messages, err := h.Services.AI.GetGuestHistory(id)
+	messages, err := h.Services.AI.GetGuestHistory(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, services.ErrChatSessionNotFound) || errors.Is(err, services.ErrChatSessionExpired) {
 			auth.ClearGuestSessionCookie(c, h.Services.Config)
@@ -118,7 +118,7 @@ func resolveGuestSession(h *Handler, c *gin.Context) (uuid.UUID, error) {
 			auth.ClearGuestSessionCookie(c, h.Services.Config)
 		}
 	}
-	resolvedID, isNew, err := h.Services.AI.ResolveGuestSession(sessionID)
+	resolvedID, isNew, err := h.Services.AI.ResolveGuestSession(c.Request.Context(), sessionID)
 	if err != nil {
 		return uuid.Nil, err
 	}

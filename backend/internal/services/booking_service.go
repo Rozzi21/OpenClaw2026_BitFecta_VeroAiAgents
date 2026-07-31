@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -20,10 +21,10 @@ type BookingService struct {
 	bus  *events.Bus
 }
 
-func (s *BookingService) Create(userID uuid.UUID, req dto.BookingRequest) (models.Booking, error) {
+func (s *BookingService) Create(ctx context.Context, userID uuid.UUID, req dto.BookingRequest) (models.Booking, error) {
 	// SEC-3: never trust a client-supplied price. Resolve the trip and compute
 	// the total from the catalog price and the requested pax server-side.
-	trip, err := s.repo.FindTrip(req.TripID)
+	trip, err := s.repo.FindTrip(ctx, req.TripID)
 	if err != nil {
 		return models.Booking{}, errors.New("trip not found")
 	}
@@ -57,7 +58,7 @@ func (s *BookingService) Create(userID uuid.UUID, req dto.BookingRequest) (model
 		TotalPrice:    total,
 		BookingDate:   time.Now(),
 	}
-	if err := s.repo.CreateBooking(&booking); err != nil {
+	if err := s.repo.CreateBooking(ctx, &booking); err != nil {
 		return booking, err
 	}
 	// SEC-18: minimal signal only; the booking struct carries contact PII
@@ -65,22 +66,22 @@ func (s *BookingService) Create(userID uuid.UUID, req dto.BookingRequest) (model
 	s.bus.Publish("booking_created", map[string]interface{}{"booking_id": booking.ID, "trip_id": booking.TripID, "status": booking.BookingStatus})
 	return booking, nil
 }
-func (s *BookingService) List(query dto.ListQuery) ([]models.Booking, error) {
+func (s *BookingService) List(ctx context.Context, query dto.ListQuery) ([]models.Booking, error) {
 	repoQuery := repositories.RepositoryFilter{
 		Limit:  query.Limit,
 		Offset: query.Offset,
 	}
-	return s.repo.ListBookings(repoQuery)
+	return s.repo.ListBookings(ctx, repoQuery)
 }
 
 // Find enforces ownership for non-staff callers (SEC-2 anti-IDOR).
-func (s *BookingService) Find(id, userID uuid.UUID, isStaff bool) (models.Booking, error) {
+func (s *BookingService) Find(ctx context.Context, id, userID uuid.UUID, isStaff bool) (models.Booking, error) {
 	var booking models.Booking
 	var err error
 	if isStaff {
-		booking, err = s.repo.FindBooking(id)
+		booking, err = s.repo.FindBooking(ctx, id)
 	} else {
-		booking, err = s.repo.FindBookingForUser(id, userID)
+		booking, err = s.repo.FindBookingForUser(ctx, id, userID)
 	}
 	if err != nil {
 		return models.Booking{}, ErrBookingNotFound
@@ -95,8 +96,8 @@ func (s *BookingService) Find(id, userID uuid.UUID, isStaff bool) (models.Bookin
 // SEC-23 fix: uses an atomic conditional UPDATE (WHERE booking_status = current)
 // instead of read-validate-write, eliminating the TOCTOU race where two concurrent
 // requests could both pass validation and write conflicting transitions.
-func (s *BookingService) UpdateStatus(id, userID uuid.UUID, isStaff bool, req dto.UpdateBookingStatusRequest) (models.Booking, error) {
-	booking, err := s.Find(id, userID, isStaff)
+func (s *BookingService) UpdateStatus(ctx context.Context, id, userID uuid.UUID, isStaff bool, req dto.UpdateBookingStatusRequest) (models.Booking, error) {
+	booking, err := s.Find(ctx, id, userID, isStaff)
 	if err != nil {
 		return models.Booking{}, err
 	}
@@ -114,14 +115,14 @@ func (s *BookingService) UpdateStatus(id, userID uuid.UUID, isStaff bool, req dt
 
 	// Atomic conditional update: only succeeds if the DB status still matches
 	// what we read. If another request changed it first, RowsAffected == 0.
-	updated, err := s.repo.UpdateBookingStatusAtomic(id, current, target)
+	updated, err := s.repo.UpdateBookingStatusAtomic(ctx, id, current, target)
 	if err != nil {
 		return models.Booking{}, err
 	}
 	if !updated {
 		// Race lost: another request changed the status between our read and write.
 		// Re-fetch to report the actual current state to the caller.
-		fresh, fetchErr := s.Find(id, userID, isStaff)
+		fresh, fetchErr := s.Find(ctx, id, userID, isStaff)
 		if fetchErr != nil {
 			return models.Booking{}, fmt.Errorf("concurrent status change detected for booking %s", id)
 		}
@@ -129,7 +130,7 @@ func (s *BookingService) UpdateStatus(id, userID uuid.UUID, isStaff bool, req dt
 	}
 
 	// Re-fetch so the caller receives the latest persisted state with preloads.
-	fetchedBooking, err := s.Find(id, userID, isStaff)
+	fetchedBooking, err := s.Find(ctx, id, userID, isStaff)
 	if err != nil {
 		return models.Booking{}, err
 	}

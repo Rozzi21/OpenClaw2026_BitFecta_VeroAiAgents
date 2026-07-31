@@ -46,14 +46,13 @@ Perbaikan:
 
 Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih. Race-diverifikasi via test ad-hoc `go test -race` (Publish vs Unsubscribe paralel 100×, tidak ada panic/data-race).
 
-### BUG-3. SEDANG — Resource Leak: HTTP Body `triggerN8N` Tidak Ditutup
+### BUG-3. ✅ SEDANG — Resource Leak: HTTP Body `triggerN8N` Tidak Ditutup (FIXED 31 Jul 2026 via SEC-26)
 
 - **Severity:** Medium
 - **Root Cause:** `payment_service.go` `triggerN8N`: `_, _ = client.Do(req)` tanpa membaca/`Close()` body. Koneksi keep-alive tidak bisa di-reuse; menumpuk pada volume webhook tinggi.
 - **Impact:** Kebocoran file descriptor / koneksi TCP saat banyak webhook `paid`.
-- **Affected Files:** `backend/internal/services/payment_service.go` (`triggerN8N`)
-- **Recommendation:** `res, err := client.Do(req); if err == nil { io.Copy(io.Discard, res.Body); res.Body.Close() }`; jalankan async dengan context timeout.
-- **Complexity:** Low
+- **Fix (31 Jul 2026):** `triggerN8N` kini memakai `http.NewRequestWithContext` (detached `context.WithTimeout(context.Background(), 5s)`) dan pada respons sukses menjalankan `defer res.Body.Close()` + `io.Copy(io.Discard, res.Body)` — body dibaca & ditutup, koneksi keep-alive dirilis untuk reuse. Digabung dengan fix SEC-26.
+- **Verifikasi:** `go build ./...` + `go vet` + `gofmt` + `go test ./...` bersih.
 
 ### BUG-4. ✅ SEDANG — Context Leak: SSE `WriteTimeout=0` + Koneksi Zombie Tanpa Max Lifetime (FIXED 28 Jul 2026)
 
@@ -428,17 +427,21 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Verifikasi:** `go build ./...` + `go vet ./...` + `gofmt` + `go test ./...` bersih.
 - **Implementation Complexity:** Medium
 
-### SEC-26. TINGGI — Context Propagation Hilang (Resource Leak Risk)
+### SEC-26. ✅ TINGGI — Context Propagation Hilang (Resource Leak Risk) (FIXED 31 Jul 2026)
 
 - **Severity:** High
-- **Root Cause:** Layer Service dan Repository di backend saat ini tidak menerima `context.Context` dari request HTTP. Contohnya, pada `ai_service.go`, pemanggilan LLM sering mengandalkan `context.Background()` yang di hardcode atau tidak menyambung timeout klien.
-- **Impact:** Terjadi risiko resource leak. Jika klien memutus koneksi di tengah jalan, eksekusi seperti request LLM atau query DB akan terus berjalan di background tanpa di-cancel.
-- **Affected Files:**
-  - Semua file di `handlers/`
-  - Semua file di `services/`
-  - Semua file di `repositories/`
-- **Recommendation:** Tambahkan parameter `ctx context.Context` pada seluruh fungsi di layer Service dan Repository. Pass nilai `c.Request.Context()` dari handler Gin ke layer di bawahnya.
-- **Implementation Complexity:** High
+- **Root Cause:** Layer Service dan Repository di backend sebelumnya tidak menerima `context.Context` dari request HTTP. Pada `ai_service.go` (`generateWithToolLoop`), panggilan LLM memakai `context.Background()` yang di-hardcode dan tidak menyambung cancellation/timeout klien.
+- **Impact:** Risiko resource leak. Jika klien memutus koneksi, request LLM atau query DB terus berjalan di background tanpa di-cancel.
+- **Fix (31 Jul 2026):** Threading `context.Context` end-to-end Handler → Service → Repository → GORM/HTTP di seluruh backend:
+  1. **Repository** — semua method kini `func (r *Repository) X(ctx context.Context, ...)` dan menjalankan query via `r.DB.WithContext(ctx)` (semua file `backend/internal/repositories/*_repository.go` + `auth_sessions.go`). Transaksi memakai `r.DB.WithContext(ctx).Begin()` / `.Transaction()`.
+  2. **Service** — semua method exported (dan helper internal yang query DB) kini menerima `ctx context.Context` sebagai parameter pertama dan meneruskannya ke repo (`auth_service.go`, `ai_service.go`, `mcp_service.go`, `trip_service.go`, `booking_service.go`, `payment_service.go`, `log_service.go`, `analytics_service.go`).
+  3. **Handler** — semua handler meneruskan `c.Request.Context()` ke service (`*_handlers.go`). Tidak ada lagi panggilan context-less.
+  4. **AI tool loop** — `generateWithToolLoop` kini `context.WithTimeout(ctx, cfg.AITimeout)` di-derive dari **request ctx** (bukan `context.Background()`), sehingga LLM call (`ai_client.Generate` sudah `http.NewRequestWithContext`) + `mcp.Execute` + repo di-cancel saat klien putus ATAU timeout — mana yang lebih dulu.
+  5. **Integrasi eksternal** — `payment_service.go` `triggerN8N` memakai `http.NewRequestWithContext` dengan `context.WithTimeout(context.Background(), 5s)` (detached, fire-after-response) + membaca+menutup `res.Body` (`io.Copy(io.Discard, ...)`) — sekaligus menutup **BUG-3** (body tidak ditutup) dan overlap PRR-P2-2 (HTTP keluar cancelable+timeout).
+  6. **Scheduler** — `main.go` `startChatSessionCleanup` memanggil `CleanupExpiredChatSessions(ctx, now)` dengan `context.WithTimeout(context.Background(), 30s)` per-run.
+- **Catatan batas:** `AIService.Chat` signature berubah — sekarang menerima `ctx` terpisah lagi DI SAMPING `ChatContext` parameter (secara projek: `Chat(ctx, chatCtx, req)`). `ChatContext` struct tetap dipakai untuk membawa SessionID/UserID domain, tidak dihapus. Caller baru WAJIB pass request ctx, jangan `context.Background()` di jalur HTTP. Method yang tidak menyentuh DB dan tidak mengembalikan data yang dipengaruhi cancelation (contoh murni transformasi) tetap menerima ctx untuk konsistensi kontrak.
+- **Verifikasi:** `gofmt -w .` bersih, `go build ./...` + `go vet ./...` + `go test ./...` exit 0. Test `payment_service_test.go` (test signature Webhook) ikut diupdate `paymentSvc.Webhook(context.Background(), req)`.
+- **OWASP Mapping:** API4:2023 Unrestricted Resource Consumption
 
 ### SEC-27. SEDANG — Pelanggaran Dependency Inversion (Tight Coupling)
 
@@ -965,6 +968,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | #19 Cleanup orphan records | ✅ Unscoped Delete `chat_messages`, `tool_calls`, `ai_logs` sblm hapus session |
 | BUG-1 Race double-rotation refresh | ✅ `RotateSession` atomik + window reuse detection di `AuthService.Refresh` |
 | BUG-2 Panic event bus `Unsubscribe` close channel | ✅ `Unsubscribe` tak tutup channel; `Publish` tak bisa kirim ke channel tertutup |
+| BUG-3 Body HTTP `triggerN8N` tidak ditutup | ✅ `NewRequestWithContext` + read+close body (`io.Copy(io.Discard)`) — digabung fix SEC-26 |
 | BUG-4 Context leak SSE zombie (`WriteTimeout=0`) | ✅ Write-error detection (`ResponseController`+deadline) + max lifetime 30mnt + cap subscriber 100 + `time.NewTicker` |
 | BUG-5 Silent-fail `FindChatSession` bypass rekomendasi | ✅ Error ditangani; gagal re-fetch → suppress rekomendasi (fail-closed) di `AIService.Chat` |
 | BUG-6 Race guest session dihapus cleanup saat in-flight | ✅ Sliding `expires_at` atomik di `Chat()` + grace period cutoff di `CleanupExpiredChatSessions` |
@@ -986,6 +990,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | SEC-23 TOCTOU race booking status | ✅ `UpdateBookingStatusAtomic` conditional UPDATE + `RowsAffected` check di `BookingService.UpdateStatus` |
 | SEC-24 Kolisi UUID + weak randomness guest user | ✅ Email pakai UUID utuh (no truncate) + password `crypto/rand` di `AuthService.GuestUser` |
 | SEC-25 God object handlers + repositories | ✅ `repositories.go` dipecah per-domain (`*_repository.go`) dalam package `repositories`; kontrak API tak berubah |
+| SEC-26 Context propagation hilang (resource leak) | ✅ `context.Context` di-thread Handler→Service→Repo (`WithContext`), AI loop derive timeout dari request ctx, `triggerN8N` `NewRequestWithContext`+body closed (fix BUG-3), cleanup ticker per-run ctx |
 
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.

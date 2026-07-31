@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -11,7 +12,7 @@ import (
 
 type AnalyticsService struct{ repo *repositories.Repository }
 
-func (s *AnalyticsService) Dashboard() (map[string]interface{}, error) {
+func (s *AnalyticsService) Dashboard(ctx context.Context) (map[string]interface{}, error) {
 	var totalBookings int64
 	var totalRevenue float64
 	var activeTrips int64
@@ -19,7 +20,7 @@ func (s *AnalyticsService) Dashboard() (map[string]interface{}, error) {
 	var paidPayments int64
 	var allPayments int64
 
-	db := s.repo.DB
+	db := s.repo.DB.WithContext(ctx)
 	db.Model(&models.Booking{}).Count(&totalBookings)
 	db.Model(&models.Booking{}).Select("COALESCE(SUM(total_price), 0)").Scan(&totalRevenue)
 	db.Model(&models.Trip{}).Count(&activeTrips)
@@ -34,7 +35,7 @@ func (s *AnalyticsService) Dashboard() (map[string]interface{}, error) {
 
 	// Use RecentBookings (limited, no payments preload) instead of ListBookings
 	// to avoid loading the entire bookings table + 3 preloads on every dashboard load.
-	recentBookings, err := s.repo.RecentBookings(10)
+	recentBookings, err := s.repo.RecentBookings(ctx, 10)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}

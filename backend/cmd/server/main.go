@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/rozzi/vero-ai-travel-agents/backend/internal/utils"
 	"errors"
+	"github.com/rozzi/vero-ai-travel-agents/backend/internal/utils"
 	"log"
 	"net/http"
 	"os"
@@ -78,7 +78,7 @@ func main() {
 		middlewares.SecureHeaders(),
 		middlewares.CORS(cfg.CORSAllowedOrigins),
 		middlewares.RateLimit(),
-		middlewares.Metrics(), // Record Prometheus metrics (PRR-P1-1)
+		middlewares.Metrics(),          // Record Prometheus metrics (PRR-P1-1)
 		middlewares.StructuredLogger(), // Structured request logs with slog (PRR-P2-1)
 		middlewares.Recovery(),
 	)
@@ -122,7 +122,12 @@ func startChatSessionCleanup(s *services.Services) {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for range ticker.C {
-			deleted, err := s.AI.CleanupExpiredChatSessions(time.Now())
+			// SEC-26: cleanup runs on a background ticker (no HTTP request), so
+			// it uses context.Background(); a per-run timeout avoids hanging on
+			// a wedged DB connection indefinitely.
+			runCtx, cancelRun := context.WithTimeout(context.Background(), 30*time.Second)
+			deleted, err := s.AI.CleanupExpiredChatSessions(runCtx, time.Now())
+			cancelRun()
 			if err != nil {
 				log.Printf("[chat-session-cleanup] failed: %v", err)
 				continue

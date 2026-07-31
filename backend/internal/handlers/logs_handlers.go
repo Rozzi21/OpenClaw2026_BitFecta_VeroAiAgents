@@ -12,7 +12,7 @@ func (h *Handler) Logs(c *gin.Context) {
 	var query dto.ListQuery
 	_ = c.ShouldBindQuery(&query)
 	query.Normalize()
-	logs, err := h.Services.Logs.Logs(query)
+	logs, err := h.Services.Logs.Logs(c.Request.Context(), query)
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -28,7 +28,7 @@ func (h *Handler) ToolCalls(c *gin.Context) {
 	var query dto.ListQuery
 	_ = c.ShouldBindQuery(&query)
 	query.Normalize()
-	calls, err := h.Services.Logs.ToolCalls(query)
+	calls, err := h.Services.Logs.ToolCalls(c.Request.Context(), query)
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -37,7 +37,7 @@ func (h *Handler) ToolCalls(c *gin.Context) {
 }
 
 func (h *Handler) Analytics(c *gin.Context) {
-	data, err := h.Services.Analytics.Dashboard()
+	data, err := h.Services.Analytics.Dashboard(c.Request.Context())
 	if err != nil {
 		utils.ServerError(c, err)
 		return

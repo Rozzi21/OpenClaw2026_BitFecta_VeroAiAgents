@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"strings"
@@ -28,7 +29,7 @@ type ToolResult struct {
 	Data   map[string]interface{} `json:"data"`
 }
 
-func (s *MCPService) Execute(sessionID uuid.UUID, toolName string, payload map[string]interface{}) (ToolResult, error) {
+func (s *MCPService) Execute(ctx context.Context, sessionID uuid.UUID, toolName string, payload map[string]interface{}) (ToolResult, error) {
 	start := time.Now()
 	var result ToolResult
 	log.Printf("[mcp] tool selected session=%s tool=%s payload=%+v", sessionID, toolName, payload)
@@ -40,16 +41,16 @@ func (s *MCPService) Execute(sessionID uuid.UUID, toolName string, payload map[s
 
 	case mcp.ToolSearchTrips, "search_destination", "search_hotels", "calculate_budget", "generate_itinerary":
 		// Unify legacy recommendation-like calls into search_trips behavior.
-		result = s.executeSearchTrips(sessionID, payload)
+		result = s.executeSearchTrips(ctx, sessionID, payload)
 
 	case mcp.ToolSelectPackage:
-		result = s.executeSelectPackage(sessionID, payload)
+		result = s.executeSelectPackage(ctx, sessionID, payload)
 
 	case mcp.ToolCollectOrderDetail, mcp.ToolUpdateOrderDraft:
 		result = s.executeCollectOrderDetail(toolName, payload)
 
 	case mcp.ToolCreateBooking, mcp.ToolCreateOrder:
-		result = s.executeCreateBooking(payload)
+		result = s.executeCreateBooking(ctx, payload)
 
 	default:
 		for attempt := 1; attempt <= 3; attempt++ {
@@ -82,14 +83,14 @@ func (s *MCPService) Execute(sessionID uuid.UUID, toolName string, payload map[s
 	}
 	// SEC-21: Persist tool call + AI log asynchronously, but bounded/rate-limited via standard means.
 	// We'll keep it simple: synchronous. Bounding goroutines here is safer to prevent flood.
-	if err := s.repo.CreateToolCall(&toolCall); err != nil {
+	if err := s.repo.CreateToolCall(ctx, &toolCall); err != nil {
 		auth.LogSecurity("tool_call_persist_failed", map[string]any{
 			"session_id": sessionID.String(),
 			"tool_name":  toolName,
 			"error":      err.Error(),
 		})
 	}
-	if err := s.repo.CreateAILog(&aiLog); err != nil {
+	if err := s.repo.CreateAILog(ctx, &aiLog); err != nil {
 		auth.LogSecurity("ai_log_persist_failed", map[string]any{
 			"session_id": sessionID.String(),
 			"workflow":   "mcp_tool_execution",
@@ -103,13 +104,13 @@ func (s *MCPService) Execute(sessionID uuid.UUID, toolName string, payload map[s
 	return result, nil
 }
 
-func (s *MCPService) executeSearchTrips(sessionID uuid.UUID, payload map[string]interface{}) ToolResult {
+func (s *MCPService) executeSearchTrips(ctx context.Context, sessionID uuid.UUID, payload map[string]interface{}) ToolResult {
 	query := getString(payload, "query")
 	if query == "" {
 		query = getString(payload, "prompt")
 	}
 
-	session, err := s.repo.FindChatSession(sessionID)
+	session, err := s.repo.FindChatSession(ctx, sessionID)
 	if err != nil {
 		log.Printf("[mcp] search_trips failed session lookup error=%v", err)
 		return ToolResult{Tool: mcp.ToolSearchTrips, Status: "failed", Data: map[string]interface{}{"error": "session not found"}}
@@ -137,7 +138,7 @@ func (s *MCPService) executeSearchTrips(sessionID uuid.UUID, payload map[string]
 		PublishedOnly: true,
 		Limit:         20,
 	}
-	packages, err := s.repo.ListTrips(repoQuery)
+	packages, err := s.repo.ListTrips(ctx, repoQuery)
 	if err != nil {
 		log.Printf("[mcp] search_trips failed list trips error=%v", err)
 		return ToolResult{Tool: mcp.ToolSearchTrips, Status: "failed", Data: map[string]interface{}{"error": err.Error()}}
@@ -184,22 +185,22 @@ func (s *MCPService) executeSearchTrips(sessionID uuid.UUID, payload map[string]
 	}}
 }
 
-func (s *MCPService) executeSelectPackage(sessionID uuid.UUID, payload map[string]interface{}) ToolResult {
+func (s *MCPService) executeSelectPackage(ctx context.Context, sessionID uuid.UUID, payload map[string]interface{}) ToolResult {
 	tripIDStr := getString(payload, "trip_id")
 	tripID, err := uuid.Parse(tripIDStr)
 	if err != nil {
 		return ToolResult{Tool: mcp.ToolSelectPackage, Status: "failed", Data: map[string]interface{}{"error": "invalid trip_id"}}
 	}
 
-	if _, err := s.repo.FindTrip(tripID); err != nil {
+	if _, err := s.repo.FindTrip(ctx, tripID); err != nil {
 		return ToolResult{Tool: mcp.ToolSelectPackage, Status: "failed", Data: map[string]interface{}{"error": "trip not found"}}
 	}
 
-	session, err := s.repo.FindChatSession(sessionID)
+	session, err := s.repo.FindChatSession(ctx, sessionID)
 	if err != nil || (session.ExpiresAt != nil && !session.ExpiresAt.After(time.Now())) {
 		return ToolResult{Tool: mcp.ToolSelectPackage, Status: "failed", Data: map[string]interface{}{"error": "chat session expired"}}
 	}
-	if err := s.repo.UpdateChatSessionSelectedTrip(sessionID, &tripID); err != nil {
+	if err := s.repo.UpdateChatSessionSelectedTrip(ctx, sessionID, &tripID); err != nil {
 		log.Printf("[mcp] select_package failed update session error=%v", err)
 		return ToolResult{Tool: mcp.ToolSelectPackage, Status: "failed", Data: map[string]interface{}{"error": "failed to update session"}}
 	}
@@ -324,9 +325,9 @@ func (s *MCPService) mock(toolName string, _ map[string]any) ToolResult {
 	}
 }
 
-func (s *MCPService) executeCreateBooking(payload map[string]interface{}) ToolResult {
+func (s *MCPService) executeCreateBooking(ctx context.Context, payload map[string]interface{}) ToolResult {
 	log.Printf("[mcp] create_booking called args=%+v", payload)
-	guestUser, err := s.auth.GuestUser()
+	guestUser, err := s.auth.GuestUser(ctx)
 	if err != nil {
 		log.Printf("[mcp] create_booking failed guest_user error=%v", err)
 		return ToolResult{Tool: mcp.ToolCreateBooking, Status: "failed", Data: map[string]interface{}{"success": false, "error": err.Error()}}
@@ -365,7 +366,7 @@ func (s *MCPService) executeCreateBooking(payload map[string]interface{}) ToolRe
 		return ToolResult{Tool: mcp.ToolCreateBooking, Status: "failed", Data: map[string]interface{}{"success": false, "error": "invalid travel_date format, please use ISO format (YYYY-MM-DD)"}}
 	}
 
-	booking, err := s.bookings.Create(guestUser.ID, req)
+	booking, err := s.bookings.Create(ctx, guestUser.ID, req)
 	if err != nil {
 		log.Printf("[mcp] create_booking save failed error=%v", err)
 		return ToolResult{Tool: mcp.ToolCreateBooking, Status: "failed", Data: map[string]interface{}{"success": false, "error": err.Error()}}

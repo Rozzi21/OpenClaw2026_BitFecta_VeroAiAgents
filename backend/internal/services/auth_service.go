@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -40,7 +41,7 @@ func (s *AuthService) auditFields(meta AuthRequestMeta, extra map[string]any) ma
 	return fields
 }
 
-func (s *AuthService) Register(req dto.RegisterRequest, meta AuthRequestMeta) (AuthIssueResult, error) {
+func (s *AuthService) Register(ctx context.Context, req dto.RegisterRequest, meta AuthRequestMeta) (AuthIssueResult, error) {
 	// SEC-1: public registration must never honor a client-supplied role.
 	// Self-service signups are always plain users. Operator/admin accounts are
 	// created exclusively via the protected AuthService.CreateStaff path.
@@ -49,10 +50,10 @@ func (s *AuthService) Register(req dto.RegisterRequest, meta AuthRequestMeta) (A
 		return AuthIssueResult{}, err
 	}
 	user := models.User{Name: req.Name, Email: strings.ToLower(req.Email), Password: string(hash), Role: models.RoleUser}
-	if err := s.repo.CreateUser(&user); err != nil {
+	if err := s.repo.CreateUser(ctx, &user); err != nil {
 		return AuthIssueResult{}, err
 	}
-	result, err := s.issueSession(user)
+	result, err := s.issueSession(ctx, user)
 	if err != nil {
 		return AuthIssueResult{}, err
 	}
@@ -67,7 +68,7 @@ func (s *AuthService) Register(req dto.RegisterRequest, meta AuthRequestMeta) (A
 // CreateStaff provisions an operator/admin account. It is only reachable through
 // an admin-guarded endpoint, so the role here is trusted. Returns the created
 // user without issuing a session (the new staff logs in separately).
-func (s *AuthService) CreateStaff(req dto.AdminCreateUserRequest, meta AuthRequestMeta) (models.User, error) {
+func (s *AuthService) CreateStaff(ctx context.Context, req dto.AdminCreateUserRequest, meta AuthRequestMeta) (models.User, error) {
 	role := models.Role(strings.ToLower(strings.TrimSpace(req.Role)))
 	if role != models.RoleOperator && role != models.RoleAdmin && role != models.RoleUser {
 		return models.User{}, errors.New("role must be one of user, operator, admin")
@@ -77,7 +78,7 @@ func (s *AuthService) CreateStaff(req dto.AdminCreateUserRequest, meta AuthReque
 		return models.User{}, err
 	}
 	user := models.User{Name: req.Name, Email: strings.ToLower(req.Email), Password: string(hash), Role: role}
-	if err := s.repo.CreateUser(&user); err != nil {
+	if err := s.repo.CreateUser(ctx, &user); err != nil {
 		return models.User{}, err
 	}
 	auth.LogSecurity("staff_account_created", s.auditFields(meta, map[string]any{
@@ -88,12 +89,12 @@ func (s *AuthService) CreateStaff(req dto.AdminCreateUserRequest, meta AuthReque
 	return user, nil
 }
 
-func (s *AuthService) Login(req dto.LoginRequest, meta AuthRequestMeta) (AuthIssueResult, error) {
+func (s *AuthService) Login(ctx context.Context, req dto.LoginRequest, meta AuthRequestMeta) (AuthIssueResult, error) {
 	email := req.Email
 	if email == "" {
 		email = req.Username
 	}
-	user, err := s.repo.FindUserByEmail(strings.ToLower(email))
+	user, err := s.repo.FindUserByEmail(ctx, strings.ToLower(email))
 	if err != nil {
 		auth.LogSecurity(auth.EventLoginFailed, s.auditFields(meta, map[string]any{
 			"email": strings.ToLower(email),
@@ -109,7 +110,7 @@ func (s *AuthService) Login(req dto.LoginRequest, meta AuthRequestMeta) (AuthIss
 		}))
 		return AuthIssueResult{}, errors.New("invalid email or password")
 	}
-	result, err := s.issueSession(user)
+	result, err := s.issueSession(ctx, user)
 	if err != nil {
 		return AuthIssueResult{}, err
 	}
@@ -121,7 +122,7 @@ func (s *AuthService) Login(req dto.LoginRequest, meta AuthRequestMeta) (AuthIss
 	return result, nil
 }
 
-func (s *AuthService) Refresh(refreshToken string, meta AuthRequestMeta) (AuthIssueResult, error) {
+func (s *AuthService) Refresh(ctx context.Context, refreshToken string, meta AuthRequestMeta) (AuthIssueResult, error) {
 	if refreshToken == "" {
 		auth.LogSecurity(auth.EventRefreshFailed, s.auditFields(meta, map[string]any{
 			"error": "missing refresh token",
@@ -151,7 +152,7 @@ func (s *AuthService) Refresh(refreshToken string, meta AuthRequestMeta) (AuthIs
 	// request that wins the race (rowsAffected == 1) proceeds to issue a new
 	// token pair; concurrent duplicate refreshes lose the race and are rejected
 	// WITHOUT triggering reuse-detection revoke-all (they are not theft).
-	rotated, err := s.repo.RotateSession(claims.ID)
+	rotated, err := s.repo.RotateSession(ctx, claims.ID)
 	if err != nil {
 		return AuthIssueResult{}, err
 	}
@@ -160,7 +161,7 @@ func (s *AuthService) Refresh(refreshToken string, meta AuthRequestMeta) (AuthIs
 		// refresh or earlier rotation), expired, or unknown. We must distinguish
 		// a benign concurrent refresh (recent rotation) from genuine token reuse
 		// (a revoked token surfacing long after rotation = theft signal).
-		session, findErr := s.repo.FindSessionByJTI(claims.ID)
+		session, findErr := s.repo.FindSessionByJTI(ctx, claims.ID)
 		logFields := map[string]any{
 			"user_id": claims.UserID.String(),
 			"email":   claims.Email,
@@ -180,7 +181,7 @@ func (s *AuthService) Refresh(refreshToken string, meta AuthRequestMeta) (AuthIs
 				logFields["error"] = "concurrent refresh: session already rotated"
 				auth.LogSecurity(auth.EventRefreshFailed, s.auditFields(meta, logFields))
 			} else {
-				_ = s.repo.RevokeAllActiveSessionsByUser(claims.UserID)
+				_ = s.repo.RevokeAllActiveSessionsByUser(ctx, claims.UserID)
 				auth.LogSecurity(auth.EventRefreshTokenReuseDetected, s.auditFields(meta, logFields))
 			}
 		default:
@@ -190,12 +191,12 @@ func (s *AuthService) Refresh(refreshToken string, meta AuthRequestMeta) (AuthIs
 		return AuthIssueResult{}, ErrRefreshTokenRevoked
 	}
 
-	user, err := s.repo.FindUserByID(claims.UserID)
+	user, err := s.repo.FindUserByID(ctx, claims.UserID)
 	if err != nil {
 		return AuthIssueResult{}, err
 	}
 
-	result, err := s.issueSession(user)
+	result, err := s.issueSession(ctx, user)
 	if err != nil {
 		return AuthIssueResult{}, err
 	}
@@ -208,7 +209,7 @@ func (s *AuthService) Refresh(refreshToken string, meta AuthRequestMeta) (AuthIs
 	return result, nil
 }
 
-func (s *AuthService) Logout(refreshToken string, meta AuthRequestMeta) error {
+func (s *AuthService) Logout(ctx context.Context, refreshToken string, meta AuthRequestMeta) error {
 	if refreshToken == "" {
 		return nil
 	}
@@ -221,7 +222,7 @@ func (s *AuthService) Logout(refreshToken string, meta AuthRequestMeta) error {
 		return nil
 	}
 
-	_ = s.repo.RevokeSessionByJTIIfExists(claims.ID)
+	_ = s.repo.RevokeSessionByJTIIfExists(ctx, claims.ID)
 	auth.LogSecurity(auth.EventLogout, s.auditFields(meta, map[string]any{
 		"user_id": claims.UserID.String(),
 		"email":   claims.Email,
@@ -230,13 +231,13 @@ func (s *AuthService) Logout(refreshToken string, meta AuthRequestMeta) error {
 	return nil
 }
 
-func (s *AuthService) Me(userID uuid.UUID) (models.User, error) {
-	return s.repo.FindUserByID(userID)
+func (s *AuthService) Me(ctx context.Context, userID uuid.UUID) (models.User, error) {
+	return s.repo.FindUserByID(ctx, userID)
 }
 
 // GuestUser now generates an isolated user per guest booking (Fix for #8).
 // We no longer share the `guest@vero.local` dummy user across all guest orders.
-func (s *AuthService) GuestUser() (models.User, error) {
+func (s *AuthService) GuestUser(ctx context.Context) (models.User, error) {
 	// BUG-8 fix: handle bcrypt errors explicitly. Previously the error was
 	// swallowed (`hash, _ :=`), which on failure would persist a guest row
 	// with an empty/invalid password hash — a latent data-integrity defect.
@@ -262,19 +263,19 @@ func (s *AuthService) GuestUser() (models.User, error) {
 		Password: string(hash),
 		Role:     models.RoleUser,
 	}
-	if err := s.repo.FirstOrCreateUser(&user); err != nil {
+	if err := s.repo.FirstOrCreateUser(ctx, &user); err != nil {
 		return models.User{}, err
 	}
 	return user, nil
 }
 
-func (s *AuthService) issueSession(user models.User) (AuthIssueResult, error) {
+func (s *AuthService) issueSession(ctx context.Context, user models.User) (AuthIssueResult, error) {
 	pair, err := s.jwt.Generate(user)
 	if err != nil {
 		return AuthIssueResult{}, err
 	}
 	expiresAt := time.Now().Add(s.jwt.RefreshTTL())
-	if err := s.repo.CreateAuthSession(user.ID, pair.RefreshJTI, expiresAt); err != nil {
+	if err := s.repo.CreateAuthSession(ctx, user.ID, pair.RefreshJTI, expiresAt); err != nil {
 		return AuthIssueResult{}, err
 	}
 	return AuthIssueResult{
