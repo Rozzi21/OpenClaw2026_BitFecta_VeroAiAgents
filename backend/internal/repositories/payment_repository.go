@@ -37,3 +37,18 @@ func (r *Repository) FindPaymentByExternalID(ctx context.Context, externalID str
 func (r *Repository) UpdatePayment(ctx context.Context, payment *models.Payment) error {
 	return r.DB.WithContext(ctx).Save(payment).Error
 }
+
+// UpdatePaymentStatusAtomic applies a conditional status transition in a
+// single UPDATE guarded by the expected current status (SEC-29). Returns
+// updated=true when the row was transitioned; false when another writer
+// already moved it (caller should re-read and decide). Mirrors
+// UpdateBookingStatusAtomic (SEC-23).
+func (r *Repository) UpdatePaymentStatusAtomic(ctx context.Context, id uuid.UUID, fromStatus, toStatus string) (bool, error) {
+	res := r.DB.WithContext(ctx).Model(&models.Payment{}).
+		Where("id = ? AND status = ?", id, fromStatus).
+		Update("status", toStatus)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}

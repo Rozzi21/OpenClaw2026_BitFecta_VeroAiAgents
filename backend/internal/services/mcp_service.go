@@ -37,7 +37,7 @@ func (s *MCPService) Execute(ctx context.Context, sessionID uuid.UUID, toolName 
 	switch toolName {
 	case mcp.ToolCreatePayment:
 		// DOKU/payment tools are temporarily disabled.
-		result = ToolResult{Tool: toolName, Status: "failed", Data: map[string]interface{}{"error": "payment tools are temporarily disabled"}}
+		result = ToolResult{Tool: toolName, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "payment tools are temporarily disabled"}}
 
 	case mcp.ToolSearchTrips, "search_destination", "search_hotels", "calculate_budget", "generate_itinerary":
 		// Unify legacy recommendation-like calls into search_trips behavior.
@@ -55,7 +55,7 @@ func (s *MCPService) Execute(ctx context.Context, sessionID uuid.UUID, toolName 
 	default:
 		for attempt := 1; attempt <= 3; attempt++ {
 			result = s.mock(toolName, payload)
-			if result.Status == "success" {
+			if result.Status == models.ToolResultStatusSuccess {
 				break
 			}
 			time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
@@ -113,7 +113,7 @@ func (s *MCPService) executeSearchTrips(ctx context.Context, sessionID uuid.UUID
 	session, err := s.repo.FindChatSession(ctx, sessionID)
 	if err != nil {
 		log.Printf("[mcp] search_trips failed session lookup error=%v", err)
-		return ToolResult{Tool: mcp.ToolSearchTrips, Status: "failed", Data: map[string]interface{}{"error": "session not found"}}
+		return ToolResult{Tool: mcp.ToolSearchTrips, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "session not found"}}
 	}
 
 	alternative := false
@@ -127,7 +127,7 @@ func (s *MCPService) executeSearchTrips(ctx context.Context, sessionID uuid.UUID
 	// Validator: if user already selected a package and is not explicitly asking
 	// for alternatives, refuse to search to avoid recommendation spam.
 	if session.SelectedTripID != nil && !alternative {
-		return ToolResult{Tool: mcp.ToolSearchTrips, Status: "failed", Data: map[string]interface{}{
+		return ToolResult{Tool: mcp.ToolSearchTrips, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{
 			"error":               "a package is already selected",
 			"selected_trip_id":    session.SelectedTripID.String(),
 			"require_alternative": true,
@@ -141,7 +141,7 @@ func (s *MCPService) executeSearchTrips(ctx context.Context, sessionID uuid.UUID
 	packages, err := s.repo.ListTrips(ctx, repoQuery)
 	if err != nil {
 		log.Printf("[mcp] search_trips failed list trips error=%v", err)
-		return ToolResult{Tool: mcp.ToolSearchTrips, Status: "failed", Data: map[string]interface{}{"error": err.Error()}}
+		return ToolResult{Tool: mcp.ToolSearchTrips, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": err.Error()}}
 	}
 
 	scored := scoreTrips(query, packages)
@@ -177,7 +177,7 @@ func (s *MCPService) executeSearchTrips(ctx context.Context, sessionID uuid.UUID
 		reason = "alternative"
 	}
 
-	return ToolResult{Tool: mcp.ToolSearchTrips, Status: "success", Data: map[string]interface{}{
+	return ToolResult{Tool: mcp.ToolSearchTrips, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{
 		"packages": results,
 		"count":    len(results),
 		"reason":   reason,
@@ -189,23 +189,23 @@ func (s *MCPService) executeSelectPackage(ctx context.Context, sessionID uuid.UU
 	tripIDStr := getString(payload, "trip_id")
 	tripID, err := uuid.Parse(tripIDStr)
 	if err != nil {
-		return ToolResult{Tool: mcp.ToolSelectPackage, Status: "failed", Data: map[string]interface{}{"error": "invalid trip_id"}}
+		return ToolResult{Tool: mcp.ToolSelectPackage, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "invalid trip_id"}}
 	}
 
 	if _, err := s.repo.FindTrip(ctx, tripID); err != nil {
-		return ToolResult{Tool: mcp.ToolSelectPackage, Status: "failed", Data: map[string]interface{}{"error": "trip not found"}}
+		return ToolResult{Tool: mcp.ToolSelectPackage, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "trip not found"}}
 	}
 
 	session, err := s.repo.FindChatSession(ctx, sessionID)
 	if err != nil || (session.ExpiresAt != nil && !session.ExpiresAt.After(time.Now())) {
-		return ToolResult{Tool: mcp.ToolSelectPackage, Status: "failed", Data: map[string]interface{}{"error": "chat session expired"}}
+		return ToolResult{Tool: mcp.ToolSelectPackage, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "chat session expired"}}
 	}
 	if err := s.repo.UpdateChatSessionSelectedTrip(ctx, sessionID, &tripID); err != nil {
 		log.Printf("[mcp] select_package failed update session error=%v", err)
-		return ToolResult{Tool: mcp.ToolSelectPackage, Status: "failed", Data: map[string]interface{}{"error": "failed to update session"}}
+		return ToolResult{Tool: mcp.ToolSelectPackage, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "failed to update session"}}
 	}
 
-	return ToolResult{Tool: mcp.ToolSelectPackage, Status: "success", Data: map[string]interface{}{
+	return ToolResult{Tool: mcp.ToolSelectPackage, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{
 		"success": true,
 		"trip_id": tripID.String(),
 	}}
@@ -215,7 +215,7 @@ func (s *MCPService) executeCollectOrderDetail(toolName string, payload map[stri
 	tripIDStr := getString(payload, "trip_id")
 	tripID, err := uuid.Parse(tripIDStr)
 	if err != nil {
-		return ToolResult{Tool: toolName, Status: "failed", Data: map[string]interface{}{"error": "invalid trip_id"}}
+		return ToolResult{Tool: toolName, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "invalid trip_id"}}
 	}
 
 	getDefault := func(key string, fallback string) string {
@@ -235,7 +235,7 @@ func (s *MCPService) executeCollectOrderDetail(toolName string, payload map[stri
 		"contact_phone": getDefault("contact_phone", ""),
 	}
 
-	return ToolResult{Tool: toolName, Status: "success", Data: map[string]interface{}{
+	return ToolResult{Tool: toolName, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{
 		"success": true,
 		"draft":   detail,
 	}}
@@ -316,12 +316,12 @@ func min(a, b int) int {
 func (s *MCPService) mock(toolName string, _ map[string]any) ToolResult {
 	switch toolName {
 	case mcp.ToolSendWhatsApp:
-		return ToolResult{Tool: toolName, Status: "success", Data: map[string]interface{}{
+		return ToolResult{Tool: toolName, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{
 			"delivered": true,
 			"channel":   "whatsapp",
 		}}
 	default:
-		return ToolResult{Tool: toolName, Status: "failed", Data: map[string]interface{}{"error": "unknown tool"}}
+		return ToolResult{Tool: toolName, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "unknown tool"}}
 	}
 }
 
@@ -330,14 +330,14 @@ func (s *MCPService) executeCreateBooking(ctx context.Context, payload map[strin
 	guestUser, err := s.auth.GuestUser(ctx)
 	if err != nil {
 		log.Printf("[mcp] create_booking failed guest_user error=%v", err)
-		return ToolResult{Tool: mcp.ToolCreateBooking, Status: "failed", Data: map[string]interface{}{"success": false, "error": err.Error()}}
+		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": err.Error()}}
 	}
 
 	tripIDStr, _ := payload["trip_id"].(string)
 	tripID, err := uuid.Parse(tripIDStr)
 	if err != nil {
 		log.Printf("[mcp] create_booking failed invalid_trip_id trip_id=%q", tripIDStr)
-		return ToolResult{Tool: mcp.ToolCreateBooking, Status: "failed", Data: map[string]interface{}{"success": false, "error": "invalid trip_id"}}
+		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "invalid trip_id"}}
 	}
 
 	req := dto.BookingRequest{
@@ -355,7 +355,7 @@ func (s *MCPService) executeCreateBooking(ctx context.Context, payload map[strin
 	}
 	if req.ContactEmail == "" && req.ContactPhone == "" {
 		log.Printf("[mcp] create_booking failed missing_contact trip_id=%s", tripID)
-		return ToolResult{Tool: mcp.ToolCreateBooking, Status: "failed", Data: map[string]interface{}{"success": false, "error": "contact_email or contact_phone is required"}}
+		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "contact_email or contact_phone is required"}}
 	}
 
 	log.Printf("[mcp] create_booking saving trip_id=%s adult_pax=%d child_pax=%d contact_email=%q contact_phone=%q travel_date=%q", req.TripID, req.AdultPax, req.ChildPax, req.ContactEmail, req.ContactPhone, req.TravelDate)
@@ -363,17 +363,17 @@ func (s *MCPService) executeCreateBooking(ctx context.Context, payload map[strin
 	parsedDate := parseDate(req.TravelDate)
 	if parsedDate == nil {
 		log.Printf("[mcp] create_booking failed invalid_date travel_date=%q", req.TravelDate)
-		return ToolResult{Tool: mcp.ToolCreateBooking, Status: "failed", Data: map[string]interface{}{"success": false, "error": "invalid travel_date format, please use ISO format (YYYY-MM-DD)"}}
+		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "invalid travel_date format, please use ISO format (YYYY-MM-DD)"}}
 	}
 
 	booking, err := s.bookings.Create(ctx, guestUser.ID, req)
 	if err != nil {
 		log.Printf("[mcp] create_booking save failed error=%v", err)
-		return ToolResult{Tool: mcp.ToolCreateBooking, Status: "failed", Data: map[string]interface{}{"success": false, "error": err.Error()}}
+		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": err.Error()}}
 	}
 	log.Printf("[mcp] create_booking saved booking_id=%s status=%s payment_status=%s total=%.2f", booking.ID, booking.BookingStatus, booking.PaymentStatus, booking.TotalPrice)
 
-	return ToolResult{Tool: mcp.ToolCreateBooking, Status: "success", Data: map[string]interface{}{
+	return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{
 		"success":        true,
 		"order_id":       booking.ID.String(),
 		"status":         booking.BookingStatus,

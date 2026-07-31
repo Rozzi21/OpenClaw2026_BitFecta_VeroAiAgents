@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,14 +38,17 @@ func (s *PaymentService) Create(ctx context.Context, req dto.PaymentCreateReques
 	if err != nil {
 		return models.Payment{}, errors.New("booking not found")
 	}
+	// SEC-29: payment statuses are now typed constants in the models package,
+	// so new code cannot drift on raw literals like "pending"/"settlement".
 	payment := models.Payment{
 		BookingID:     req.BookingID,
 		PaymentMethod: req.PaymentMethod,
 		ExternalID:    "DOKU-" + uuid.NewString(),
 		Amount:        booking.TotalPrice,
-		Status:        "pending",
+		Status:        models.PaymentStatusPending,
 		ExpiredAt:     time.Now().Add(15 * time.Minute),
 	}
+
 	if err := s.repo.CreatePayment(ctx, &payment); err != nil {
 		return payment, err
 	}
@@ -111,9 +114,11 @@ func (s *PaymentService) Webhook(ctx context.Context, req dto.PaymentWebhookRequ
 
 	// SEC-4 idempotency: never downgrade an already-settled payment, and skip
 	// re-processing when the status is unchanged (prevents replay re-triggers).
-	newStatus := strings.ToLower(req.Status)
-	if payment.Status == "paid" || payment.Status == "settlement" {
-		if newStatus != "paid" && newStatus != "settlement" {
+	// SEC-29: normalize provider-specific aliases (DOKU sends "settlement" /
+	// "SUCCESS", etc.) into the canonical constants before comparing.
+	newStatus := models.NormalizePaymentStatus(req.Status)
+	if models.IsPaymentSuccess(payment.Status) {
+		if !models.IsPaymentSuccess(newStatus) {
 			return models.Payment{}, errors.New("payment already settled")
 		}
 		if newStatus == payment.Status {
@@ -121,13 +126,39 @@ func (s *PaymentService) Webhook(ctx context.Context, req dto.PaymentWebhookRequ
 		}
 	}
 
-	payment.Status = newStatus
-	if err := s.repo.UpdatePayment(ctx, &payment); err != nil {
+	// SEC-29: atomic conditional status update — mirror of the booking status
+	// pattern (SEC-23). Avoids a read-modify-write race between a webhook and an
+	// admin backoffice edit. RowsAffected==0 means the stored status changed
+	// concurrently; re-read before deciding the outcome.
+	updated, err := s.repo.UpdatePaymentStatusAtomic(ctx, payment.ID, payment.Status, newStatus)
+	if err != nil {
 		return payment, err
+	}
+	if !updated {
+		// Status moved under us. Re-read fresh state for a final decision.
+		fresh, fetchErr := s.repo.FindPaymentByExternalID(ctx, req.ExternalID)
+		if fetchErr != nil {
+			return models.Payment{}, fetchErr
+		}
+		payment = fresh
+		if models.IsPaymentSuccess(payment.Status) && !models.IsPaymentSuccess(newStatus) {
+			return models.Payment{}, errors.New("payment already settled")
+		}
+		if payment.Status == newStatus {
+			return payment, nil
+		}
+		// Concurrent change landed on a different non-conflicting status; fall
+		// through and publish the actual persisted state.
+	} else {
+		payment.Status = newStatus
 	}
 	// SEC-18: minimal status payload only.
 	s.bus.Publish("payment_updated", map[string]interface{}{"payment_id": payment.ID, "booking_id": payment.BookingID, "status": payment.Status})
-	if payment.Status == "paid" || payment.Status == "settlement" {
+	if models.IsPaymentSuccess(payment.Status) {
+		if payment.Status != newStatus && !models.IsPaymentSuccess(newStatus) {
+			log.Printf("[payment] settled webhook finalized concurrent status=%s external_id=%s", payment.Status, payment.ExternalID)
+		}
+
 		s.bus.Publish("booking_confirmed", map[string]interface{}{"booking_id": payment.BookingID, "payment_id": payment.ID})
 		s.triggerN8N(ctx, "payment_success", map[string]interface{}{
 			"booking_id":  payment.BookingID,

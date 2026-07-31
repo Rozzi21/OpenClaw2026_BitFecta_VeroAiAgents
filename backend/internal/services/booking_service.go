@@ -44,19 +44,20 @@ func (s *BookingService) Create(ctx context.Context, userID uuid.UUID, req dto.B
 	booking := models.Booking{
 		UserID:        userID,
 		TripID:        req.TripID,
-		BookingStatus: "pending",
+		BookingStatus: models.BookingStatusPending,
 		// Payments are temporarily disabled. New orders stay pending for manual
 		// backoffice/admin processing. Re-enable DOKU by restoring the old
 		// waiting_payment status alongside PAYMENTS_ENABLED=true.
-		PaymentStatus: "pending_admin_processing",
-		AdultPax:      adultPax,
-		ChildPax:      childPax,
-		ContactName:   req.ContactName,
-		ContactEmail:  req.ContactEmail,
-		ContactPhone:  req.ContactPhone,
-		TravelDate:    parseDate(req.TravelDate),
-		TotalPrice:    total,
-		BookingDate:   time.Now(),
+		PaymentStatus: models.PaymentStatusPendingAdminProcessing,
+
+		AdultPax:     adultPax,
+		ChildPax:     childPax,
+		ContactName:  req.ContactName,
+		ContactEmail: req.ContactEmail,
+		ContactPhone: req.ContactPhone,
+		TravelDate:   parseDate(req.TravelDate),
+		TotalPrice:   total,
+		BookingDate:  time.Now(),
 	}
 	if err := s.repo.CreateBooking(ctx, &booking); err != nil {
 		return booking, err

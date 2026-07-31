@@ -165,11 +165,16 @@ type PaymentCreateRequest struct {
 
 // UpdateBookingStatusRequest is used by backoffice staff to advance a booking
 // through the internal order workflow. Allowed transitions are enforced by the
-// service layer, not by the client.
+// service layer, not by the client. Values are restricted to the canonical
+// booking lifecycle constants (mirrors models.BookingStatus* — SEC-29).
 type UpdateBookingStatusRequest struct {
 	BookingStatus string `json:"booking_status" binding:"required,oneof=pending processing confirmed completed cancelled"`
 }
 
+
+// PaymentWebhookRequest is the DOKU payment callback payload. Status accepts
+// any provider string; the service normalizes aliases into the canonical
+// models.PaymentStatus* constants (SEC-29).
 type PaymentWebhookRequest struct {
 	ExternalID string   `json:"external_id" binding:"required"`
 	Status     string   `json:"status" binding:"required"`

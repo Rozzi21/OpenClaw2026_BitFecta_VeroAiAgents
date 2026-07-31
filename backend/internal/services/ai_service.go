@@ -217,7 +217,7 @@ func sessionOwnedByContext(session models.ChatSession, chatCtx ChatContext) bool
 
 func extractRecommendedPackages(toolResults []ToolResult, selectedTripID *uuid.UUID) []models.Trip {
 	for _, result := range toolResults {
-		if result.Tool == mcp.ToolSearchTrips && result.Status == "success" {
+		if result.Tool == mcp.ToolSearchTrips && result.Status == models.ToolResultStatusSuccess {
 			data, ok := result.Data["packages"].([]map[string]interface{})
 			if !ok {
 				return nil
@@ -281,7 +281,7 @@ func extractRecommendedPackages(toolResults []ToolResult, selectedTripID *uuid.U
 
 func recommendationReasonFromToolResults(toolResults []ToolResult) string {
 	for _, result := range toolResults {
-		if result.Tool == mcp.ToolSearchTrips && result.Status == "success" {
+		if result.Tool == mcp.ToolSearchTrips && result.Status == models.ToolResultStatusSuccess {
 			if reason, ok := result.Data["reason"].(string); ok {
 				return reason
 			}
@@ -292,7 +292,7 @@ func recommendationReasonFromToolResults(toolResults []ToolResult) string {
 
 func hasSearchTripsAlternative(toolResults []ToolResult) bool {
 	for _, result := range toolResults {
-		if result.Tool == mcp.ToolSearchTrips && result.Status == "success" {
+		if result.Tool == mcp.ToolSearchTrips && result.Status == models.ToolResultStatusSuccess {
 			if reason, ok := result.Data["reason"].(string); ok && reason == "alternative" {
 				return true
 			}
@@ -303,7 +303,7 @@ func hasSearchTripsAlternative(toolResults []ToolResult) bool {
 
 func hasSuccessfulCreateBooking(results []ToolResult) bool {
 	for _, result := range results {
-		if (result.Tool == mcp.ToolCreateBooking || result.Tool == mcp.ToolCreateOrder) && result.Status == "success" {
+		if (result.Tool == mcp.ToolCreateBooking || result.Tool == mcp.ToolCreateOrder) && result.Status == models.ToolResultStatusSuccess {
 			if success, ok := result.Data["success"].(bool); ok && success {
 				return true
 			}
@@ -410,7 +410,7 @@ func (s *AIService) generateWithToolLoop(ctx context.Context, sessionID uuid.UUI
 				log.Printf("[ai] deduplicated duplicate tool call: %s", callKey)
 				toolResult := ToolResult{
 					Tool:   tc.Function.Name,
-					Status: "success",
+					Status: models.ToolResultStatusSuccess,
 					Data:   map[string]interface{}{"info": "already executed with same arguments in this session round"},
 				}
 				allToolResults = append(allToolResults, toolResult)
@@ -430,7 +430,7 @@ func (s *AIService) generateWithToolLoop(ctx context.Context, sessionID uuid.UUI
 				log.Printf("[ai] tool execution error for %s: %v", tc.Function.Name, execErr)
 				toolResult = ToolResult{
 					Tool:   tc.Function.Name,
-					Status: "failed",
+					Status: models.ToolResultStatusFailed,
 					Data:   map[string]interface{}{"error": execErr.Error()},
 				}
 			}

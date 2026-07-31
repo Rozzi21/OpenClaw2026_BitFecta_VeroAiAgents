@@ -15,6 +15,102 @@ const (
 	RoleAdmin    Role = "admin"
 )
 
+// Booking lifecycle statuses (SEC-29). BookingStatus only advances through the
+// transitions enforced by Booking.CanTransitionTo below.
+const (
+	BookingStatusPending    = "pending"
+	BookingStatusProcessing = "processing"
+	BookingStatusConfirmed  = "confirmed"
+	BookingStatusCompleted  = "completed"
+	BookingStatusCancelled  = "cancelled"
+)
+
+// Payment status constants (SEC-29). Values persisted in payments.status.
+const (
+	PaymentStatusPending    = "pending"
+	PaymentStatusPaid       = "paid"
+	PaymentStatusSettlement = "settlement"
+	PaymentStatusVerified   = "verified"
+	PaymentStatusFailed     = "failed"
+	PaymentStatusExpired    = "expired"
+	PaymentStatusCancelled  = "cancelled"
+)
+
+// paymentSuccessSet is the canonical set of statuses that mean "money
+// received". DOKU sends "settlement" or "paid"; analytics historically also
+// counted "verified". Centralized here so services do not re-declare raw
+// string slices (SEC-29).
+var paymentSuccessSet = map[string]bool{
+	PaymentStatusPaid:       true,
+	PaymentStatusSettlement: true,
+	PaymentStatusVerified:   true,
+}
+
+// PaymentSuccessStatuses returns a copy of the success slice (for SQL IN).
+func PaymentSuccessStatuses() []string {
+	return []string{PaymentStatusPaid, PaymentStatusSettlement, PaymentStatusVerified}
+}
+
+// IsPaymentSuccess reports whether a (normalized) status means settled.
+func IsPaymentSuccess(status string) bool {
+	return paymentSuccessSet[status]
+}
+
+// NormalizePaymentStatus maps provider-specific aliases (DOKU, etc.) to the
+// canonical lowercase status values above. Unknown values are returned
+// trimmed+lowercased so the caller can decide how to treat them.
+func NormalizePaymentStatus(status string) string {
+	s := ""
+	for _, r := range status {
+		if r != ' ' && r != '-' && r != '_' {
+			s += string(r)
+		}
+	}
+	// fold case without importing strings here? simplest: manual lower
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + 32
+		}
+	}
+	s = string(b)
+
+	switch s {
+	case "settlement":
+		return PaymentStatusSettlement
+	case "paid", "success", "capture", "authorized", "authorizedcapture":
+		return PaymentStatusPaid
+	case "pending", "waiting", "waitingpayment", "initiated", "new":
+		return PaymentStatusPending
+	case "failed", "failure", "denied", "deny", "declined":
+		return PaymentStatusFailed
+	case "expired":
+		return PaymentStatusExpired
+	case "cancelled", "canceled", "voided", "void":
+		return PaymentStatusCancelled
+	case "verified":
+		return PaymentStatusVerified
+	default:
+		return s
+	}
+}
+
+// Tool result status constants shared by MCP execution results (SEC-29).
+// Previously raw literals "success"/"failed" were scattered across mcp_service.go.
+const (
+	ToolResultStatusSuccess = "success"
+	ToolResultStatusFailed  = "failed"
+)
+
+// PaymentStatusWaitingPayment is the legacy initial payment_status used when
+// the DOKU checkout flow is enabled. Kept for documentation; currently the
+// chat flow uses PaymentStatusPendingAdminProcessing because payments are off.
+const PaymentStatusWaitingPayment = "waiting_payment"
+
+// PaymentStatusPendingAdminProcessing marks guest orders awaiting manual
+// backoffice processing while the payment integration is disabled.
+const PaymentStatusPendingAdminProcessing = "pending_admin_processing"
+
 type BaseModel struct {
 	ID        uuid.UUID      `json:"id" gorm:"type:uuid;primaryKey"`
 	CreatedAt time.Time      `json:"created_at"`
@@ -138,23 +234,38 @@ type Booking struct {
 	Payments      []Payment  `json:"payments,omitempty" gorm:"foreignKey:BookingID"`
 }
 
-// CanTransitionTo checks if booking status transition is valid
+// CanTransitionTo reports whether the booking may move to target under the
+// SEC-29 status machine. Terminal states (completed / cancelled) accept no
+// further transitions; identical source and target are a no-op.
 func (b *Booking) CanTransitionTo(target string) bool {
 	if b.BookingStatus == target {
 		return true
 	}
-	transitions := map[string]map[string]bool{
-		"pending":    {"processing": true, "confirmed": true, "cancelled": true},
-		"processing": {"confirmed": true, "cancelled": true},
-		"confirmed":  {"completed": true, "cancelled": true},
-		"completed":  {},
-		"cancelled":  {},
-	}
-	allowed, ok := transitions[b.BookingStatus]
+	allowed, ok := bookingStatusTransitions[b.BookingStatus]
 	if !ok {
 		return false
 	}
 	return allowed[target]
+}
+
+// bookingStatusTransitions centralizes the booking lifecycle graph so both
+// validation and any future reporting read the same truth (SEC-29).
+var bookingStatusTransitions = map[string]map[string]bool{
+	BookingStatusPending: {
+		BookingStatusProcessing: true,
+		BookingStatusConfirmed:  true,
+		BookingStatusCancelled:  true,
+	},
+	BookingStatusProcessing: {
+		BookingStatusConfirmed: true,
+		BookingStatusCancelled: true,
+	},
+	BookingStatusConfirmed: {
+		BookingStatusCompleted: true,
+		BookingStatusCancelled: true,
+	},
+	BookingStatusCompleted: {},
+	BookingStatusCancelled: {},
 }
 
 type Payment struct {

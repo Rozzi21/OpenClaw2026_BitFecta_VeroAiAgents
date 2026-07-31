@@ -26,7 +26,9 @@ func (s *AnalyticsService) Dashboard(ctx context.Context) (map[string]interface{
 	db.Model(&models.Trip{}).Count(&activeTrips)
 	db.Model(&models.AILog{}).Count(&aiLogs)
 	db.Model(&models.Payment{}).Count(&allPayments)
-	db.Model(&models.Payment{}).Where("status IN ?", []string{"paid", "settlement", "verified"}).Count(&paidPayments)
+	// SEC-29: success statuses live in models.PaymentSuccessStatuses() instead
+	// of a re-declared raw string slice.
+	db.Model(&models.Payment{}).Where("status IN ?", models.PaymentSuccessStatuses()).Count(&paidPayments)
 
 	successRate := 0.0
 	if allPayments > 0 {

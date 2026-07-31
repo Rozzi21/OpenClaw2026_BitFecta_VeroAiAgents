@@ -62,10 +62,24 @@ type FunctionSpec struct {
 	Parameters  interface{} `json:"parameters"`
 }
 
-type CompletionRequest struct {
-	Messages []Message `json:"messages"`
-	Tools    []ToolDef `json:"tools,omitempty"`
+// ResponseFormat optionally requests structured output (OpenAI-compatible
+// `response_format`). Callers pass a provider-specific schema object; it is
+// emitted verbatim in the JSON body. Nil means default free-form text.
+type ResponseFormat struct {
+	Type       string                 `json:"type"`
+	JsonSchema map[string]interface{} `json:"json_schema,omitempty"`
 }
+
+type CompletionRequest struct {
+	Messages []Message        `json:"messages"`
+	Tools    []ToolDef        `json:"tools,omitempty"`
+
+	// ResponseFormat requests structured output (e.g. JSON schema) on the final
+	// assistant message instead of free-form text. Used by SEC-29 for the
+	// order-claim check so we do not parse natural language.
+	ResponseFormat *ResponseFormat `json:"response_format,omitempty"`
+}
+
 
 type CompletionResponse struct {
 	Text      string                 `json:"text"`
