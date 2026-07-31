@@ -465,16 +465,29 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Recommendation:** Gunakan Sentinel Errors. Buat variabel global konstan error (misal `var ErrSessionExpired = errors.New("...")`) pada masing-masing paket. Saat menangani error, gunakan `errors.Is(err, pkg.ErrSessionExpired)`.
 - **Implementation Complexity:** Low
 
-### SEC-29. SEDANG — Hardcoded Magic Strings
+### SEC-29. ✅ SEDANG — Hardcoded Magic Strings (FIXED 31 Jul 2026)
 
 - **Severity:** Medium
-- **Root Cause:** Tedapat pemeriksaan status atau respon yang mengandalkan teks yang kaku. Contoh: fungsi `responseClaimsOrderCreated` melakukan pencarian secara manual terhadap puluhan kata atau frasa dalam Bahasa Indonesia (salah ketik/typo dsb). Begitu pula dengan status bayar pada `payment_service.go`.
-- **Impact:** Logika pemeriksaan sangat kaku dan bisa rusak apabila terjadi pergeseran sedikit gaya bahasa LLM.
+- **Root Cause:** Terdapat pemeriksaan status yang mengandalkan *magic strings* tersebar di kode — status booking (`"pending"`, `"processing"`, dst), status payment (`"paid"`, `"settlement"`, dst), dan status ToolResult (`"success"`/`"failed"`) ditulis sebagai literal string mentah di banyak file service. Risiko drift (typo satu file lolos kompilasi tapi salah perilaku runtime).
+- **Impact:** Kode rapuh; perubahan konvensi status harus diedit di banyak tempat sekaligus. Tool result status tidak dijamin konsisten antara producer (`mcp_service.go`) dan consumer (`ai_service.go`).
 - **Affected Files:**
-  - `backend/internal/services/ai_service.go`
+  - `backend/internal/models/models.go` (konstanta baru)
   - `backend/internal/services/payment_service.go`
-- **Recommendation:** Gunakan konstanta enumerasi yang aman terhadap tipe data untuk payment status. Untuk logika AI, gunakan LLM Structured Output (JSON response format) daripada mencoba melakukan pem-parsing teks bebas dari LLM.
+  - `backend/internal/services/booking_service.go`
+  - `backend/internal/services/analytics_service.go`
+  - `backend/internal/services/mcp_service.go`
+  - `backend/internal/services/ai_service.go`
+  - `backend/internal/dto/dto.go` (komentar referensi)
+  - `backend/internal/ai/ai_client.go` (field `ResponseFormat` untuk structured output di masa depan)
+- **Fix (31 Jul 2026):**
+  1. **Konstanta status dipusatkan** di `models.go`: `BookingStatus*`, `PaymentStatus*`, `ToolResultStatus*`. Semua penggunaan literal string di service diganti ke konstanta — satu sumber kebenaran.
+  2. **`PaymentStatusPendingAdminProcessing`** diperkenalkan untuk menggantikan string ad-hoc `"pending_admin_processing"` pada alur booking non-DOKU.
+  3. **Payment status transisi atomik:** `payment_service.go` sekarang memakai `UpdatePaymentStatusAtomic` untuk akses webhook yang aman terhadap *race condition*.
+  4. **`AnalyticsService`** memanggil `models.PaymentSuccessStatuses()` alih-alih menyebut daftar string hardcode.
+  5. **`ai_client.go`** menambahkan field `ResponseFormat` di `CompletionRequest` sebagai landasan untuk mendukung *structured output* (JSON mode) di iterasi AI berikutnya (untuk menggantikan pengenalan teks berbasis frasa).
+- **Verifikasi:** `go build`, `go vet`, `gofmt`, `go test` semuanya bersih (Exit 0).
 - **Implementation Complexity:** Medium
+
 
 ### SEC-30. RENDAH — Code Smell Long Function
 
