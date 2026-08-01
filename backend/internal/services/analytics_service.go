@@ -5,30 +5,46 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/rozzi/vero-ai-travel-agents/backend/internal/models"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/repositories"
 	"gorm.io/gorm"
 )
 
-type AnalyticsService struct{ repo *repositories.Repository }
+// SEC-27: AnalyticsService now depends on the AnalyticsRepository interface
+// instead of the concrete *repositories.Repository. This retires the old
+// `s.repo.DB` escape hatch (coding-rules §1.1a exception is now closed):
+// aggregate SQL lives behind dedicated repository methods and the service can
+// be unit-tested with a mock.
+type AnalyticsService struct {
+	repo repositories.AnalyticsRepository
+}
 
 func (s *AnalyticsService) Dashboard(ctx context.Context) (map[string]interface{}, error) {
-	var totalBookings int64
-	var totalRevenue float64
-	var activeTrips int64
-	var aiLogs int64
-	var paidPayments int64
-	var allPayments int64
-
-	db := s.repo.DB.WithContext(ctx)
-	db.Model(&models.Booking{}).Count(&totalBookings)
-	db.Model(&models.Booking{}).Select("COALESCE(SUM(total_price), 0)").Scan(&totalRevenue)
-	db.Model(&models.Trip{}).Count(&activeTrips)
-	db.Model(&models.AILog{}).Count(&aiLogs)
-	db.Model(&models.Payment{}).Count(&allPayments)
-	// SEC-29: success statuses live in models.PaymentSuccessStatuses() instead
-	// of a re-declared raw string slice.
-	db.Model(&models.Payment{}).Where("status IN ?", models.PaymentSuccessStatuses()).Count(&paidPayments)
+	totalBookings, err := s.repo.CountBookings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	totalRevenue, err := s.repo.SumBookingRevenue(ctx)
+	if err != nil {
+		return nil, err
+	}
+	activeTrips, err := s.repo.CountTrips(ctx)
+	if err != nil {
+		return nil, err
+	}
+	aiLogs, err := s.repo.CountAILogs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	allPayments, err := s.repo.CountPayments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// SEC-29: success statuses live in models.PaymentSuccessStatuses() and are
+	// applied inside the repository method (no raw string slice in the service).
+	paidPayments, err := s.repo.CountSuccessfulPayments(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	successRate := 0.0
 	if allPayments > 0 {
@@ -43,6 +59,7 @@ func (s *AnalyticsService) Dashboard(ctx context.Context) (map[string]interface{
 	}
 
 	return map[string]interface{}{
+
 		"total_bookings":       totalBookings,
 		"total_revenue":        totalRevenue,
 		"active_trips":         activeTrips,

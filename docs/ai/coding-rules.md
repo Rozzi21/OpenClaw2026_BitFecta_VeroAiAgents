@@ -31,9 +31,21 @@ Setiap method Service dan Repository yang menyentuh DB/network WAJIB menerima `c
 
 DILARANG memakai `context.Background()`/`context.TODO()` di dalam jalur request HTTP (service/repo/HTTP client). `context.Background()` hanya boleh untuk background yang memang detach dari request: ticker/scheduler (mis. `startChatSessionCleanup` di `main.go` memakai `context.Background()`+timeout 30s), atau goroutine yang sengaja hidup setelah respons.
 
-> Pengecualian yang sudah ada: `AnalyticsService.Dashboard()` mengakses `s.repo.DB` langsung untuk query agregat. Ini pengecualian sadar, bukan pola yang dianjurkan untuk ditiru.
+> Pengecualian `AnalyticsService` yang dulu mengakses `s.repo.DB` langsung SUDAH DITUTUP (SEC-27, 1 Agu 2026). Query agregat kini memakai method repository (`CountBookings`, `SumBookingRevenue`, `CountTrips`, `CountAILogs`, `CountPayments`, `CountSuccessfulPayments` di `analytics_repository.go`). Tidak ada lagi akses GORM mentah di service.
+
+### 1.1c Dependency Inversion via Narrow Interface (WAJIB, sejak SEC-27 — 1 Agu 2026)
+
+Layer Service TIDAK lagi depend pada concrete `*repositories.Repository` atau concrete service lain. Kontrak di-invert ke interface (interface segregation principle).
+
+- **Interface domain repo** didefinisikan di `backend/internal/repositories/interfaces.go`: `UserRepository`, `AuthSessionRepository`, `ChatRepository`, `TripRepository`, `BookingRepository`, `PaymentRepository`, `LogRepository`, `AnalyticsRepository`. Compile-time assertion `var _ XRepository = (*Repository)(nil)` mengunci concrete tetap memenuhi kontrak.
+- **Kontrak narrow per-service** dideklarasikan sebagai interface lokal di file service per-domain (mis. `AuthRepository` di `auth_service.go`, `MCPRepository` + `BookingCreator` + `GuestUserProvider` di `mcp_service.go`, `AIRepository` + `MCPToolExecutor` di `ai_service.go`, `BookingRepository`/`PaymentRepository` yang diperluas di `booking_service.go`/`payment_service.go`). Setiap interface hanya memuat method yang benar-benar dipakai service itu.
+- **Inter-service coupling di-invert** — `MCPService`→`*BookingService`/`*AuthService` dan `AIService`→`*MCPService` diganti interface lokal (`BookingCreator`, `GuestUserProvider`, `MCPToolExecutor`), bukan concrete struct.
+- Concrete `*Repository` memenuhi semua interface secara implisit (structural typing Go), sehingga wiring `services.New()` TIDAK berubah.
+
+DILARANG menambahkan field service yang bertipe concrete `*repositories.Repository`, `*AuthService`, `*BookingService`, `*MCPService`, dst. WAJIB pakai interface (narrow) bila perlu dependency baru, dideklarasikan di `interfaces.go` (repo domain) atau file service (inter-service/butuh kombinasi).
 
 ### 1.1b Sentinel Errors (WAJIB, sejak SEC-28 — 1 Agu 2026)
+
 
 Error domain yang mempengaruhi alur logika (bukan sekadar pesan ke user) WAJIB dideklarasikan sebagai sentinel error package-level, bukan `errors.New` inline.
 
@@ -182,7 +194,8 @@ Integrasi eksternal harus punya fallback. Contoh: klien AI (`ai/ai_client.go`) m
 
 - Menyimpan refresh token di `localStorage` (hanya cookie HttpOnly).
 - `c.JSON()` langsung di handler (pakai `utils.*`).
-- Akses `r.DB` di luar lapisan repository (kecuali pengecualian analytics yang sudah ada).
+- Akses `r.DB` di luar lapisan repository (pengecualian analytics SUDAH DITUTUP via SEC-27; service wajib pakai interface repo, lihat §1.1c).
+
 - Hardcode secret/kredensial di kode.
 - Menghapus kode fitur yang dinonaktifkan tanpa dokumentasi.
 - `fetch()` mentah di komponen frontend (pakai `apiFetch`).

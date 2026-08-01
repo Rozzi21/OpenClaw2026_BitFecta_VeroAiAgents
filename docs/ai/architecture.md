@@ -46,7 +46,8 @@ Lapisan dan tanggung jawabnya:
 - **`internal/config`** — memuat env ke struct `Config` + `Validate()`.
 - **`internal/database`** — koneksi GORM (retry 5x, pooling), `AutoMigrate`, migrasi legacy, health check.
 - **`internal/models`** — skema GORM (entity).
-- **`internal/repositories`** — akses data (CRUD). Satu-satunya lapisan yang menyentuh GORM langsung (kecuali Analytics yang query agregat lewat `repo.DB`).
+- **`internal/repositories`** — akses data (CRUD). Satu-satunya lapisan yang menyentuh GORM langsung. Sejak SEC-27 (1 Agu 2026): kontrak tiap domain dinyatakan sebagai interface di `repositories/interfaces.go` (`UserRepository`, ..., `AnalyticsRepository`); query agregat analytics pindah ke method repo (`analytics_repository.go`) sehingga tidak ada lagi akses `repo.DB` mentah dari service.
+
 - **`internal/services`** — logika bisnis, dipecah per-domain dalam satu package (`auth_service.go`, `ai_service.go`, `mcp_service.go`, `trip_service.go`, `booking_service.go`, `payment_service.go`, `log_service.go`, `analytics_service.go`, `helpers.go`); `services.go` menyisakan wiring `New()` + tipe bersama.
 - **`internal/handlers`** — HTTP handler, dipecah per-domain dalam satu package (`auth_handlers.go`, `chat_handlers.go`, `trip_handlers.go`, `booking_handlers.go`, `payment_handlers.go`, `logs_handlers.go`, `upload_handlers.go`, `sse_handlers.go`, `health_handlers.go`); `handlers.go` hanya berisi `Handler` struct + `New()`, `helpers.go` helper bersama, `docs.go` dokumentasi OpenAPI.
 - **`internal/routes`** — registrasi rute dan penerapan middleware per-grup.
@@ -160,7 +161,8 @@ Aturan ketergantungan (penting, lihat [coding-rules.md](coding-rules.md)):
 
 - **Layered architecture** — pemisahan handler/service/repository.
 - **Dependency injection manual** — `services.New(...)` dan `handlers.New(...)` merangkai dependency di `main.go`; tidak ada framework DI.
-- **Repository pattern** — semua akses data dibungkus method `repositories.Repository`.
+- **Repository pattern** — semua akses data dibungkus method `repositories.Repository`; sejak SEC-27 kontrak dinyatakan sebagai interface per-domain (`repositories/interfaces.go`) agar service dapat di-mock.
+
 - **Response envelope** — semua respons memakai `utils.APIResponse` `{success, message, data, error}`.
 - **Publish/subscribe (event bus)** — `events.Bus` channel-based, non-blocking publish (drop jika channel penuh).
 - **Adapter** — `internal/ai` membungkus provider LLM OpenAI-compatible dengan fallback lokal.
@@ -180,6 +182,8 @@ Pola frontend (kedua app): **custom hook untuk data/logic** (`use-trip-form.ts`,
 7. **Service dipecah per-domain** dalam package `services` (refactor 25 Jun 2026); `services.go` hanya berisi wiring + tipe bersama.
 8. **Envelope respons seragam** dipakai konsisten; frontend bergantung pada `payload.data`.
 9. **Handler dipecah per-domain** dalam package `handlers` (refactor ARCH-5, 31 Jul 2026); `handlers.go` hanya berisi `Handler` struct + `New()`. Nama method dan kontrak API tidak berubah.
+10. **Dependency Inversion pada layer service (SEC-27, 1 Agu 2026).** Service tidak lagi depend pada concrete `*repositories.Repository` maupun concrete service lain; tiap service depend pada interface narrow (interface segregation) yang di-satisfy concrete secara implisit. Interface domain repo di `repositories/interfaces.go`; interface inter-service (`BookingCreator`, `GuestUserProvider`, `MCPToolExecutor`) di file service masing-masing. Escape hatch `AnalyticsService`→`repo.DB` ditutup — query agregat pindah ke `repositories/analytics_repository.go`. Wiring `services.New()` tidak berubah.
+
 
 ## 7. Entry Point Aplikasi
 

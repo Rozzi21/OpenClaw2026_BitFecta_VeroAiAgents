@@ -17,10 +17,21 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// SEC-27: AuthService depends on narrow repository interfaces (user + auth
+// session store) instead of the concrete *repositories.Repository. The
+// concrete repo satisfies these implicitly; tests can now inject mocks.
 type AuthService struct {
-	repo *repositories.Repository
+	repo AuthRepository
 	jwt  *auth.JWTService
 	cfg  config.Config
+}
+
+// AuthRepository is the narrow repository contract AuthService actually uses.
+// It composes the user + auth-session domain interfaces defined in
+// repositories/interfaces.go (SEC-27).
+type AuthRepository interface {
+	repositories.UserRepository
+	repositories.AuthSessionRepository
 }
 
 // refreshRotationConcurrentWindow bounds how recently a session must have been

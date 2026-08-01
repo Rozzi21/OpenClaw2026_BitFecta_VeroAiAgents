@@ -61,6 +61,7 @@ Poin penting:
 
 ### AIService - Inti Produk
 
+
 `AIService.Chat()` adalah jantung platform. Alur (lihat `services.go`):
 
 1. Buat/lanjutkan `ChatSession`, simpan pesan user.
@@ -114,7 +115,18 @@ Temporary: `PAYMENTS_ENABLED=false` by default disables DOKU routes, `PaymentSer
 
 ### AnalyticsService
 
-`Dashboard()` mengagregasi metrik via query GORM langsung (`db.Model().Count()`, `Select("COALESCE(SUM...)")`): total bookings, revenue, active trips, AI usage, payment success rate. Untuk aktivitas customer terbaru, memakai `RecentBookings(10)` (tanpa preload Payments) alih-alih `ListBookings()` agar query dashboard ringan — tidak memuat seluruh tabel booking + 3 preloads.
+`Dashboard()` mengagregasi metrik (total bookings, revenue, active trips, AI usage, payment success rate) lewat method repository `CountBookings`, `SumBookingRevenue`, `CountTrips`, `CountAILogs`, `CountPayments`, `CountSuccessfulPayments` ([analytics_repository.go](../../backend/internal/repositories/analytics_repository.go)). Sebelum SEC-27 (1 Agu 2026) service ini mengakses `s.repo.DB` GORM langsung — escape hatch itu **sudah ditutup**; SQL agregat kini hidup di layer repository dan `AnalyticsService` depend hanya pada interface `AnalyticsRepository`. Untuk aktivitas customer terbaru, memakai `RecentBookings(10)` (tanpa preload Payments) alih-alih `ListBookings()` agar query dashboard ringan — tidak memuat seluruh tabel booking + 3 preloads.
+
+## Dependency Inversion (SEC-27, 1 Agu 2026)
+
+Layer service tidak lagi depend pada concrete `*repositories.Repository` maupun concrete service lain. Tiap service struct memakai interface narrow (interface segregation principle):
+
+- Interface domain repo di [repositories/interfaces.go](../../backend/internal/repositories/interfaces.go) (`UserRepository`, `AuthSessionRepository`, `ChatRepository`, `TripRepository`, `BookingRepository`, `PaymentRepository`, `LogRepository`, `AnalyticsRepository`); compile-time assertion `var _ XRepository = (*Repository)(nil)` mengunci concrete.
+- Interface lokal per-service memuat hanya method yang dipakai: `AuthRepository` (di `auth_service.go`), `BookingRepository` (di `booking_service.go`, memperluas repo Booking + `FindTrip`), `PaymentRepository` (di `payment_service.go`, Payment + `FindBooking`), `AIRepository` + `MCPToolExecutor` (di `ai_service.go`), `MCPRepository` + `BookingCreator` + `GuestUserProvider` (di `mcp_service.go`). `TripService`/`LogService` memakai interface domain langsung.
+- Coupling antar-service di-invert: `MCPService`→`*BookingService`/`*AuthService` dan `AIService`→`*MCPService` diganti interface (`BookingCreator`, `GuestUserProvider`, `MCPToolExecutor`).
+
+Concrete `*Repository` memenuhi semua interface secara implisit (structural typing Go), sehingga wiring `services.New()` TIDAK berubah — konstruktor tetap menerima `repo *repositories.Repository` lalu mengassign ke field interface. Implikasi untuk testing: tiap service bisa di-unit-test dengan mock interface, tanpa DB nyata.
+
 
 ## Mekanisme Realtime (Event Bus + SSE)
 

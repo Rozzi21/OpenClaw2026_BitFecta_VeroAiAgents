@@ -111,11 +111,23 @@ Setelah AutoMigrate, `MigrateGuestChatSessions()` menormalisasi session lama yan
 
 ## Lapisan Repository
 
-Semua akses DB lewat `repositories.Repository` ([backend/internal/repositories/repositories.go](../../backend/internal/repositories/repositories.go)). Service tidak pernah memanggil GORM langsung kecuali `AnalyticsService` (agregasi). Pola ini wajib diikuti.
+Semua akses DB lewat `repositories.Repository` ([backend/internal/repositories/repositories.go](../../backend/internal/repositories/repositories.go)). Service tidak pernah memanggil GORM langsung — **termasuk `AnalyticsService`**: pengecualian agregasi lama sudah ditutup (SEC-27, 1 Agu 2026); query agregat kini ada di method repository (`CountBookings`, `SumBookingRevenue`, `CountTrips`, `CountAILogs`, `CountPayments`, `CountSuccessfulPayments` di [backend/internal/repositories/analytics_repository.go](../../backend/internal/repositories/analytics_repository.go)).
 
-File:
-- [repositories.go](../../backend/internal/repositories/repositories.go) — CRUD untuk User, ChatSession/Message, Trip/Itinerary, Booking, Payment, AILog, ToolCall.
+Sejak SEC-27 kontrak tiap domain dinyatakan sebagai interface di [backend/internal/repositories/interfaces.go](../../backend/internal/repositories/interfaces.go) (`UserRepository`, `AuthSessionRepository`, `ChatRepository`, `TripRepository`, `BookingRepository`, `PaymentRepository`, `LogRepository`, `AnalyticsRepository`), dan tiap service depend pada interface narrow (bukan concrete `*repositories.Repository`) — compile-time assertion `var _ XRepository = (*Repository)(nil)` mengunci concrete tetap memenuhi kontrak. Pola ini wajib diikuti.
+
+
+File (dipecah per-domain, SEC-25; satu tipe `*Repository`):
+- [repositories.go](../../backend/internal/repositories/repositories.go) — `Repository` struct + `New()` + tipe filter (`RepositoryFilter`, `TripRepositoryFilter`).
+- [interfaces.go](../../backend/internal/repositories/interfaces.go) — interface per-domain (SEC-27).
+- [user_repository.go](../../backend/internal/repositories/user_repository.go) — CRUD User.
+- [chat_repository.go](../../backend/internal/repositories/chat_repository.go) — ChatSession & ChatMessage.
+- [trip_repository.go](../../backend/internal/repositories/trip_repository.go) — Trip & Itinerary.
+- [booking_repository.go](../../backend/internal/repositories/booking_repository.go) — Booking (incl. `UpdateBookingStatusAtomic`).
+- [payment_repository.go](../../backend/internal/repositories/payment_repository.go) — Payment (incl. `UpdatePaymentStatusAtomic`).
+- [log_repository.go](../../backend/internal/repositories/log_repository.go) — AILog & ToolCall.
+- [analytics_repository.go](../../backend/internal/repositories/analytics_repository.go) — query agregat dashboard (SEC-27).
 - [auth_sessions.go](../../backend/internal/repositories/auth_sessions.go) — operasi AuthSession (refresh token).
+
 
 ### Repository penting
 

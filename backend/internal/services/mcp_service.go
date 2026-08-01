@@ -16,11 +16,37 @@ import (
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/repositories"
 )
 
+// SEC-27: MCPService depends on narrow interfaces — a repository contract plus
+// inter-service contracts (BookingCreator, GuestUserProvider) — instead of the
+// concrete *repositories.Repository / *BookingService / *AuthService. Tests can
+// now mock every dependency without a DB or real sibling services.
 type MCPService struct {
-	repo     *repositories.Repository
+	repo     MCPRepository
 	bus      *events.Bus
-	bookings *BookingService
-	auth     *AuthService
+	bookings BookingCreator
+	auth     GuestUserProvider
+}
+
+// MCPRepository is the repository contract MCPService uses (SEC-27): chat
+// session reads, trip catalog search, selected-trip update, and tool/AI audit
+// logging. Composed from domain interfaces in repositories/interfaces.go.
+type MCPRepository interface {
+	repositories.ChatRepository
+	repositories.LogRepository
+	FindTrip(ctx context.Context, id uuid.UUID) (models.Trip, error)
+	ListTrips(ctx context.Context, query repositories.TripRepositoryFilter) ([]models.Trip, error)
+}
+
+// BookingCreator is the inter-service contract MCPService uses to create a
+// booking via the booking domain (SEC-27). *BookingService satisfies it.
+type BookingCreator interface {
+	Create(ctx context.Context, userID uuid.UUID, req dto.BookingRequest) (models.Booking, error)
+}
+
+// GuestUserProvider is the inter-service contract MCPService uses to resolve a
+// guest user for order attribution (SEC-27). *AuthService satisfies it.
+type GuestUserProvider interface {
+	GuestUser(ctx context.Context) (models.User, error)
 }
 
 type ToolResult struct {

@@ -18,12 +18,30 @@ import (
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/repositories"
 )
 
+// SEC-27: AIService depends on narrow interfaces — a repository contract plus
+// the MCPToolExecutor inter-service contract — instead of the concrete
+// *repositories.Repository / *MCPService. Tests can mock the MCP executor and
+// the repository without a DB or a real tool pipeline.
 type AIService struct {
-	repo   *repositories.Repository
-	mcp    *MCPService
+	repo   AIRepository
+	mcp    MCPToolExecutor
 	bus    *events.Bus
 	client *ai.Client
 	cfg    config.Config
+}
+
+// AIRepository is the repository contract AIService uses (SEC-27): chat
+// session/message persistence + AI log writes. Composed from domain interfaces
+// in repositories/interfaces.go.
+type AIRepository interface {
+	repositories.ChatRepository
+	CreateAILog(ctx context.Context, log *models.AILog) error
+}
+
+// MCPToolExecutor is the inter-service contract AIService uses to run a tool
+// through the MCP pipeline (SEC-27). *MCPService satisfies it.
+type MCPToolExecutor interface {
+	Execute(ctx context.Context, sessionID uuid.UUID, toolName string, payload map[string]interface{}) (ToolResult, error)
 }
 
 type ChatResult struct {

@@ -21,10 +21,20 @@ import (
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/repositories"
 )
 
+// SEC-27: PaymentService depends on the PaymentRepository interface instead
+// of the concrete *repositories.Repository. It needs booking lookup (for
+// server-side amount, SEC-3) + payment persistence + atomic status update.
 type PaymentService struct {
-	repo *repositories.Repository
+	repo PaymentRepository
 	bus  *events.Bus
 	cfg  config.Config
+}
+
+// PaymentRepository is the narrow repository contract PaymentService uses
+// (SEC-27). Composed from domain interfaces in repositories/interfaces.go.
+type PaymentRepository interface {
+	repositories.PaymentRepository
+	FindBooking(ctx context.Context, id uuid.UUID) (models.Booking, error)
 }
 
 // SEC-28: sentinel errors for the payment domain. Callers (handlers, tests)

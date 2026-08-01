@@ -443,16 +443,30 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Verifikasi:** `gofmt -w .` bersih, `go build ./...` + `go vet ./...` + `go test ./...` exit 0. Test `payment_service_test.go` (test signature Webhook) ikut diupdate `paymentSvc.Webhook(context.Background(), req)`.
 - **OWASP Mapping:** API4:2023 Unrestricted Resource Consumption
 
-### SEC-27. SEDANG — Pelanggaran Dependency Inversion (Tight Coupling)
+### SEC-27. ✅ SEDANG — Pelanggaran Dependency Inversion (Tight Coupling) (FIXED 1 Agu 2026)
 
 - **Severity:** Medium
 - **Root Cause:** Layer Service mengandalkan concrete struct pointer `*repositories.Repository` untuk dependensinya. Selain itu, antar service juga saling coupled, misalnya `MCPService` menggunakan `*BookingService`.
 - **Impact:** Sulit menulis unit test karena tidak mungkin mem-mock DB tanpa alat eksternal atau patch monkey patching. Ini merusak lapisan arsitektur bersih.
 - **Affected Files:**
-  - Semua file di `services/`
-  - Semua file di `repositories/`
-- **Recommendation:** Buat interface per-domain untuk layer bawah dan oper (inject) instance implementasi interface tersebut melalui constructor tiap service, sehingga mempermudah mocking pada saat testing.
-- **Implementation Complexity:** High
+  - `backend/internal/repositories/interfaces.go` (baru — interface per-domain)
+  - `backend/internal/repositories/analytics_repository.go` (baru — method agregat)
+  - Semua file `*_service.go` di `services/` (struct field + interface lokal)
+- **Fix (1 Agu 2026):** Menerapkan Dependency Inversion via narrow interface + interface segregation. Tidak ada signature method repo yang berubah; concrete `*Repository` memenuhi semua interface secara implisit (structural typing Go), sehingga wiring `services.New()` dan seluruh caller/handler TIDAK berubah.
+  1. **Interface per-domain di package repositories** (`interfaces.go`): `UserRepository`, `AuthSessionRepository`, `ChatRepository`, `TripRepository`, `BookingRepository`, `PaymentRepository`, `LogRepository`, `AnalyticsRepository`. Compile-time assertion `var _ XRepository = (*Repository)(nil)` mengunci concrete tetap memenuhi kontrak.
+  2. **Setiap service struct kini depend pada interface narrow**, bukan concrete:
+     - `AuthService.repo` → `AuthRepository` (User + AuthSession).
+     - `AIService.repo` → `AIRepository` (Chat + `CreateAILog`); `AIService.mcp` → `MCPToolExecutor` (interface inter-service, di-satisfy `*MCPService`).
+     - `MCPService.repo` → `MCPRepository` (Chat + Log + trip reads); `MCPService.bookings` → `BookingCreator` (di-satisfy `*BookingService`); `MCPService.auth` → `GuestUserProvider` (di-satisfy `*AuthService`).
+     - `BookingService.repo` → `BookingRepository` (Booking + `FindTrip`).
+     - `PaymentService.repo` → `PaymentRepository` (Payment + `FindBooking`).
+     - `TripService.repo` → `repositories.TripRepository`; `LogService.repo` → `repositories.LogRepository`; `AnalyticsService.repo` → `repositories.AnalyticsRepository`.
+  3. **Coupling antar-service diputus**: `MCPService`→`*BookingService`/`*AuthService` dan `AIService`→`*MCPService` diganti interface lokal (`BookingCreator`, `GuestUserProvider`, `MCPToolExecutor`), sehingga tiap service bisa di-unit-test terisolasi dengan mock.
+  4. **Escape hatch `AnalyticsService.s.repo.DB` ditutup** (coding-rules §1.1a exception kini hilang): query agregat dipindah ke method repository baru `CountBookings`, `SumBookingRevenue`, `CountTrips`, `CountAILogs`, `CountPayments`, `CountSuccessfulPayments` di `analytics_repository.go`; `AnalyticsService` kini depend hanya pada `AnalyticsRepository`. SQL agregat kembali berada di layer repository.
+- **Catatan:** Method agregat analytics adalah penambahan baru di repo; method repo lain tidak berubah. Guard SEC/ARCH/BUG yang menempel di service (SEC-2/3/4/11/18/23/26/29, BUG-1/5/6/8/9, AIW-1..5) ikut interface masing-masing — tidak ada perubahan perilaku.
+- **Verifikasi:** `go build ./...` + `go vet ./...` + `gofmt -l .` (kosong) + `go test ./...` semuanya bersih (exit 0).
+- **Implementation Complexity:** High → selesai
+
 
 ### SEC-28. ✅ SEDANG — Kurangnya Sentinel Errors (String Matching untuk Cek Error) (FIXED 1 Agu 2026)
 
@@ -1010,7 +1024,9 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | SEC-24 Kolisi UUID + weak randomness guest user | ✅ Email pakai UUID utuh (no truncate) + password `crypto/rand` di `AuthService.GuestUser` |
 | SEC-25 God object handlers + repositories | ✅ `repositories.go` dipecah per-domain (`*_repository.go`) dalam package `repositories`; kontrak API tak berubah |
 | SEC-26 Context propagation hilang (resource leak) | ✅ `context.Context` di-thread Handler→Service→Repo (`WithContext`), AI loop derive timeout dari request ctx, `triggerN8N` `NewRequestWithContext`+body closed (fix BUG-3), cleanup ticker per-run ctx |
+| SEC-27 Pelanggaran Dependency Inversion (tight coupling) | ✅ Interface per-domain di `repositories/interfaces.go` + narrow interface per service + inter-service interface (BookingCreator/GuestUserProvider/MCPToolExecutor); escape hatch `repo.DB` analytics ditutup via method agregat `analytics_repository.go`; wiring `services.New()` tak berubah |
 | SEC-28 String matching untuk cek error | ✅ Sentinel errors payment domain + `errors.Is` di handler/test; aturan sentinel di `coding-rules.md` §1.1b |
+
 
 
 > Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.

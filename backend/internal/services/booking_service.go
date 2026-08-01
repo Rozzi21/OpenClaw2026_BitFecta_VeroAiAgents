@@ -16,9 +16,21 @@ import (
 // ErrBookingNotFound is a sentinel error for missing bookings.
 var ErrBookingNotFound = errors.New("booking not found")
 
+// SEC-27: BookingService depends on a narrow repository interface instead of
+// the concrete *repositories.Repository. It needs bookings + trip lookup
+// (Create resolves the trip for server-side pricing, SEC-3).
 type BookingService struct {
-	repo *repositories.Repository
+	repo BookingRepository
 	bus  *events.Bus
+}
+
+// BookingRepository is the narrow repository contract BookingService uses
+// (SEC-27): booking persistence + the trip catalog read needed to price the
+// booking server-side. Composed from domain interfaces in
+// repositories/interfaces.go.
+type BookingRepository interface {
+	repositories.BookingRepository
+	FindTrip(ctx context.Context, id uuid.UUID) (models.Trip, error)
 }
 
 func (s *BookingService) Create(ctx context.Context, userID uuid.UUID, req dto.BookingRequest) (models.Booking, error) {
