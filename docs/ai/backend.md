@@ -25,7 +25,8 @@ Sejak refactor 25 Jun 2026, kode dipecah **per-domain dalam satu package `servic
 |---|---|
 | `services.go` | `Services` struct, `New()`, `ChatContext`, `AuthRequestMeta`, `AuthIssueResult`, error vars |
 | `auth_service.go` | `AuthService` (Register, CreateStaff, Login, Refresh, Logout, Me, legacy booking GuestUser, issueSession) |
-| `ai_service.go` | `AIService` (Chat via `ChatContext`, `generateWithToolLoop`, tool execution loop, katalog & rekomendasi paket, memory summary, expiry cleanup) |
+| `ai_service.go` | `AIService` (Chat via `ChatContext`, `generateWithToolLoop` — orkestrasi round LLM; blok single tool-call diekstrak ke helper `executeToolCall` + `toolResultMessage` (SEC-30), katalog & rekomendasi paket, memory summary, expiry cleanup) |
+
 | `mcp_service.go` | `MCPService` (`Execute`, `executeCreateBooking`, `mock`) + `ToolResult` |
 | `trip_service.go` | `TripService` + `buildTripFromRequest`, `buildItineraries` |
 | `booking_service.go` | `BookingService` + `tripAdultPrice`/`tripChildPrice` |

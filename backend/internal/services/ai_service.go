@@ -414,62 +414,68 @@ func (s *AIService) generateWithToolLoop(ctx context.Context, sessionID uuid.UUI
 		messages = append(messages, assistantMsg)
 
 		for _, tc := range resp.ToolCalls {
-			log.Printf("[ai] executing tool: %s (call_id=%s) args=%s", tc.Function.Name, tc.ID, tc.Function.Arguments)
-
-			var args map[string]interface{}
-			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				log.Printf("[ai] failed to parse tool args for %s: %v", tc.Function.Name, err)
-				args = map[string]interface{}{}
-			}
-
-			// Simple key based on tool name + arguments serialization to ensure uniqueness.
-			callKey := tc.Function.Name + ":" + tc.Function.Arguments
-			if calledTools[callKey] {
-				log.Printf("[ai] deduplicated duplicate tool call: %s", callKey)
-				toolResult := ToolResult{
-					Tool:   tc.Function.Name,
-					Status: models.ToolResultStatusSuccess,
-					Data:   map[string]interface{}{"info": "already executed with same arguments in this session round"},
-				}
-				allToolResults = append(allToolResults, toolResult)
-				resultJSON, _ := json.Marshal(toolResult)
-				messages = append(messages, ai.Message{
-					Role:       "tool",
-					Content:    string(resultJSON),
-					ToolCallID: tc.ID,
-					Name:       tc.Function.Name,
-				})
-				continue
-			}
-			calledTools[callKey] = true
-
-			toolResult, execErr := s.mcp.Execute(ctx, sessionID, tc.Function.Name, args)
-			if execErr != nil {
-				log.Printf("[ai] tool execution error for %s: %v", tc.Function.Name, execErr)
-				toolResult = ToolResult{
-					Tool:   tc.Function.Name,
-					Status: models.ToolResultStatusFailed,
-					Data:   map[string]interface{}{"error": execErr.Error()},
-				}
-			}
-
+			toolResult, toolMsg := s.executeToolCall(ctx, sessionID, tc, calledTools)
 			allToolResults = append(allToolResults, toolResult)
-
-			resultJSON, _ := json.Marshal(toolResult)
-			log.Printf("[ai] tool result for %s: %s", tc.Function.Name, string(resultJSON))
-
-			messages = append(messages, ai.Message{
-				Role:       "tool",
-				Content:    string(resultJSON),
-				ToolCallID: tc.ID,
-				Name:       tc.Function.Name,
-			})
+			messages = append(messages, toolMsg)
 		}
 	}
 
 	log.Printf("[ai] exhausted %d tool call rounds, forcing final text response", ai.MaxToolCallRounds)
 	resp, err := s.client.Generate(ctx, ai.CompletionRequest{Messages: messages})
 	return resp, allToolResults, err
+}
+
+// SEC-30 (fixed 1 Agu 2026): the single-tool-call block (arg parsing, AIW-3
+// dedup, MCP execution, result marshalling) was extracted out of
+// generateWithToolLoop into this helper so the loop only orchestrates rounds
+// and this function can be read/debugged in isolation. Behaviour is
+// unchanged: dedup and error mapping rules are identical to the old inline
+// block; calledTools is shared across rounds via the caller's map.
+func (s *AIService) executeToolCall(ctx context.Context, sessionID uuid.UUID, tc ai.ToolCall, calledTools map[string]bool) (ToolResult, ai.Message) {
+	log.Printf("[ai] executing tool: %s (call_id=%s) args=%s", tc.Function.Name, tc.ID, tc.Function.Arguments)
+
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+		log.Printf("[ai] failed to parse tool args for %s: %v", tc.Function.Name, err)
+		args = map[string]interface{}{}
+	}
+
+	// Simple key based on tool name + arguments serialization to ensure uniqueness.
+	callKey := tc.Function.Name + ":" + tc.Function.Arguments
+	if calledTools[callKey] {
+		log.Printf("[ai] deduplicated duplicate tool call: %s", callKey)
+		toolResult := ToolResult{
+			Tool:   tc.Function.Name,
+			Status: models.ToolResultStatusSuccess,
+			Data:   map[string]interface{}{"info": "already executed with same arguments in this session round"},
+		}
+		return toolResult, toolResultMessage(tc, toolResult)
+	}
+	calledTools[callKey] = true
+
+	toolResult, execErr := s.mcp.Execute(ctx, sessionID, tc.Function.Name, args)
+	if execErr != nil {
+		log.Printf("[ai] tool execution error for %s: %v", tc.Function.Name, execErr)
+		toolResult = ToolResult{
+			Tool:   tc.Function.Name,
+			Status: models.ToolResultStatusFailed,
+			Data:   map[string]interface{}{"error": execErr.Error()},
+		}
+	}
+	return toolResult, toolResultMessage(tc, toolResult)
+}
+
+// toolResultMessage serialises a ToolResult into the OpenAI "tool" role
+// message that is appended back into the conversation (SEC-30 helper).
+func toolResultMessage(tc ai.ToolCall, result ToolResult) ai.Message {
+	resultJSON, _ := json.Marshal(result)
+	log.Printf("[ai] tool result for %s: %s", tc.Function.Name, string(resultJSON))
+	return ai.Message{
+		Role:       "tool",
+		Content:    string(resultJSON),
+		ToolCallID: tc.ID,
+		Name:       tc.Function.Name,
+	}
 }
 
 func (s *AIService) buildMessages(ctx context.Context, sessionID uuid.UUID, prompt string) []ai.Message {

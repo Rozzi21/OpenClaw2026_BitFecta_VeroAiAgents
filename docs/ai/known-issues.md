@@ -509,15 +509,20 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Implementation Complexity:** Medium
 
 
-### SEC-30. RENDAH — Code Smell Long Function
+### SEC-30. ✅ RENDAH — Code Smell Long Function (FIXED 1 Agu 2026)
 
 - **Severity:** Low
 - **Root Cause:** Beberapa fungsi memiliki ukuran yang terlalu besar, di mana beberapa tanggung jawab digabungkan di satu tempat. Fungsi `generateWithToolLoop` di `ai_service.go` melingkupi logic perputaran LLM, pem-parsing argument, dan operasi pencatatan log pada DB.
 - **Impact:** Sulit untuk dibaca, dimodifikasi, dan di debug secara terisolasi.
 - **Affected Files:**
   - `backend/internal/services/ai_service.go`
-- **Recommendation:** Ekstrak logic eksekusi block tool menjadi satu helper function terpisah di dalam paket yang sama.
+- **Fix (1 Agu 2026):** Ekstrak blok eksekusi single tool-call (parsing argumen JSON, deduplikasi AIW-3, pemanggilan `MCPService.Execute`, mapping error, serta serialisasi `ToolResult` → pesan `role:"tool"`) keluar dari `generateWithToolLoop` menjadi dua helper dalam package `services` yang sama:
+  1. `executeToolCall(ctx, sessionID, tc, calledTools)` — menjalankan satu `ai.ToolCall` end-to-end dan mengembalikan `(ToolResult, ai.Message)`. Map deduplikasi `calledTools` tetap dipegang caller (di-share antar-round) sehingga semantik AIW-3 tak berubah.
+  2. `toolResultMessage(tc, result)` — serialisasi `ToolResult` + log + konstruksi `ai.Message` role "tool".
+  `generateWithToolLoop` kini hanya mengorkestrasi loop round (Generate → cek ToolCalls → append assistant message → panggil `executeToolCall` per tool → append tool message). Aturan dedup dan mapping error identik dengan blok inline lama; tidak ada perubahan perilaku. Kontrak publik (`Chat`, `ChatResult`, `MCPToolExecutor`) tak berubah.
+- **Verifikasi:** `go build ./...` + `go vet ./...` + `gofmt -l .` (kosong) + `go test ./...` exit 0.
 - **Implementation Complexity:** Low
+
 
 ### SEC-31. SEDANG — Memory Leak pada SSE EventStream
 
@@ -1026,6 +1031,9 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | SEC-26 Context propagation hilang (resource leak) | ✅ `context.Context` di-thread Handler→Service→Repo (`WithContext`), AI loop derive timeout dari request ctx, `triggerN8N` `NewRequestWithContext`+body closed (fix BUG-3), cleanup ticker per-run ctx |
 | SEC-27 Pelanggaran Dependency Inversion (tight coupling) | ✅ Interface per-domain di `repositories/interfaces.go` + narrow interface per service + inter-service interface (BookingCreator/GuestUserProvider/MCPToolExecutor); escape hatch `repo.DB` analytics ditutup via method agregat `analytics_repository.go`; wiring `services.New()` tak berubah |
 | SEC-28 String matching untuk cek error | ✅ Sentinel errors payment domain + `errors.Is` di handler/test; aturan sentinel di `coding-rules.md` §1.1b |
+| SEC-29 Hardcoded magic strings | ✅ Konstanta status (`BookingStatus*`/`PaymentStatus*`/`ToolResultStatus*`) di `models.go`; `UpdatePaymentStatusAtomic` webhook |
+| SEC-30 Code smell long function (`generateWithToolLoop`) | ✅ Ekstrak blok tool-call ke `executeToolCall` + `toolResultMessage` di `ai_service.go`; loop hanya orkestrasi round |
+
 
 
 
