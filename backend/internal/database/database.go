@@ -2,7 +2,6 @@ package database
 
 import (
 	"context"
-	"errors"
 	"log"
 	"time"
 
@@ -107,20 +106,17 @@ func (d *Database) migrateLegacySlots() error {
 	`).Error
 }
 
+// Health checks DB connectivity. PingContext already honors ctx (returns on
+// timeout/cancel), so it is called directly — no goroutine wrapper needed.
+// SEC-32: the previous goroutine + select wrapper leaked the goroutine whenever
+// ctx timed out, since the blocking PingContext kept running after Health
+// returned. Callers (DatabaseHealth, Readiness) pass a ctx with a 3s deadline.
 func (d *Database) Health(ctx context.Context) error {
 	sqlDB, err := d.DB.DB()
 	if err != nil {
 		return err
 	}
-	done := make(chan error, 1)
-	go func() { done <- sqlDB.PingContext(ctx) }()
-
-	select {
-	case err := <-done:
-		return err
-	case <-ctx.Done():
-		return errors.New("database health check timed out")
-	}
+	return sqlDB.PingContext(ctx)
 }
 
 func (d *Database) Close() error {

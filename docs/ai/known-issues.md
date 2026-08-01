@@ -524,24 +524,30 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Implementation Complexity:** Low
 
 
-### SEC-31. SEDANG — Memory Leak pada SSE EventStream
+### SEC-31. ✅ SEDANG — Memory Leak pada SSE EventStream (FIXED 28 Jul 2026 via BUG-4)
 
 - **Severity:** Medium
 - **Root Cause:** Di `handlers.go`, handler `EventStream` menggunakan `<-time.After(25 * time.Second)` di dalam blok `select` untuk loop pengiriman *heartbeat*. Fungsi `time.After` akan mengalokasikan *timer* di bawah *hood* yang tidak akan dihapus (di *garbage collect*) sampai waktunya berakhir. Karena *select* ter-evaluasi pada setiap iterasi pengiriman SSE, ini berakibat pada akumulasi timer.
 - **Impact:** Memory *leak* yang berpotensi terus tumbuh selama koneksi SSE dibuka, terlebih dengan tingginya *traffic* atau koneksi jangka panjang.
 - **Affected Files:**
-  - `backend/internal/handlers/handlers.go` (`EventStream`)
-- **Recommendation:** Ganti `time.After` dengan inisialisasi `time.NewTicker(25 * time.Second)` di luar loop `select`, lalu dengarkan `ticker.C` di dalam `select`. Panggil `defer ticker.Stop()` di awal fungsi.
+  - `backend/internal/handlers/handlers.go` (`EventStream`) — kini `sse_handlers.go`
+- **Fix (28 Jul 2026 via BUG-4):** `time.After(25s)` diganti `time.NewTicker(sseHeartbeatInterval)` yang diinisialisasi di luar loop `select` + `defer heartbeat.Stop()`. Timer hanya dibuat sekali dan di-Stop saat handler return — tidak ada lagi akumulasi timer per-iterasi. Konstanta `sseHeartbeatInterval` dipindah ke package-level di `sse_handlers.go` (setelah pemecahan ARCH-5). Fix ini tercatat sebagai "bonus" dalam entri BUG-4 (28 Jul 2026); SEC-31 ditandai FIXED untuk melengkapi pelacakan.
+- **Verifikasi (1 Agu 2026):** `go build ./...` + `go vet ./...` + `gofmt -l .` (kosong) semuanya bersih. Konfirmasi tidak ada `time.After(` tersisa di kode `.go` — hanya ada di dokumen `backend/docs/bug-hunt-2026-07-27.md`.
 - **Implementation Complexity:** Low
 
-### SEC-32. SEDANG — Goroutine Leak pada Health Check Database
+### SEC-32. ✅ SEDANG — Goroutine Leak pada Health Check Database (FIXED 1 Agu 2026)
 
 - **Severity:** Medium
 - **Root Cause:** Di `database.go` pada metode `Health()`, perintah ping *database* dibungkus dengan *goroutine*: `go func() { done <- sqlDB.PingContext(ctx) }()`. Jika `ctx` mencapai waktu *timeout*, metode akan mengembalikan *error* terlebih dahulu, namun *goroutine* tersebut akan terus mem-blok operasi pengecekan sampai `PingContext` selesai merespons, mengakibatkan *resource leak*.
 - **Impact:** Jika *database* hang dan rentetan *request* `Health()` masuk, *goroutine* akan terus menumpuk (leak) hingga *database* kembali membalas ping.
 - **Affected Files:**
   - `backend/internal/database/database.go` (`Health`)
-- **Recommendation:** Karena `PingContext` secara *native* sudah menerima parameter `context`, tidak perlu membungkusnya dengan *goroutine*. Panggil `PingContext` secara langsung untuk mencegah kebocoran resource.
+- **Fix (1 Agu 2026):**
+  1. `Health()` kini memanggil `sqlDB.PingContext(ctx)` secara langsung tanpa goroutine/channel/select wrapper. `PingContext` secara native sudah menerima `context.Context` dan akan return saat ctx timeout/cancel — tidak ada lagi goroutine yang bocor.
+  2. Import `errors` dihapus (tidak lagi dipakai setelah select wrapper dihilangkan).
+  3. Komentar SEC-32 ditambahkan menjelaskan mengapa goroutine wrapper tidak diperlukan.
+  4. Caller (`DatabaseHealth`, `Readiness` di `health_handlers.go`) tidak berubah — tetap pass `context.WithTimeout(c.Request.Context(), 3*time.Second)`.
+- **Verifikasi:** `go build ./...` + `go vet ./...` + `gofmt -l .` (kosong) semuanya bersih.
 - **Implementation Complexity:** Low
 
 ## A.5 Temuan Audit Database (Belum Diperbaiki - 26 Jul 2026)
@@ -1033,6 +1039,8 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | SEC-28 String matching untuk cek error | ✅ Sentinel errors payment domain + `errors.Is` di handler/test; aturan sentinel di `coding-rules.md` §1.1b |
 | SEC-29 Hardcoded magic strings | ✅ Konstanta status (`BookingStatus*`/`PaymentStatus*`/`ToolResultStatus*`) di `models.go`; `UpdatePaymentStatusAtomic` webhook |
 | SEC-30 Code smell long function (`generateWithToolLoop`) | ✅ Ekstrak blok tool-call ke `executeToolCall` + `toolResultMessage` di `ai_service.go`; loop hanya orkestrasi round |
+| SEC-31 Memory leak SSE EventStream (`time.After` timer leak) | ✅ `time.NewTicker(sseHeartbeatInterval)` + `defer Stop()` (digabung fix BUG-4, 28 Jul 2026); konfirmasi 1 Agu 2026 tidak ada `time.After(` di kode `.go` |
+| SEC-32 Goroutine leak health check database | ✅ `Health()` panggil `PingContext(ctx)` langsung tanpa goroutine/select wrapper; import `errors` dihapus (1 Agu 2026) |
 
 
 
