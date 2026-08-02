@@ -56,20 +56,24 @@ type ToolDefinition struct {
 // required for the chat recommendation flow is enabled.
 func Catalog() []ToolDefinition {
 	return []ToolDefinition{
-		{Name: ToolSearchTrips, Description: "Find and recommend published travel packages from the catalog based on the user's query. Use this to show packages, respond to requests like 'cari paket', or show alternatives. Pass alternative=true only when the user explicitly asks for other options while a package is already selected.", Inputs: []string{"query", "alternative"}, Enabled: true},
-		{Name: ToolSelectPackage, Description: "Mark a package as selected by the user. Call this when the user explicitly chooses a package by name or ID. Once a package is selected, stop recommending other packages unless the user asks for alternatives.", Inputs: []string{"trip_id"}, Enabled: true},
-		{Name: ToolCollectOrderDetail, Description: "Record order details collected from the user (pax, travel date, contact). Call this while gathering information before creating the actual booking. Does NOT create an order.", Inputs: []string{"trip_id", "adult_pax", "child_pax", "travel_date", "contact_name", "contact_email", "contact_phone"}, Enabled: true},
-		{Name: ToolCreateBooking, Description: "Create the final order in the database. Call this only when all required info is complete: trip_id, adult_pax, child_pax, travel_date, and contact_email OR contact_phone. Returns success=true with order_id only after database save succeeds.", Inputs: []string{"trip_id", "adult_pax", "child_pax", "travel_date", "contact_name", "contact_email", "contact_phone"}, Enabled: true},
-		{Name: ToolCreateOrder, Description: "Alias of create_booking. Disabled from OpenAI catalog to prevent model confusion.", Inputs: []string{"trip_id", "adult_pax", "child_pax", "travel_date", "contact_name", "contact_email", "contact_phone"}, Enabled: false},
+		// AI-2: per-parameter types ride on Inputs so the LLM sees integer for
+		// pax, boolean for alternative, number for cost, etc., reducing
+		// schema hallucination. Downstream parsing still stays defensive
+		// (strings, ints, bools all tolerated).
+		{Name: ToolSearchTrips, Description: "Find and recommend published travel packages from the catalog based on the user's query. Use this to show packages, respond to requests like 'cari paket', or show alternatives. Pass alternative=true only when the user explicitly asks for other options while a package is already selected.", Inputs: []InputDefinition{{Name: "query", Type: ParamTypeString}, {Name: "alternative", Type: ParamTypeBoolean}}, Enabled: true},
+		{Name: ToolSelectPackage, Description: "Mark a package as selected by the user. Call this when the user explicitly chooses a package by name or ID. Once a package is selected, stop recommending other packages unless the user asks for alternatives.", Inputs: []InputDefinition{{Name: "trip_id", Type: ParamTypeString}}, Enabled: true},
+		{Name: ToolCollectOrderDetail, Description: "Record order details collected from the user (pax, travel date, contact). Call this while gathering information before creating the actual booking. Does NOT create an order.", Inputs: []InputDefinition{{Name: "trip_id", Type: ParamTypeString}, {Name: "adult_pax", Type: ParamTypeInteger}, {Name: "child_pax", Type: ParamTypeInteger}, {Name: "travel_date", Type: ParamTypeString}, {Name: "contact_name", Type: ParamTypeString}, {Name: "contact_email", Type: ParamTypeString}, {Name: "contact_phone", Type: ParamTypeString}}, Enabled: true},
+		{Name: ToolCreateBooking, Description: "Create the final order in the database. Call this only when all required info is complete: trip_id, adult_pax, child_pax, travel_date, and contact_email OR contact_phone. Returns success=true with order_id only after database save succeeds.", Inputs: []InputDefinition{{Name: "trip_id", Type: ParamTypeString}, {Name: "adult_pax", Type: ParamTypeInteger}, {Name: "child_pax", Type: ParamTypeInteger}, {Name: "travel_date", Type: ParamTypeString}, {Name: "contact_name", Type: ParamTypeString}, {Name: "contact_email", Type: ParamTypeString}, {Name: "contact_phone", Type: ParamTypeString}}, Enabled: true},
+		{Name: ToolCreateOrder, Description: "Alias of create_booking. Disabled from OpenAI catalog to prevent model confusion.", Inputs: []InputDefinition{{Name: "trip_id", Type: ParamTypeString}, {Name: "adult_pax", Type: ParamTypeInteger}, {Name: "child_pax", Type: ParamTypeInteger}, {Name: "travel_date", Type: ParamTypeString}, {Name: "contact_name", Type: ParamTypeString}, {Name: "contact_email", Type: ParamTypeString}, {Name: "contact_phone", Type: ParamTypeString}}, Enabled: false},
 
 		// Legacy mock tools — disabled from the OpenAI catalog.
-		{Name: ToolSearchDestination, Description: "Legacy tool.", Inputs: []string{"prompt", "budget", "season"}, Enabled: false},
-		{Name: ToolSearchHotels, Description: "Legacy tool.", Inputs: []string{"destination", "dates", "tier"}, Enabled: false},
-		{Name: ToolCalculateBudget, Description: "Legacy tool.", Inputs: []string{"destination", "duration", "travelers"}, Enabled: false},
-		{Name: ToolGenerateItinerary, Description: "Legacy tool.", Inputs: []string{"destination", "duration", "interests"}, Enabled: false},
-		{Name: ToolUpdateOrderDraft, Description: "Legacy tool.", Inputs: []string{"trip_id", "adult_pax", "child_pax", "contact_name", "contact_email", "contact_phone", "travel_date"}, Enabled: false},
-		{Name: ToolCreatePayment, Description: "Create QRIS or Virtual Account payment intent. Disabled while DOKU payment flow is temporarily off.", Inputs: []string{"booking_id", "amount", "method"}, Enabled: false},
-		{Name: ToolSendWhatsApp, Description: "Trigger WhatsApp confirmation automation. Defined for future use, not yet part of the live workflow.", Inputs: []string{"phone", "message"}, Enabled: false},
+		{Name: ToolSearchDestination, Description: "Legacy tool.", Inputs: []InputDefinition{{Name: "prompt", Type: ParamTypeString}, {Name: "budget", Type: ParamTypeNumber}, {Name: "season", Type: ParamTypeString}}, Enabled: false},
+		{Name: ToolSearchHotels, Description: "Legacy tool.", Inputs: []InputDefinition{{Name: "destination", Type: ParamTypeString}, {Name: "dates", Type: ParamTypeString}, {Name: "tier", Type: ParamTypeString}}, Enabled: false},
+		{Name: ToolCalculateBudget, Description: "Legacy tool.", Inputs: []InputDefinition{{Name: "destination", Type: ParamTypeString}, {Name: "duration", Type: ParamTypeString}, {Name: "travelers", Type: ParamTypeInteger}}, Enabled: false},
+		{Name: ToolGenerateItinerary, Description: "Legacy tool.", Inputs: []InputDefinition{{Name: "destination", Type: ParamTypeString}, {Name: "duration", Type: ParamTypeString}, {Name: "interests", Type: ParamTypeString}}, Enabled: false},
+		{Name: ToolUpdateOrderDraft, Description: "Legacy tool.", Inputs: []InputDefinition{{Name: "trip_id", Type: ParamTypeString}, {Name: "adult_pax", Type: ParamTypeInteger}, {Name: "child_pax", Type: ParamTypeInteger}, {Name: "contact_name", Type: ParamTypeString}, {Name: "contact_email", Type: ParamTypeString}, {Name: "contact_phone", Type: ParamTypeString}, {Name: "travel_date", Type: ParamTypeString}}, Enabled: false},
+		{Name: ToolCreatePayment, Description: "Create QRIS or Virtual Account payment intent. Disabled while DOKU payment flow is temporarily off.", Inputs: []InputDefinition{{Name: "booking_id", Type: ParamTypeString}, {Name: "amount", Type: ParamTypeNumber}, {Name: "method", Type: ParamTypeString}}, Enabled: false},
+		{Name: ToolSendWhatsApp, Description: "Trigger WhatsApp confirmation automation. Defined for future use, not yet part of the live workflow.", Inputs: []InputDefinition{{Name: "phone", Type: ParamTypeString}, {Name: "message", Type: ParamTypeString}}, Enabled: false},
 	}
 }
 
@@ -94,9 +98,13 @@ func OpenAITools() []ai.ToolDef {
 	for _, tool := range active {
 		props := make(map[string]interface{}, len(tool.Inputs))
 		for _, input := range tool.Inputs {
-			props[input] = map[string]interface{}{
-				"type":        "string",
-				"description": input,
+			inputType := input.Type
+			if inputType == "" {
+				inputType = ParamTypeString
+			}
+			props[input.Name] = map[string]interface{}{
+				"type":        inputType,
+				"description": input.Name,
 			}
 		}
 		required := requiredInputs(tool)
@@ -127,6 +135,10 @@ func requiredInputs(tool ToolDefinition) []string {
 	case ToolSearchTrips:
 		return []string{"query"}
 	default:
-		return tool.Inputs
+		names := make([]string, 0, len(tool.Inputs))
+		for _, input := range tool.Inputs {
+			names = append(names, input.Name)
+		}
+		return names
 	}
 }
