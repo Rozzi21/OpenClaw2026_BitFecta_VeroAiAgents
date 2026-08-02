@@ -2,6 +2,16 @@ package mcp
 
 import "github.com/rozzi/vero-ai-travel-agents/backend/internal/ai"
 
+// JSON Schema primitive types used to declare tool parameters (AI-2).
+// Declaring accurate types (instead of a blanket "string") prevents the LLM
+// from hallucinating parameter types when planning tool calls.
+const (
+	ParamTypeString  = "string"
+	ParamTypeInteger = "integer"
+	ParamTypeBoolean = "boolean"
+	ParamTypeNumber  = "number"
+)
+
 const (
 	ToolSearchTrips        = "search_trips"
 	ToolSelectPackage      = "select_package"
@@ -21,13 +31,25 @@ const (
 	ToolUpdateOrderDraft  = "update_order_draft"
 )
 
+// InputDefinition declares one named tool parameter together with the JSON
+// Schema type the LLM must supply for it (AI-2).
+type InputDefinition struct {
+	Name string `json:"name"`
+	// Type is one of ParamTypeString / ParamTypeInteger / ParamTypeBoolean /
+	// ParamTypeNumber. Empty means ParamTypeString (backward compatible).
+	Type string `json:"type"`
+}
+
 // ToolDefinition describes an MCP tool that the AI orchestration layer can call.
 // Enabled indicates whether the tool participates in the live chat workflow.
+// Inputs carries per-parameter names plus their JSON Schema types so that
+// OpenAITools() can emit an accurate schema instead of forcing every argument
+// to be a string (AI-2 hallucination guard).
 type ToolDefinition struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Inputs      []string `json:"inputs"`
-	Enabled     bool     `json:"enabled"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Inputs      []InputDefinition `json:"inputs"`
+	Enabled     bool              `json:"enabled"`
 }
 
 // Catalog returns every MCP tool known to the platform. Only the minimal set
