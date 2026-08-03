@@ -62,6 +62,8 @@ Paket trip — entity paling kaya. Dipakai backoffice (CRUD) dan frontend (katal
 - Harga: `BasePrice`, `EstimatedPrice`, `DiscountPrice`, `ChildPrice`, `ChildDiscount` (semua `numeric(14,2)`).
 - `PublishedAt` di-set saat status berubah ke `published`.
 - Relasi: `has many` Itinerary dengan **`constraint:OnDelete:CASCADE`** (hapus trip menghapus itinerary-nya).
+- **Index pencarian GIN trigram (DB-1, 3 Agu 2026):** selain B-tree dari tag `index`, `AutoMigrate` membuat tiga GIN index pada ekspresi `LOWER(col) gin_trgm_ops` di `title`, `destination`, `location` (`idx_trips_title_trgm` / `idx_trips_destination_trgm` / `idx_trips_location_trgm`) via `migrateTripSearchIndexes()`. Index ini memungkinkan query `ListTrips` `LOWER(col) LIKE '%...%'` (leading wildcard) memakai index — bukan Seq Scan. Membutuhkan extension `pg_trgm` (di-`CREATE EXTENSION IF NOT EXISTS` saat migrasi; bila app role DB tak punya privilege, admin DB harus menjalankannya satu kali).
+
 
 ### Itinerary ([models.go](../../backend/internal/models/models.go))
 Rencana harian milik Trip. `Day`, `Title`, `Description`. Di-replace penuh saat update trip (lihat repository di bawah).
@@ -107,7 +109,11 @@ Setelah AutoMigrate, `MigrateGuestChatSessions()` menormalisasi session lama yan
 ### Migrasi legacy: `slots` -> `adult_pax`
 `migrateLegacySlots()` menangani skema lama: jika kolom `slots` masih ada di tabel `trips`, menyalin nilainya ke `adult_pax` untuk baris yang belum punya pax. Pola ini contoh **migrasi data idempoten** — selalu cek `Migrator().HasColumn` dulu.
 
-> Catatan: proyek mengandalkan AutoMigrate, bukan file migrasi versioned. Perubahan skema yang destruktif (drop/rename kolom) TIDAK ditangani AutoMigrate dan butuh penanganan manual.
+### Migrasi index pencarian trip (DB-1, 3 Agu 2026)
+`migrateTripSearchIndexes()` dipanggil di akhir `AutoMigrate()` (setelah `migrateLegacySlots`). Menjalankan `CREATE EXTENSION IF NOT EXISTS pg_trgm` lalu tiga GIN index idempoten (`IF NOT EXISTS`) pada `LOWER(title)`, `LOWER(destination)`, `LOWER(location)` (`gin_trgm_ops`). Tujuan: query `ListTrips` `LOWER(col) LIKE '%...%'` memakai index (Bitmap Index Scan), bukan Seq Scan. Pola migrasi ini menjalankan DDL mentah via `d.DB.Exec(...)` — di luar `AutoMigrate` karena GORM tidak mendukung deklarasi index GIN trigram lewat struct tag. Berbeda dari `migrateLegacySlots` (data), ini migrasi **index/DDL** idempoten. `CREATE EXTENSION` butuh privilege superuser/createdb; bila app role DB tidak punya, admin DB harus menjalankannya satu kali (prosedur deploy).
+
+> Catatan: proyek mengandalkan AutoMigrate, bukan file migrasi versioned. Perubahan skema yang destruktif (drop/rename kolom) TIDAK ditangani AutoMigrate dan butuh penanganan manual. Index GIN trigram di atas adalah contoh DDL khusus yang ditangani via raw `Exec` idempoten, bukan struct tag.
+
 
 ## Lapisan Repository
 

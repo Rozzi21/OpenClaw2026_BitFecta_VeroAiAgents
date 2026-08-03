@@ -552,15 +552,22 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 
 ## A.5 Temuan Audit Database (Belum Diperbaiki - 26 Jul 2026)
 
-### DB-1. TINGGI — Kinerja Query (Full Table Scan pada Pencarian Trip)
+### DB-1. ✅ TINGGI — Kinerja Query (Full Table Scan pada Pencarian Trip) (FIXED 3 Agu 2026)
 
 - **Severity:** High
 - **Issue:** Query performansi buruk akibat operasi `LIKE` dengan *wildcard* ganda (`%...%`) dikombinasikan dengan fungsi `LOWER()`.
 - **Impact:** Di PostgreSQL, pola query `LOWER(title) LIKE '%...'` tidak dapat menggunakan *B-Tree index*. Saat data tabel `trips` membesar, query *search* dari *frontend* dan *backoffice* akan memicu *Sequential Scan* (Full Table Scan) yang mengakibatkan pemakaian *CPU* tinggi dan latensi lambat.
 - **Affected Tables:** `trips`
-- **Affected Repository:** `ListTrips` (`backend/internal/repositories/repositories.go`)
+- **Affected Repository:** `ListTrips` (`backend/internal/repositories/trip_repository.go`)
 - **Recommendation:** Gunakan *PostgreSQL Full Text Search* (`tsvector` & `tsquery`) atau buat GIN (Generalized Inverted Index) dengan ekstensi `pg_trgm` (`CREATE INDEX idx_trip_title_trgm ON trips USING gin(LOWER(title) gin_trgm_ops);`).
 - **Implementation Complexity:** Medium
+- **Fix (3 Agu 2026):** Diterapkan pendekatan GIN trigram (pg_trgm), bukan FTS — mempertahankan query `ListTrips` (`LOWER(col) LIKE '%...%'`) apa adanya sehingga tidak ada perubahan kontrak repository/service/handler.
+  1. `backend/internal/database/database.go` menambah `migrateTripSearchIndexes()` dipanggil di akhir `AutoMigrate()` (setelah `migrateLegacySlots`). Fungsi menjalankan `CREATE EXTENSION IF NOT EXISTS pg_trgm` lalu tiga index idempoten: `idx_trips_title_trgm`, `idx_trips_destination_trgm`, `idx_trips_location_trgm` — masing-masing `USING gin (LOWER(col) gin_trgm_ops)`.
+  2. Index trigram GIN **mendukung** `LIKE '%query%'` (leading wildcard), jadi query repository lama kini memakai Bitmap Index Scan, bukan Seq Scan. Pemilihan GIN trigram vs FTS: trigram meniadakan rewrite query + risiko perubahan hasil (FTS stemming/tokenisasi berbeda dari LIKE substring), cukup untuk ukuran katalog trip saat ini. FTS tetap opsi bila nanti perlu ranking/relevance.
+  3. `CREATE EXTENSION` butuh privilege superuser/createdb. Idempoten (`IF NOT EXISTS`) — aman jalan tiap startup. Bila app role DB tidak punya privilege, `CREATE EXTENSION` harus dijalankan satu kali oleh admin DB (sudah tercakup prosedur deploy). `migrateTripSearchIndexes` akan gagal jelas bila extension belum tersedia, sehingga startup menyingkap masalah privilege lebih awal — bukan silent skip.
+  4. Query `ListTrips` (`trip_repository.go`) **tidak diubah** — kontrak `TripRepository` interface tidak berubah, tidak ada perubahan caller.
+- **Verifikasi:** `gofmt -w .` + `go build ./...` + `go vet ./...` + `go test ./...` semuanya bersih (exit 0).
+
 
 ### DB-2. SEDANG — Overwrite Data pada Operasi `Save` (Potensi Konflik GORM)
 
@@ -1057,6 +1064,8 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | SEC-30 Code smell long function (`generateWithToolLoop`) | ✅ Ekstrak blok tool-call ke `executeToolCall` + `toolResultMessage` di `ai_service.go`; loop hanya orkestrasi round |
 | SEC-31 Memory leak SSE EventStream (`time.After` timer leak) | ✅ `time.NewTicker(sseHeartbeatInterval)` + `defer Stop()` (digabung fix BUG-4, 28 Jul 2026); konfirmasi 1 Agu 2026 tidak ada `time.After(` di kode `.go` |
 | SEC-32 Goroutine leak health check database | ✅ `Health()` panggil `PingContext(ctx)` langsung tanpa goroutine/select wrapper; import `errors` dihapus (1 Agu 2026) |
+| DB-1 Full table scan pencarian trip (`LOWER LIKE %...%`) | ✅ GIN trigram index pg_trgm (`idx_trips_title/destination/location_trgm`) via `migrateTripSearchIndexes` di `AutoMigrate`; query repo tak berubah (3 Agu 2026) |
+
 
 
 

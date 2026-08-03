@@ -65,7 +65,10 @@ func (d *Database) AutoMigrate() error {
 		return err
 	}
 
-	return d.migrateLegacySlots()
+	if err := d.migrateLegacySlots(); err != nil {
+		return err
+	}
+	return d.migrateTripSearchIndexes()
 }
 
 // MigrateGuestChatSessions removes the legacy shared guest-user ownership from
@@ -104,6 +107,35 @@ func (d *Database) migrateLegacySlots() error {
 		SET adult_pax = slots
 		WHERE slots > 0 AND adult_pax = 0 AND child_pax = 0
 	`).Error
+}
+
+// migrateTripSearchIndexes installs the GIN trigram indexes that let
+// ListTrips' LOWER(col) LIKE '%...%' predicates use an index instead of a
+// sequential scan (DB-1). pg_trgm's GIN index supports leading-wildcard LIKE
+// ('%query%'), unlike a plain B-tree, so the repository query stays unchanged.
+// The extension + indexes are created idempotently (IF NOT EXISTS), so this is
+// safe to run on every startup and on DBs where a privileged role already
+// created the extension.
+func (d *Database) migrateTripSearchIndexes() error {
+	// pg_trgm must be installed before GIN trigram indexes can be created.
+	// CREATE EXTENSION requires superuser/createdb privileges; if the app role
+	// lacks them, assume the extension is already provisioned out-of-band and
+	// let the index creation below surface a clear error.
+	if err := d.DB.Exec(`CREATE EXTENSION IF NOT EXISTS pg_trgm`).Error; err != nil {
+		return err
+	}
+
+	indexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_trips_title_trgm ON trips USING gin (LOWER(title) gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_trips_destination_trgm ON trips USING gin (LOWER(destination) gin_trgm_ops)`,
+		`CREATE INDEX IF NOT EXISTS idx_trips_location_trgm ON trips USING gin (LOWER(location) gin_trgm_ops)`,
+	}
+	for _, stmt := range indexes {
+		if err := d.DB.Exec(stmt).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Health checks DB connectivity. PingContext already honors ctx (returns on
