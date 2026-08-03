@@ -25,7 +25,7 @@ Sejak refactor 25 Jun 2026, kode dipecah **per-domain dalam satu package `servic
 |---|---|
 | `services.go` | `Services` struct, `New()`, `ChatContext`, `AuthRequestMeta`, `AuthIssueResult`, error vars |
 | `auth_service.go` | `AuthService` (Register, CreateStaff, Login, Refresh, Logout, Me, legacy booking GuestUser, issueSession) |
-| `ai_service.go` | `AIService` (Chat via `ChatContext`, `generateWithToolLoop` — orkestrasi round LLM; blok single tool-call diekstrak ke helper `executeToolCall` + `toolResultMessage` (SEC-30), katalog & rekomendasi paket, memory summary, expiry cleanup) |
+| `ai_service.go` | `AIService` (Chat via `ChatContext`, `generateWithToolLoop` — orkestrasi round LLM; blok single tool-call diekstrak ke helper `executeToolCall` + `toolResultMessage` (SEC-30), katalog & rekomendasi paket, memory summary, expiry cleanup; **streaming variant `ChatStream`/`generateWithToolLoopStream`/`finalizeChat` (PERF-1, 3 Agu 2026)** — final text round di-stream via `GenerateStream`, post-LLM logic shared via `finalizeChat` agar tak drift antar path) |
 
 | `mcp_service.go` | `MCPService` (`Execute`, `executeCreateBooking`, `mock`) + `ToolResult` |
 | `trip_service.go` | `TripService` + `buildTripFromRequest`, `buildItineraries` |
@@ -82,6 +82,8 @@ Sliding expiration kini konsisten (sejak BUG-6, 28 Jul 2026): `Chat()` selalu me
 Memory management: `refreshMemorySummary()` membuat ringkasan percakapan setelah >= `AI_MEMORY_SUMMARY_AFTER` (default 12) pesan, dibatasi `AI_MEMORY_MAX_CHARS` (default 1800). Alih-alih memuat SEMUA pesan sesi, method ini memakai `TailChatMessages()` untuk mengambil hanya pesan terakhir (estimasi berdasarkan `AIMemoryMaxChars / 200`), lalu memotong string ke maksimum karakter. Ini menghindari loading ribuan row pada sesi panjang.
 
 Cleanup session dijalankan sementara oleh ticker satu jam di `cmd/server/main.go`, tetapi memanggil `AIService.CleanupExpiredChatSessions()` sehingga scheduler eksternal (cron/systemd/Kubernetes CronJob) dapat menggantikan adapter tanpa memindahkan SQL. Sejak BUG-6 (28 Jul 2026), method ini memakai cutoff `now - (AITimeout + chatSessionCleanupGraceExtra 30 dtk)` — bukan `now` — sebagai fail-safe agar ticker tidak pernah menghapus session yang masih ditulis request in-flight (repo `DeleteExpiredChatSessions` tidak diubah; geseran cutoff dilakukan di service agar repo tetap generik).
+
+**Streaming respons (PERF-1, 3 Agu 2026):** `AIService.ChatStream(ctx, chatCtx, req, onDelta)` adalah pasangan streaming `Chat()` — identik untuk session prep + tool loop, tetapi **final text round di-stream** via `ai.Client.GenerateStream` (bukan `Generate`). Tool-selection rounds tetap non-streaming karena butuh `tool_calls` utuh sebelum dispatch MCP; hanya round teks akhir (saat `len(ToolCalls)==0` atau setelah `MaxToolCallRounds`) yang di-stream, setiap delta diteruskan ke `onDelta` agar handler SSE mem-flush-nya ke klien segera (TTFT rendah). Logika post-LLM (order-claim guard, fail-closed recommendation BUG-5, persist message, memory summary, `workflow_completed`) diekstrak ke `finalizeChat` yang dipakai bersama `Chat` dan `ChatStream` — tidak ada drift aturan antar path. Handler `streamChat` (`chat_stream_handlers.go`) menulis event SSE `delta`/{content} per token + event terminal `done` berisi `ChatResult` utuh; memakai pola BUG-4 (ResponseController + deadline per-tulis + flush) agar koneksi zombie terdeteksi. Guest cookie di-set via callback SEBELUM body SSE ditulis. Non-stream path (`stream:false`) tetap ada via `apiFetch` envelope JSON.
 
 ### MCPService
 
@@ -168,6 +170,7 @@ Catatan: N8N (eksternal) yang berperan sebagai automation/scheduler di luar apli
 - `Generate()`: bila API key kosong -> langsung return fallback. Jika ada key -> POST ke `/chat/completions` dengan `messages`, `temperature`, dan optional `tools`.
 - `extractToolCalls()` parsing `choices[0].message.tool_calls`; `AIService.generateWithToolLoop()` mengeksekusi tool via MCP dan mengirim balik hasil role `tool` sebelum final response.
 - `extractText()` parsing fleksibel: coba `choices[0].message.content`, lalu `choices[0].message.reasoning_content`, `reasoning`, `thinking`, lalu `choices[0].text`, lalu top-level keys (`text`, `output`, `content`, `message`). Fallback ini menjaga agar model penalaran (Qwen/DeepSeek) yang mengembalikan jawaban di `reasoning_content` tidak terabaikan ketika `content` kosong.
+- **`GenerateStream()` (PERF-1, 3 Agu 2026):** varian streaming — request memuat `stream: true`, body provider dibaca sebagai SSE via `bufio.Scanner`, setiap `choices[0].delta.content` diteruskan ke callback `onDelta` segera (TTFT rendah), `tool_calls` delta di-akumulasi (`accumulateToolCallDeltas`/`finalizeToolCalls`) agar kontrak `CompletionResponse` tetap konsisten. Konteks request (SEC-26) mengalir ke `http.NewRequestWithContext` sehingga disconnect klien membatalkan stream di hulu. Dipakai `AIService.ChatStream`/`generateWithToolLoopStream` untuk final text round; tool-selection rounds tetap non-streaming (butuh `tool_calls` utuh).
 
 ## Pola Penting untuk Diingat
 

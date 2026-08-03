@@ -22,7 +22,7 @@ Antarmuka chat AI untuk tamu. Tidak ada login, tidak ada auth. Efektif hanya dua
 
 | Komponen | Path | Tanggung jawab |
 |---|---|---|
-| `ChatInterface` | `frontend/src/components/chat/ChatInterface.tsx` | Inti aplikasi: kirim prompt ke `POST /api/v1/chat`, simpan `session_id`, render pesan + efek mengetik, render kartu rekomendasi, panel detail paket |
+| `ChatInterface` | `frontend/src/components/chat/ChatInterface.tsx` | Inti aplikasi: kirim prompt ke `POST /api/v1/chat` (mode streaming SSE, PERF-1), simpan `session_id`, render pesan + caret saat stream + animasi mengetik untuk history, render kartu rekomendasi, panel detail paket |
 | `RecommendationCard` | `frontend/src/components/cards/RecommendationCard.tsx` | Kartu paket rekomendasi inline di chat |
 | `TripPriceBlock` | `frontend/src/components/pricing/TripPriceBlock.tsx` | Blok harga paket (base/discount/child) |
 | `Sidebar` | `frontend/src/components/layout/Sidebar.tsx` | Navigasi kiri (sebagian link masih placeholder `href="#"`) |
@@ -40,7 +40,7 @@ Frontend hanya merender `PackageRecommendations` bila `show_recommendations === 
 
 | File | Fungsi |
 |---|---|
-| `frontend/src/lib/api.ts` | `apiFetch()` envelope-aware, memeriksa `Content-Type`, menangani respons HTML/proxy error, timeout 35 s via `AbortController`, serta `assetURL()` + tipe `TripPackage`. Base URL kosong di browser (proxy), `NEXT_PUBLIC_API_BASE_URL` di server |
+| `frontend/src/lib/api.ts` | `apiFetch()` envelope-aware, memeriksa `Content-Type`, menangani respons HTML/proxy error, timeout 35 s via `AbortController`, serta `assetURL()` + tipe `TripPackage`. **`streamChat()` (PERF-1, 3 Agu 2026)** — konsumsi SSE chat streaming via `fetch` + `ReadableStream` reader + parser SSE manual (`parseSSEBlock`), dispatch `delta`/`done`/`error` ke callback; tidak pakai timeout 35s (stream wajar hidup lama, backend kunci via `AI_TIMEOUT_SECONDS` + ctx), `AbortController` tetap membatalkan stream di hulu. Base URL kosong di browser (proxy), `NEXT_PUBLIC_API_BASE_URL` di server |
 | `frontend/src/lib/format.ts` | Format harga (`formatIDR`, `getDiscountMeta`, `getTripAdultPrice`/`getTripChildPrice`). `formatIDR` memformat angka termasuk `0` sebagai Rp 0; `"TBD"` hanya untuk `null`/`undefined`/`NaN` |
 | `frontend/src/lib/format-trip-pax.ts` | Format jumlah pax (dewasa/anak) |
 | `frontend/src/lib/utils.ts` | Util umum (mis. `cn()` untuk className) |
@@ -54,7 +54,7 @@ Murni React lokal (`useState`/`useEffect`) di `ChatInterface`. Tidak ada Redux/Z
 
 Saat mount, `ChatInterface` memanggil `GET /api/v1/chat/history` dengan credentials browser untuk memulihkan message guest. Request chat mengirim prompt saja; cookie otomatis menjadi ownership proof. Cookie berlaku sliding 7 hari dan session expired memulai percakapan baru.
 
-Catatan: efek mengetik (`TypingText`) adalah animasi client-side; respons chat datang sekaligus (bukan streaming/SSE).
+**Streaming respons (PERF-1, 3 Agu 2026):** `handleSubmit` selalu memakai mode streaming (`stream:true`) lewat `streamChat()` — sisipkan pesan assistant kosong bertanda `streaming`, setiap event `delta` append fragmen teks real-time + caret, event terminal `done` finalisasi packages/recommendation flags + set `completedTyping`. `AbortController` ref memungkinkan cancel. Saat `streaming` true, render text + caret (bukan animasi typing ulang `TypingText`). Efek mengetik (`TypingText`) kini hanya dipakai untuk history yang dimuat dari `GET /chat/history` (non-streaming). Non-stream path (`stream:false`) tetap tersedia via `apiFetch` bila dibutuhkan.
 
 ### Fitur yang BELUM aktif (UI placeholder)
 

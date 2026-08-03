@@ -129,11 +129,22 @@ Request penting:
 |---|---|---|---|
 | POST | `/api/v1/orders` | 🔓 (rate limit 5/menit per-IP, SEC-13) | Buat order dari customer UI setelah pilih paket; tersimpan sebagai `booking_status=pending`, `payment_status=pending_admin_processing`; tidak membuat DOKU payment/session |
 
-- `chat` request: `{prompt(min 2, max 4000), session_id?, stream?}` (DTO `ChatRequest`). Body maksimum 64 KiB. `session_id` hanya dipakai bila milik caller; ID sesi asing/tidak ditemukan diabaikan dan request dibuat pada sesi baru milik caller (SEC-17).
+- `chat` request: `{prompt(min 2, max 4000), session_id?, stream?}` (DTO `ChatRequest`). Body maksimum 64 KiB. `session_id` hanya dipakai bila milik caller; ID sesi asing/tidak ditemukan diabaikan dan request dibuat pada sesi baru milik caller (SEC-17). `stream` (bool, default `false`) mengaktifkan mode streaming SSE (PERF-1).
 - `chat` response data: `{message, workflow[], show_recommendations, recommendation_reason, recommended_packages[]}` (lihat `ChatResult`). Session identifier tidak dikembalikan di JSON; browser memakai HttpOnly cookie `vero_chat_session`.
   - `show_recommendations` boolean: apakah frontend harus menampilkan daftar rekomendasi.
   - `recommendation_reason`: `"initial"` (rekomendasi pertama), `"alternative"` (user meminta alternatif), atau `""` (tidak ada rekomendasi).
   - `recommended_packages` hanya berisi hasil tool `search_trips`; backend tidak lagi melakukan scoring otomatis setelah LLM selesai menjawab.
+
+#### Streaming mode (`stream: true`, PERF-1 — 3 Agu 2026)
+
+Saat `stream:true`, response berubah dari envelope JSON menjadi **Server-Sent Events** (`Content-Type: text/event-stream`). Tool-selection rounds tetap non-streaming; hanya final text round LLM yang di-stream token-by-token. Rate limit + body limit 64 KiB tetap berlaku (route sama). Klien memakai `fetch` + `ReadableStream` reader (lihat `streamChat` di `frontend/src/lib/api.ts`), bukan `EventSource`, karena `POST` tidak didukung `EventSource` native.
+
+Event SSE yang dipancarkan:
+- `delta` — `{content}`: fragmen teks asisten (append ke pesan in-flight).
+- `done` — `ChatResult` utuh (`{message, workflow, show_recommendations, recommendation_reason, recommended_packages}`): terminal, klien finalisasi state (packages, flags).
+- `error` — `{message}`: bila tool loop/stream gagal mid-flight; koneksi ditutup setelahnya.
+
+Cookie guest `vero_chat_session` di-set SEBELUM body SSE mulai (header tak bisa berubah setelah body). Non-stream path (`stream:false`/default) tetap memakai envelope JSON via `utils.Success`. Catatan: SSE streaming chat berbeda dari endpoint staff `/events/stream` (event bus broadcast) — keduanya terpisah; streaming chat adalah direct response per-request, bukan subscriber event bus.
 - Guest chat memakai cookie `vero_chat_session` dengan `HttpOnly`, `Secure` mengikuti `GUEST_COOKIE_SECURE`, `SameSite` dari `GUEST_COOKIE_SAME_SITE` (default `Lax`), path `/api/v1/chat`, dan sliding TTL default 7 hari (`GUEST_SESSION_TTL_HOURS`).
 - Guest `ChatSession.UserID` bernilai `NULL`. Session expired ditolak dan dibersihkan bersama message/tool-call/AI-log terkait.
 

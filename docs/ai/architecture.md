@@ -120,7 +120,7 @@ POST /api/v1/payments/webhook (dari DOKU) -> verifikasi HMAC-SHA256 (message = e
 
 Karena didukung dynamic override di handler SSE, koneksi zombie dijaga oleh tiga guard di `EventStream` (BUG-4): (1) write-error detection per-tulis via `http.NewResponseController` + `SetWriteDeadline(10s)` + `Flush()`; (2) max lifetime `sseMaxLifetime=30 menit` — server mengirim event `reconnect` lalu menutup; `EventSource` browser reconnect otomatis; (3) cap subscriber `events.MaxSubscribers=100` — request baru membalas 503 bila penuh. Tanpa guard ini, koneksi setengah-putus (NAT timeout/laptop sleep) tidak terdeteksi cepat → goroutine + subscriber bus bocor. Detail: lihat [backend.md](backend.md) Mekanisme Realtime dan [api.md](api.md) SSE.
 
-Catatan: frontend customer saat ini TIDAK memakai SSE; efek "mengetik" di chat adalah animasi client-side. Stream SSE tersedia untuk konsumen operator/admin di masa depan.
+Catatan: frontend customer saat ini TIDAK memakai SSE event-bus (`/events/stream`); efek "mengetik" di chat adalah animasi client-side. **PERF-1 (3 Agu 2026):** namun, respons chat AI kini di-stream langsung dari handler chat (`POST /api/v1/chat` dengan `stream:true`) sebagai SSE per-request — ini terpisah dari `/events/stream` (event bus broadcast). Final text round LLM di-stream token-by-token (`ai.Client.GenerateStream` → `AIService.ChatStream` → `streamChat` handler) untuk menurunkan TTFT; tool-selection rounds tetap non-streaming. Frontend customer memakai `fetch` + `ReadableStream` reader (`streamChat` di `lib/api.ts`), bukan `EventSource`, karena `POST` tidak didukung `EventSource` native. Stream SSE event-bus tetap tersedia untuk konsumen operator/admin di masa depan.
 
 ## 4. Dependency Antar Module (Backend)
 
