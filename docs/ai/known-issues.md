@@ -552,7 +552,7 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 
 ## A.5 Temuan Audit Database (26 Jul 2026)
 
-DB-1 (Fixed 3 Agu 2026) dan DB-2 (Fixed 3 Agu 2026) telah diselesaikan; DB-3 masih terbuka.
+DB-1 (Fixed 3 Agu 2026), DB-2 (Fixed 3 Agu 2026), dan DB-3 (Fixed 3 Agu 2026) telah diselesaikan.
 
 
 ### DB-1. ✅ TINGGI — Kinerja Query (Full Table Scan pada Pencarian Trip) (FIXED 3 Agu 2026)
@@ -588,7 +588,7 @@ DB-1 (Fixed 3 Agu 2026) dan DB-2 (Fixed 3 Agu 2026) telah diselesaikan; DB-3 mas
 - **Verifikasi:** `gofmt -w .` + `go build ./...` + `go vet ./...` + `go test ./...` semuanya bersih (exit 0). Test `payment_service_test.go` (replay + idempotency) tetap lolos — path webhook tak tersentuh (masih pakai `UpdatePaymentStatusAtomic`).
 
 
-### DB-3. RENDAH — Ketiadaan Indeks pada Kolom Status Kritis
+### DB-3. ✅ RENDAH — Ketiadaan Indeks pada Kolom Status Kritis (FIXED 3 Agu 2026)
 
 - **Severity:** Low
 - **Issue:** Kolom `booking_status` and `payment_status` pada tabel `bookings` digunakan untuk menyaring alur *logical state* pada pesanan (misal: "tampilkan semua pesanan dengan status 'pending'"). Saat ini kolom tersebut tidak memiliki *database index*.
@@ -597,6 +597,8 @@ DB-1 (Fixed 3 Agu 2026) dan DB-2 (Fixed 3 Agu 2026) telah diselesaikan; DB-3 mas
 - **Affected Repository:** Tidak ada fungsi tertentu (berpengaruh ke semua query yang mem-filter status pesanan).
 - **Recommendation:** Tambahkan tag `gorm:"index"` pada field `BookingStatus` dan `PaymentStatus` di *struct* `Booking` (`backend/internal/models/models.go`).
 - **Implementation Complexity:** Low
+- **Fix (3 Agu 2026):** Tag `gorm:"index"` ditambahkan ke field `BookingStatus` dan `PaymentStatus` pada struct `models.Booking` di `backend/internal/models/models.go`. `AutoMigrate()` GORM otomatis membuat dua B-tree index (`idx_bookings_booking_status` dan `idx_bookings_payment_status`) saat startup. Berbeda dari DB-1 (GIN trigram via raw DDL karena `LIKE '%...%'`), index B-tree biasa cukup di sini karena filter status pakai equality (`WHERE booking_status = ?`) — B-tree mendukung equality scan optimal. Tidak ada perubahan query repository/service/handler; kontrak `BookingRepository` tak berubah. Index idempoten (AutoMigrate `CREATE INDEX IF NOT EXISTS`), aman jalan tiap startup tanpa privilege khusus.
+- **Verifikasi:** `gofmt -l .` (kosong) + `go build ./...` + `go vet ./...` + `go test ./...` semuanya bersih (exit 0).
 
 ## A.6 Temuan Audit Performa (Belum Diperbaiki - 26 Jul 2026)
 
@@ -1075,6 +1077,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | SEC-32 Goroutine leak health check database | ✅ `Health()` panggil `PingContext(ctx)` langsung tanpa goroutine/select wrapper; import `errors` dihapus (1 Agu 2026) |
 | DB-1 Full table scan pencarian trip (`LOWER LIKE %...%`) | ✅ GIN trigram index pg_trgm (`idx_trips_title/destination/location_trgm`) via `migrateTripSearchIndexes` di `AutoMigrate`; query repo tak berubah (3 Agu 2026) |
 | DB-2 Overwrite data via GORM `Save()` (lost update + association clobber) | ✅ `UpdateTrip`/`UpdateBooking`/`UpdatePayment` ganti `.Save()` → `.Select("*").Updates()` (association-safe, tak clobber `Itineraries`/`Payments`/`Booking`); status tetap via `*StatusAtomic` (3 Agu 2026) |
+| DB-3 Ketiadaan index kolom status kritis (`booking_status`/`payment_status`) | ✅ Tag `gorm:"index"` di `models.Booking.BookingStatus`/`PaymentStatus`; AutoMigrate buat B-tree index equality scan (3 Agu 2026) |
 
 
 

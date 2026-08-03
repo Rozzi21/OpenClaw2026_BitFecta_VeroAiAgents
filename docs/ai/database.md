@@ -70,8 +70,9 @@ Rencana harian milik Trip. `Day`, `Title`, `Description`. Di-replace penuh saat 
 
 ### Booking ([models.go](../../backend/internal/models/models.go))
 Pemesanan trip oleh user.
-- `BookingStatus` (default `pending`), `PaymentStatus` (saat ini di-set service ke `pending_admin_processing` karena DOKU disabled; model lama masih default `waiting_payment` untuk future re-enable), `TotalPrice`, `BookingDate`.
+- `BookingStatus` (default `pending`, ter-index B-tree via tag `gorm:"index"` — DB-3), `PaymentStatus` (saat ini di-set service ke `pending_admin_processing` karena DOKU disabled; model lama masih default `waiting_payment` untuk future re-enable; ter-index B-tree — DB-3), `TotalPrice`, `BookingDate`.
 - Relasi: `belongs to` User & Trip; `has many` Payment.
+- **Index status (DB-3, 3 Agu 2026):** tag `gorm:"index"` pada `BookingStatus` dan `PaymentStatus` membuat AutoMigrate GORM membuat dua B-tree index (`idx_bookings_booking_status`, `idx_bookings_payment_status`) saat startup. Filter status di dashboard backoffice / analytics memakai equality scan optimal, bukan Seq Scan. Index idempoten, aman tiap startup tanpa privilege khusus.
 
 ### Payment ([models.go](../../backend/internal/models/models.go))
 Transaksi pembayaran untuk sebuah Booking.

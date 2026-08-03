@@ -221,8 +221,8 @@ type Booking struct {
 	User          User       `json:"user,omitempty" gorm:"foreignKey:UserID"`
 	TripID        uuid.UUID  `json:"trip_id" gorm:"type:uuid;index;not null"`
 	Trip          Trip       `json:"trip,omitempty" gorm:"foreignKey:TripID"`
-	BookingStatus string     `json:"booking_status" gorm:"size:40;not null;default:pending"`
-	PaymentStatus string     `json:"payment_status" gorm:"size:40;not null;default:waiting_payment"`
+	BookingStatus string     `json:"booking_status" gorm:"size:40;not null;default:pending;index"`
+	PaymentStatus string     `json:"payment_status" gorm:"size:40;not null;default:waiting_payment;index"`
 	AdultPax      int        `json:"adult_pax" gorm:"not null;default:1"`
 	ChildPax      int        `json:"child_pax" gorm:"not null;default:0"`
 	ContactName   string     `json:"contact_name" gorm:"size:120"`
