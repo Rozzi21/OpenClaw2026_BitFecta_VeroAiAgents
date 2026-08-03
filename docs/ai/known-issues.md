@@ -612,7 +612,7 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
   2. Alihkan proses penulisan basis data operasional seperti `CreateAILog` menjadi *goroutine* / proses asinkron yang lepas (*detached*) dari respons sinkron layanan LLM utama (gunakan *worker pool* untuk menghindari resiko habisnya koneksi DB).
 - **Complexity:** Low
 
-## A.7 Temuan Audit AI Workflow (Belum Diperbaiki - 26 Jul 2026)
+## A.7 Temuan Audit AI Workflow — SELESAI (FIXED 3 Agu 2026)
 
 ### AI-1. ✅ SEDANG — Indirect Prompt Injection pada Data Katalog (FIXED 29 Jul 2026 via AIW-1, divalidasi ulang 2 Agu 2026)
 
@@ -630,7 +630,7 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Verifikasi (2 Agu 2026):** validasi kode membaca `helpers.go` (`sanitizePromptInjection` + semua callsite di `executeSearchTrips`) + system prompt `buildMessages`. Konfirmasi integritas backend: `gofmt -l .` + `go vet ./...` + `go build ./...` semuanya bersih (exit 0).
 - **Status akhir:** TERTUTUP. Tidak ada temuan regresi pada codebase saat ini. Entri AI-1 kini ditandai selesai; notifikasi asli dicadangkan apa adanya sebagai acuan threat model.
 
-### AI-2. SEDANG — Deklarasi Tipe Parameter Fungsi LLM Selalu "String" (Hallucination Risk)
+### AI-2. ✅ SEDANG — Deklarasi Tipe Parameter Fungsi LLM Selalu "String" (Hallucination Risk) (FIXED 3 Agu 2026)
 
 - **Severity:** Medium
 - **Problem:** Di `backend/internal/mcp/tools.go` dalam fungsi `OpenAITools()`, skema spesifikasi argumen dipaksa atau di-*hardcode* untuk selalu menempatkan atribut `type: "string"` ke setiap *property*. Parameter alat `create_booking` seperti `adult_pax`, `child_pax` (angka integer) serta `alternative` (boolean) ikut dideklarasikan sebagai *string*.
@@ -638,6 +638,13 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Affected Module:** `backend/internal/mcp/tools.go`
 - **Recommendation:** Buat definisi tipe spesifik (`string`, `integer`, `boolean`, `array`) di dalam `ToolDefinition` (jangan sekadar daftar `Inputs` array dari String), lalu map atribut JSON Type yang sesuai saat mem-*build* struktur `ai.FunctionSpec` parameters.
 - **Complexity:** Low
+- **Fix (3 Agu 2026):** Tipe JSON Schema per-parameter kini hidup di deklarasi tool, dan `OpenAITools()` memetakkannya akurat ke `ai.FunctionSpec` (tidak lagi blanket `"string"`):
+  1. **Konstanta tipe + `InputDefinition.Type`.** `backend/internal/mcp/tools.go` menambah konstanta `ParamTypeString`/`ParamTypeInteger`/`ParamTypeBoolean`/`ParamTypeNumber`. Struct `InputDefinition` kini membawa field `Type` (default `ParamTypeString` bila kosong, backward compatible). `ToolDefinition.Inputs` punya tipe eksplisit per parameter: `adult_pax`/`child_pax`/`travelers` → `integer`; `alternative` → `boolean`; `budget`/`amount` → `number`; sisanya → `string`.
+  2. **`OpenAITools()` memetakan tipe akurat.** Loop properti membaca `input.Type` (fallback `string`) dan menulisnya ke `"type"` JSON Schema — `create_booking.adult_pax` kini dideklarasikan `integer`, `search_trips.alternative` `boolean`, dst. LLM (terutama *Structured Outputs*) tidak lagi mengira semua argumen adalah string.
+  3. **Parsing tetap defensif di sisi konsumsi.** `mcp_service.go` tetap toleran terhadap argumen yang datang sebagai `float64` (JSON number) maupun `string` lewat `parsePax` (`payload[key].(float64)` → `int`, atau `string` → `ParseIntFromString`), dan `alternative` menerima `bool` maupun `string` `"true"`/`"1"`. Dengan demikian model yang tetap mengirim angka/string tetap ditangani tanpa mematahkan tool loop — tipifikasi di schema adalah panduan bagi LLM, bukan sumber crash bila model menyimpang.
+  4. **Regression test ditambahkan.** `backend/internal/mcp/tools_test.go` mengunci AI-2: `TestOpenAITools_ParameterTypesNotForcedToString` menegaskan tipe per-parameter untuk setiap tool aktif (`adult_pax`/`child_pax` = integer, `alternative` = boolean) + hard guard "tidak ada parameter integer/boolean yang dideklarasikan string". Dua test tambahan menjaga `required` array dan bahwa tool disabled (`create_order`, `create_payment`, legacy mock) tidak bocor ke katalog OpenAI (overlap AIW-5). Regresi blanket-string di masa depan akan fail the build.
+- **Verifikasi (3 Agu 2026):** `gofmt -w .` + `go build ./...` + `go vet ./...` + `go test ./...` semuanya bersih (exit 0); package `internal/mcp` lulus 3 test baru. Kontrak publik `OpenAITools()`/`Catalog()`/`requiredInputs()` tidak berubah — hanya tipe JSON Schema yang akurat.
+- **Status akhir:** TERTUTUP. Dengan AI-1 dan AI-2 selesai, seluruh bagian A.7 (Temuan Audit AI Workflow) kini FIXED.
 
 ---
 
@@ -1018,6 +1025,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | #15 Refresh Promise Timeout | ✅ AbortController 10s di `refreshAccessToken` |
 | #19 Cleanup orphan records | ✅ Unscoped Delete `chat_messages`, `tool_calls`, `ai_logs` sblm hapus session |
 | AI-1 Indirect prompt injection pada data katalog | ✅ Sanitasi `sanitizePromptInjection` per-field katalog + delimiter keras di system prompt; field `Overview`/`AmenitiesIncluded` tidak pernah diforward ke LLM (29 Jul 2026 via AIW-1; divalidasi ulang 2 Agu 2026) |
+| AI-2 Tipe parameter tool LLM selalu "string" | ✅ `InputDefinition.Type` + konstanta `ParamType*` + `OpenAITools()` memetakan tipe JSON Schema akurat (integer/boolean/number); parsing konsumsi tetap defensif; regression test `tools_test.go` mengunci (3 Agu 2026) |
 | BUG-1 Race double-rotation refresh | ✅ `RotateSession` atomik + window reuse detection di `AuthService.Refresh` |
 | BUG-2 Panic event bus `Unsubscribe` close channel | ✅ `Unsubscribe` tak tutup channel; `Publish` tak bisa kirim ke channel tertutup |
 | BUG-3 Body HTTP `triggerN8N` tidak ditutup | ✅ `NewRequestWithContext` + read+close body (`io.Copy(io.Discard)`) — digabung fix SEC-26 |

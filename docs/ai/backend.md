@@ -96,7 +96,8 @@ Tool status saat ini:
 - Tool lama `search_destination`, `search_hotels`, `calculate_budget`, `generate_itinerary`, dan `update_order_draft` dinonaktifkan dari katalog OpenAI.
 - `create_payment` diblok karena DOKU/payment disabled.
 
-Katalog di `mcp/tools.go` punya field `Enabled` per-tool; `ActiveCatalog()` mengembalikan tool aktif, dan `OpenAITools()` mengubahnya menjadi schema OpenAI tool calling.
+Katalog di `mcp/tools.go` punya field `Enabled` per-tool; `ActiveCatalog()` mengembalikan tool aktif, dan `OpenAITools()` mengubahnya menjadi schema OpenAI tool calling. Sejak AI-2 (3 Agu 2026), setiap `InputDefinition` membawa tipe JSON Schema eksplisit (`ParamTypeString`/`ParamTypeInteger`/`ParamTypeBoolean`/`ParamTypeNumber`) — `OpenAITools()` memetakan tipe akurat per-parameter (mis. `adult_pax`/`child_pax` = integer, `alternative` = boolean) sehingga Structured Outputs LLM tidak mengira semua argumen string. Parsing konsumsi di `mcp_service.go` tetap defensif (toleran `float64`/`string`/`bool`). Regresi dikunci oleh `tools_test.go`.
+
 
 ### TripService
 
