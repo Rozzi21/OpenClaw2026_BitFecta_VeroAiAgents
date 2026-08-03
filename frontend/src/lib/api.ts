@@ -152,6 +152,135 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}) {
   return payload.data;
 }
 
+// ChatStreamHandlers describes the callbacks used while consuming the SSE
+// streaming chat endpoint (PERF-1). onDelta fires for each text fragment as it
+// arrives (append to the in-flight assistant message), onDone fires once with
+// the final ChatResult (packages/recommendation flags), onError fires if the
+// stream fails mid-flight.
+export type ChatStreamHandlers = {
+  onDelta: (text: string) => void;
+  onDone: (result: ChatResponse) => void;
+  onError: (message: string) => void;
+};
+
+// parseSSEBlock splits a single raw SSE block (the text between two blank-line
+// separators) into its `event` and `data` fields per the SSE wire format.
+function parseSSEBlock(raw: string): { event: string; data: string } {
+  let event = "message";
+  let data = "";
+  for (const line of raw.split("\n")) {
+    if (line.startsWith("event:")) {
+      event = line.slice("event:".length).trim();
+    } else if (line.startsWith("data:")) {
+      data += line.slice("data:".length).trim();
+    }
+  }
+  return { event, data };
+}
+
+// streamChat POSTs a chat request with `stream: true` and consumes the SSE
+// response incrementally. Unlike apiFetch, this does NOT apply the 35s abort
+// timeout: a streaming response is expected to stay open while tokens flow,
+// and the backend caps the whole workflow via AI_TIMEOUT_SECONDS + the request
+// context (SEC-26). A client disconnect (AbortController) still propagates and
+// cancels the upstream stream.
+export async function streamChat(
+  path: string,
+  payload: Record<string, unknown>,
+  handlers: ChatStreamHandlers,
+  options: RequestInit = {}
+): Promise<void> {
+  const headers = new Headers(options.headers);
+  headers.set("Content-Type", "application/json");
+
+  let response: Response;
+  try {
+    response = await fetch(`${resolveApiBase()}${path}`, {
+      ...options,
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      credentials: options.credentials ?? "include",
+      signal: options.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      handlers.onError("Permintaan dibatalkan.");
+      return;
+    }
+    handlers.onError(
+      "Tidak dapat terhubung ke server. Pastikan backend berjalan di http://localhost:8080."
+    );
+    return;
+  }
+
+  if (!response.ok || !response.body) {
+    // Non-2xx streaming responses are not expected (errors surface as an SSE
+    // `error` event), but guard against a proxy returning HTML/JSON anyway.
+    let message = `Server mengalami gangguan (${response.status}). Coba beberapa saat lagi.`;
+    try {
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const envelope = (await response.json()) as Envelope<unknown>;
+        if (envelope.message) {
+          message = envelope.message;
+        }
+      }
+    } catch {
+      // ignore parse error; keep generic message
+    }
+    handlers.onError(message);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE events are separated by a blank line. Process every complete block
+      // in the buffer; keep the trailing partial block for the next iteration.
+      let sep: number;
+      while ((sep = buffer.indexOf("\n\n")) >= 0) {
+        const rawBlock = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        if (rawBlock.trim() === "") {
+          continue;
+        }
+        const { event, data } = parseSSEBlock(rawBlock);
+        if (!data) {
+          continue;
+        }
+        try {
+          if (event === "delta") {
+            const parsed = JSON.parse(data) as { content?: string };
+            if (parsed.content) {
+              handlers.onDelta(parsed.content);
+            }
+          } else if (event === "done") {
+            const parsed = JSON.parse(data) as ChatResponse;
+            handlers.onDone(parsed);
+          } else if (event === "error") {
+            const parsed = JSON.parse(data) as { message?: string };
+            handlers.onError(parsed.message ?? "Maaf, Vero belum bisa memproses permintaan ini.");
+          }
+        } catch {
+          // Skip malformed event payloads without aborting the stream.
+        }
+      }
+    }
+  } catch {
+    handlers.onError("Koneksi terputus saat memuat respons. Coba lagi.");
+  }
+}
+
 export function assetURL(path?: string) {
   if (!path) {
     return "";

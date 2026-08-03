@@ -23,7 +23,16 @@ func (h *Handler) Chat(c *gin.Context) {
 		return
 	}
 	userID := currentUserID(c)
-	res, err := h.Services.AI.Chat(c.Request.Context(), services.ChatContext{SessionID: *req.SessionID, UserID: &userID}, req)
+	chatCtx := services.ChatContext{SessionID: *req.SessionID, UserID: &userID}
+
+	// PERF-1: streaming path. The authenticated endpoint does not manage
+	// cookies, so setCookie is nil.
+	if req.Stream {
+		h.streamChat(c, chatCtx, req, nil)
+		return
+	}
+
+	res, err := h.Services.AI.Chat(c.Request.Context(), chatCtx, req)
 	if err != nil {
 		utils.ServerError(c, err)
 		return
@@ -41,6 +50,22 @@ func (h *Handler) GuestChat(c *gin.Context) {
 		utils.ServerError(c, err)
 		return
 	}
+
+	// PERF-1: streaming path. The guest session cookie must be set BEFORE the
+	// first byte of the SSE body is written (headers cannot change after the
+	// body starts), so we pass a setCookie callback that streamChat invokes
+	// after setting SSE headers. We always refresh (sliding TTL) so a long
+	// streaming session keeps the cookie alive; if ChatStream later reports
+	// the session expired/not-found the client receives an `error` event and
+	// the next request resolves a fresh session (resolveGuestSession ignores
+	// an expired cookie value).
+	if req.Stream {
+		h.streamChat(c, services.ChatContext{SessionID: sessionID}, req, func() {
+			auth.SetGuestSessionCookie(c, h.Services.Config, sessionID.String(), int(h.Services.Config.GuestSessionTTL.Seconds()))
+		})
+		return
+	}
+
 	res, err := h.Services.AI.Chat(c.Request.Context(), services.ChatContext{SessionID: sessionID}, req)
 	if err != nil {
 		if errors.Is(err, services.ErrChatSessionExpired) || errors.Is(err, services.ErrChatSessionNotFound) {

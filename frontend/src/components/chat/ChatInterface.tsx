@@ -16,6 +16,7 @@ import { TripPriceBlock } from "../pricing/TripPriceBlock";
 import {
   apiFetch,
   assetURL,
+  streamChat,
   TripPackage,
   ChatResponse,
   GuestChatHistoryResponse,
@@ -30,6 +31,11 @@ type ChatMessage = {
   showRecommendations?: boolean;
   recommendationReason?: "initial" | "alternative" | "";
   shouldAnimate?: boolean;
+  // PERF-1: while streaming, the assistant message is appended incrementally.
+  // `streaming` shows a caret and suppresses the post-stream typing animation
+  // (the text already appeared token-by-token, so animating again would
+  // re-type the whole message).
+  streaming?: boolean;
 };
 
 export default function ChatInterface() {
@@ -47,6 +53,9 @@ export default function ChatInterface() {
   });
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  // PERF-1: AbortController for the in-flight streaming chat request so the
+  // user can cancel a slow/long generation (and navigations abort cleanly).
+  const streamAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,43 +102,84 @@ export default function ChatInterface() {
     const nextUserIndex = messages.length;
     setMessages((items) => [...items, { role: "user", content: text }]);
     setCompletedTyping((items) => ({ ...items, [nextUserIndex]: true }));
-    try {
-      const payload = { prompt: text };
 
-      const data = await apiFetch<ChatResponse>(
+    // PERF-1: stream the assistant response. Insert an empty streaming
+    // assistant message first; each delta appends to its content in place,
+    // then the terminal `done` event finalizes packages/recommendation flags
+    // and clears the streaming caret. The non-stream typing animation is
+    // skipped because the text already appeared incrementally.
+    const assistantIndex = nextUserIndex + 1;
+    setMessages((items) => [
+      ...items,
+      { role: "assistant", content: "", streaming: true },
+    ]);
+
+    const abort = new AbortController();
+    streamAbortRef.current = abort;
+
+    try {
+      await streamChat(
         "/api/v1/chat",
+        { prompt: text, stream: true },
         {
-          method: "POST",
-          body: JSON.stringify(payload),
-        }
-      );
-      setMessages((items) => {
-        const assistantIndex = items.length;
-        setCompletedTyping((typing) => ({ ...typing, [assistantIndex]: false }));
-        return [
-          ...items,
-          {
-            role: "assistant",
-            content: data.message,
-            packages: data.recommended_packages ?? [],
-            showRecommendations: data.show_recommendations,
-            recommendationReason: data.recommendation_reason,
-            shouldAnimate: true,
+          onDelta: (fragment) => {
+            setMessages((items) => {
+              const last = items[items.length - 1];
+              if (!last || last.role !== "assistant" || !last.streaming) {
+                return items;
+              }
+              const updated = { ...last, content: last.content + fragment };
+              return [...items.slice(0, -1), updated];
+            });
+            scrollToBottom("auto");
           },
-        ];
-      });
-    } catch (error) {
-      setMessages((items) => [
-        ...items,
-        {
-          role: "assistant",
-          content:
-            error instanceof Error
-              ? error.message
-              : "Maaf, Vero belum bisa memproses permintaan ini.",
+          onDone: (result) => {
+            setMessages((items) => {
+              const last = items[items.length - 1];
+              // If deltas never arrived (empty stream / local fallback),
+              // seed the content from the final result message.
+              const content = last?.streaming
+                ? (last.content || result.message)
+                : result.message;
+              return [
+                ...items.slice(0, -1),
+                {
+                  role: "assistant",
+                  content,
+                  packages: result.recommended_packages ?? [],
+                  showRecommendations: result.show_recommendations,
+                  recommendationReason: result.recommendation_reason,
+                  workflow: result.workflow,
+                  streaming: false,
+                },
+              ];
+            });
+            // Mark the finalized assistant message as done typing so the
+            // recommendations block can render (it gates on completedTyping).
+            setCompletedTyping((items) => ({ ...items, [assistantIndex]: true }));
+          },
+          onError: (message) => {
+            setMessages((items) => {
+              const last = items[items.length - 1];
+              // If we already streamed partial text, keep it and append the
+              // error notice; otherwise replace the empty placeholder.
+              if (last?.streaming) {
+                if (last.content) {
+                  return [
+                    ...items.slice(0, -1),
+                    { ...last, content: last.content + "\n\n" + message, streaming: false },
+                  ];
+                }
+                return [...items.slice(0, -1), { role: "assistant", content: message }];
+              }
+              return [...items, { role: "assistant", content: message }];
+            });
+          },
         },
-      ]);
+        { signal: abort.signal }
+      );
     } finally {
+      streamAbortRef.current = null;
       setLoading(false);
     }
   }
@@ -160,7 +210,14 @@ export default function ChatInterface() {
                 <div className="flex-1 space-y-6">
                   <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Vero Travel</span>
                   <div className="bg-white border border-slate-100 shadow-sm rounded-2xl rounded-tl-sm p-6 text-slate-700 leading-relaxed text-[15px]">
-                    {message.shouldAnimate ? (
+                    {message.streaming ? (
+                      // PERF-1: text arrives incrementally via SSE; show a caret
+                      // while streaming instead of the post-stream typing anim.
+                      <p className="whitespace-pre-wrap">
+                        {message.content}
+                        <span className="ml-0.5 inline-block h-4 w-1 animate-pulse rounded bg-[#df3333] align-[-2px]" />
+                      </p>
+                    ) : message.shouldAnimate ? (
                       <TypingText
                         text={message.content}
                         onUpdate={() => scrollToBottom("auto")}

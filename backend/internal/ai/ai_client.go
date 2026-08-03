@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -267,4 +269,234 @@ func extractString(m map[string]interface{}, key string) (string, string) {
 		}
 	}
 	return "", ""
+}
+
+// GenerateStream runs a streaming chat completion (PERF-1). The provider sends
+// Server-Sent Events chunks; each `choices[0].delta.content` text fragment is
+// forwarded to onDelta as soon as it arrives so the caller can flush it to the
+// client and lower Time-To-First-Token. Tool-call deltas are accumulated into
+// full ToolCalls and returned together with the final metadata, mirroring the
+// non-streaming CompletionResponse contract.
+//
+// Design notes (PERF-1, 3 Agu 2026):
+//   - Only the FINAL text round is streamed. Tool-call rounds still use the
+//     non-streaming Generate because they need the complete tool_calls array
+//     up front to dispatch via MCP. Streaming the assistant text after the
+//     tool loop is where the bulk of user-perceived latency lives.
+//   - The HTTP client Timeout is the overall request budget (cfg.AITimeout);
+//     the request ctx (SEC-26) adds cancellation on client disconnect so
+//     whichever fires first cancels the stream mid-flight.
+//   - Response body is NOT capped by io.LimitReader here: a stream is read
+//     incrementally and each chunk is a small JSON object, so peak memory is
+//     bounded by the accumulated text length rather than one giant buffer.
+//     A malicious/buggy provider could still stream forever, which is bounded
+//     by the request timeout above.
+func (c *Client) GenerateStream(ctx context.Context, req CompletionRequest, onDelta func(text string)) (CompletionResponse, error) {
+	// Fallback path mirrors Generate: no key -> single synthetic delta so the
+	// UX of the streaming handler stays identical (one delta + done event).
+	if c.APIKey == "" {
+		fallback := "AI API key is empty; using local travel assistant fallback response."
+		if onDelta != nil {
+			onDelta(fallback)
+		}
+		return CompletionResponse{
+			Text: fallback,
+			Metadata: map[string]interface{}{
+				"mode":  "local_fallback",
+				"model": c.Model,
+			},
+			RawStatus: http.StatusOK,
+		}, nil
+	}
+
+	payload := map[string]interface{}{
+		"model":       c.Model,
+		"messages":    req.Messages,
+		"temperature": c.Temperature,
+		"stream":      true,
+	}
+	if len(req.Tools) > 0 {
+		payload["tools"] = req.Tools
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return CompletionResponse{}, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return CompletionResponse{}, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	res, err := c.HTTPClient.Do(httpReq)
+	if err != nil {
+		return CompletionResponse{}, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		// Non-2xx stream responses usually carry a JSON error body, not SSE.
+		limited := io.LimitReader(res.Body, maxAIResponseBytes)
+		var raw map[string]interface{}
+		_ = json.NewDecoder(limited).Decode(&raw)
+		return CompletionResponse{Metadata: raw, RawStatus: res.StatusCode}, fmt.Errorf("ai provider returned status %d", res.StatusCode)
+	}
+
+	var (
+		fullText  strings.Builder
+		toolCalls = map[int]*ToolCall{} // accumulate deltas keyed by tool index
+		metadata  = map[string]interface{}{}
+		finish    string
+	)
+
+	scanner := bufio.NewScanner(res.Body)
+	// Some providers send large keep-alive/usage payloads; allow a generous
+	// buffer per line without unbounded growth.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return CompletionResponse{}, ctx.Err()
+		default:
+		}
+
+		line := scanner.Text()
+		if line == "" || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			// Skip malformed chunks rather than aborting the whole stream.
+			log.Printf("[ai] stream: skipping unparseable chunk: %v", err)
+			continue
+		}
+
+		choices, ok := chunk["choices"].([]interface{})
+		if !ok || len(choices) == 0 {
+			continue
+		}
+		choice, ok := choices[0].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		if delta, ok := choice["delta"].(map[string]interface{}); ok {
+			if content, _ := delta["content"].(string); content != "" {
+				fullText.WriteString(content)
+				if onDelta != nil {
+					onDelta(content)
+				}
+			}
+			// Accumulate tool-call deltas (some providers stream them in pieces).
+			if tcsRaw, ok := delta["tool_calls"].([]interface{}); ok {
+				accumulateToolCallDeltas(toolCalls, tcsRaw)
+			}
+			// Reasoning models sometimes stream reasoning_content instead of
+			// content; fall back to it only if no content arrived at all, so we
+			// match extractText semantics for non-streaming responses.
+			if fullText.Len() == 0 {
+				if rc, _ := delta["reasoning_content"].(string); rc != "" {
+					fullText.WriteString(rc)
+					if onDelta != nil {
+						onDelta(rc)
+					}
+				}
+			}
+		}
+
+		if fr, _ := choice["finish_reason"].(string); fr != "" {
+			finish = fr
+		}
+
+		// Keep the last chunk's id/model for metadata parity with Generate.
+		if id, _ := chunk["id"].(string); id != "" {
+			metadata["id"] = id
+		}
+		if m, _ := chunk["model"].(string); m != "" {
+			metadata["model"] = m
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return CompletionResponse{}, err
+	}
+	metadata["finish_reason"] = finish
+	metadata["mode"] = "stream"
+
+	out := CompletionResponse{
+		Text:      fullText.String(),
+		ToolCalls: finalizeToolCalls(toolCalls),
+		Metadata:  metadata,
+		RawStatus: res.StatusCode,
+	}
+	if len(out.ToolCalls) == 0 && out.Text == "" {
+		out.Text = "AI provider returned an empty text response."
+	}
+	return out, nil
+}
+
+// accumulateToolCallDeltas merges streaming tool-call fragments into the
+// running ToolCall map keyed by the tool index. OpenAI-compatible providers
+// send the function name in the first delta for an index and append argument
+// token fragments in subsequent deltas for the same index.
+func accumulateToolCallDeltas(toolCalls map[int]*ToolCall, deltas []interface{}) {
+	for _, d := range deltas {
+		dMap, ok := d.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		idxF, _ := dMap["index"].(float64)
+		idx := int(idxF)
+
+		tc, ok := toolCalls[idx]
+		if !ok {
+			tc = &ToolCall{Type: "function"}
+			toolCalls[idx] = tc
+		}
+		if id, _ := dMap["id"].(string); id != "" {
+			tc.ID = id
+		}
+		if t, _ := dMap["type"].(string); t != "" {
+			tc.Type = t
+		}
+		if fnMap, ok := dMap["function"].(map[string]interface{}); ok {
+			if name, _ := fnMap["name"].(string); name != "" {
+				tc.Function.Name = name
+			}
+			if args, _ := fnMap["arguments"].(string); args != "" {
+				tc.Function.Arguments += args
+			}
+		}
+	}
+}
+
+// finalizeToolCalls returns the accumulated tool calls ordered by their stream
+// index so callers see them in the order the model emitted them.
+func finalizeToolCalls(toolCalls map[int]*ToolCall) []ToolCall {
+	if len(toolCalls) == 0 {
+		return nil
+	}
+	indices := make([]int, 0, len(toolCalls))
+	for i := range toolCalls {
+		indices = append(indices, i)
+	}
+	sort.Ints(indices)
+	out := make([]ToolCall, 0, len(indices))
+	for _, i := range indices {
+		tc := toolCalls[i]
+		if tc.Function.Name != "" {
+			out = append(out, *tc)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

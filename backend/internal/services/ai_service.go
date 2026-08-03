@@ -121,10 +121,27 @@ func (s *AIService) Chat(ctx context.Context, chatCtx ChatContext, req dto.ChatR
 	// Use tool-driven workflow. The LLM decides whether to call search_trips,
 	// select_package, collect_order_detail, or create_booking.
 	aiResponse, toolResults, err := s.generateWithToolLoop(ctx, sessionID, req.Prompt)
+	return s.finalizeChat(ctx, sessionID, aiResponse, toolResults, err)
+}
+
+func sessionOwnedByContext(session models.ChatSession, chatCtx ChatContext) bool {
+	if chatCtx.UserID == nil {
+		return session.UserID == nil
+	}
+	return session.UserID != nil && *session.UserID == *chatCtx.UserID
+}
+
+// finalizeChat completes the post-LLM work that is identical whether the final
+// assistant message was produced by the non-streaming or the streaming path
+// (PERF-1): defense-in-depth order-claim guard, fail-closed recommendation
+// state (BUG-5), persist assistant message, refresh memory summary, broadcast
+// workflow_completed. Extracting it keeps Chat and ChatStream in lockstep so a
+// change to the finalization rules never drifts between the two paths.
+func (s *AIService) finalizeChat(ctx context.Context, sessionID uuid.UUID, aiResponse ai.CompletionResponse, toolResults []ToolResult, genErr error) (ChatResult, error) {
 	response := "Maaf, saya belum bisa memproses permintaan Anda saat ini. Silakan coba lagi."
-	if err != nil {
+	if genErr != nil {
 		errorPayload, _ := json.Marshal(map[string]interface{}{
-			"error": err.Error(),
+			"error": genErr.Error(),
 			"mode":  "local_fallback",
 		})
 		_ = s.repo.CreateAILog(ctx, &models.AILog{
@@ -226,11 +243,53 @@ func (s *AIService) Chat(ctx context.Context, chatCtx ChatContext, req dto.ChatR
 	}, nil
 }
 
-func sessionOwnedByContext(session models.ChatSession, chatCtx ChatContext) bool {
-	if chatCtx.UserID == nil {
-		return session.UserID == nil
+// ChatStream is the streaming counterpart of Chat (PERF-1, 3 Agu 2026). It runs
+// the same tool loop, but the FINAL assistant text response is produced with
+// GenerateStream: each token delta is forwarded to onDelta as soon as it
+// arrives so the HTTP handler can flush it to the client over SSE and slash
+// Time-To-First-Token. Tool-call rounds stay non-streaming (they need the full
+// tool_calls array before dispatching via MCP); only the final text round —
+// where user-perceived latency concentrates — is streamed.
+//
+// onDelta is invoked from the AI client goroutine inline with the SSE scan, so
+// the handler must flush promptly (it already does, per BUG-4 write-detection).
+// If onDelta is nil the call degrades to a non-streaming final round but still
+// returns a ChatResult, which keeps the streaming handler resilient.
+//
+// Context propagation (SEC-26) is unchanged: the same request ctx flows into
+// the streaming HTTP request, so a client disconnect cancels the stream
+// mid-flight and ChatStream returns ctx.Err().
+func (s *AIService) ChatStream(ctx context.Context, chatCtx ChatContext, req dto.ChatRequest, onDelta func(text string)) (ChatResult, error) {
+	sessionID := chatCtx.SessionID
+	if sessionID == uuid.Nil {
+		return ChatResult{}, errors.New("chat session is required")
 	}
-	return session.UserID != nil && *session.UserID == *chatCtx.UserID
+
+	session, err := s.repo.FindChatSession(ctx, sessionID)
+	if err != nil {
+		return ChatResult{}, err
+	}
+	if !sessionOwnedByContext(session, chatCtx) {
+		return ChatResult{}, ErrChatSessionNotFound
+	}
+	now := time.Now()
+	if session.ExpiresAt != nil && !session.ExpiresAt.After(now) {
+		return ChatResult{}, ErrChatSessionExpired
+	}
+	// BUG-6: slide expires_at before the tool loop (same rationale as Chat).
+	expiresAt := now.Add(s.cfg.GuestSessionTTL)
+	session.ExpiresAt = &expiresAt
+	session.LastActivityAt = &now
+	if err := s.repo.UpdateChatSessionActivity(ctx, session.ID, *session.ExpiresAt, now); err != nil {
+		return ChatResult{}, err
+	}
+
+	if err := s.repo.AddChatMessage(ctx, &models.ChatMessage{SessionID: sessionID, Role: "user", Content: req.Prompt}); err != nil {
+		return ChatResult{}, err
+	}
+
+	aiResponse, toolResults, err := s.generateWithToolLoopStream(ctx, sessionID, req.Prompt, onDelta)
+	return s.finalizeChat(ctx, sessionID, aiResponse, toolResults, err)
 }
 
 func extractRecommendedPackages(toolResults []ToolResult, selectedTripID *uuid.UUID) []models.Trip {
@@ -422,6 +481,70 @@ func (s *AIService) generateWithToolLoop(ctx context.Context, sessionID uuid.UUI
 
 	log.Printf("[ai] exhausted %d tool call rounds, forcing final text response", ai.MaxToolCallRounds)
 	resp, err := s.client.Generate(ctx, ai.CompletionRequest{Messages: messages})
+	return resp, allToolResults, err
+}
+
+// generateWithToolLoopStream is the PERF-1 streaming variant of
+// generateWithToolLoop. Tool-call rounds remain non-streaming (the complete
+// tool_calls array is needed before MCP dispatch), but the final text round is
+// produced with Client.GenerateStream, forwarding each delta to onDelta. If the
+// very first LLM call returns no tool calls we also stream it, so even a
+// no-tool response reaches the client incrementally.
+func (s *AIService) generateWithToolLoopStream(ctx context.Context, sessionID uuid.UUID, prompt string, onDelta func(text string)) (ai.CompletionResponse, []ToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.cfg.AITimeout)
+	defer cancel()
+
+	messages := s.buildMessages(ctx, sessionID, prompt)
+	tools := mcp.OpenAITools()
+
+	var allToolResults []ToolResult
+	calledTools := make(map[string]bool)
+
+	for round := 0; round < ai.MaxToolCallRounds; round++ {
+		// Tool-selection rounds use the non-streaming Generate because they
+		// must inspect/parse a full tool_calls array before dispatching.
+		resp, err := s.client.Generate(ctx, ai.CompletionRequest{
+			Messages: messages,
+			Tools:    tools,
+		})
+		if err != nil {
+			return resp, allToolResults, err
+		}
+
+		if len(resp.ToolCalls) == 0 {
+			// No tools requested — this is the final text response. Re-issue
+			// the same messages WITHOUT tools so the provider commits to a
+			// streaming text completion (some providers reject stream + tools
+			// combinations or behave inconsistently). The conversation history
+			// (including prior tool results) is already in `messages`.
+			streamResp, streamErr := s.client.GenerateStream(ctx, ai.CompletionRequest{Messages: messages}, onDelta)
+			if streamErr != nil {
+				// Fall back to the non-streamed text we already have so the
+				// user still gets a response even if the provider's streaming
+				// endpoint misbehaves.
+				log.Printf("[ai] stream failed, falling back to non-streamed text: %v", streamErr)
+				return resp, allToolResults, nil
+			}
+			return streamResp, allToolResults, nil
+		}
+
+		log.Printf("[ai] round %d: LLM requested %d tool call(s)", round+1, len(resp.ToolCalls))
+
+		assistantMsg := ai.Message{
+			Role:      "assistant",
+			ToolCalls: resp.ToolCalls,
+		}
+		messages = append(messages, assistantMsg)
+
+		for _, tc := range resp.ToolCalls {
+			toolResult, toolMsg := s.executeToolCall(ctx, sessionID, tc, calledTools)
+			allToolResults = append(allToolResults, toolResult)
+			messages = append(messages, toolMsg)
+		}
+	}
+
+	log.Printf("[ai] exhausted %d tool call rounds, forcing streamed final text response", ai.MaxToolCallRounds)
+	resp, err := s.client.GenerateStream(ctx, ai.CompletionRequest{Messages: messages}, onDelta)
 	return resp, allToolResults, err
 }
 
