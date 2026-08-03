@@ -55,8 +55,21 @@ func (r *Repository) FindTripBySlugOrID(ctx context.Context, value string) (mode
 	return trip, err
 }
 
+// UpdateTrip persists all editable columns of trip without touching its
+// associations (DB-2). The previous .Save() full-overwrote every column from
+// the in-memory struct AND attempted to upsert preloaded associations
+// (Itineraries/Media) when called on a record fetched via FindTrip (which
+// Preloads Itineraries) — risking lost updates and association clobber.
+// .Select("*").Updates() writes all model columns (matching the full-edit
+// semantics of TripService.Update, including clearing fields to zero) while
+// leaving associations untouched. Status transitions are not part of Trip.
+// Two-admin concurrent full-edit still races; fully closing that requires
+// optimistic locking (Medium, out of scope for DB-2 Low).
 func (r *Repository) UpdateTrip(ctx context.Context, trip *models.Trip) error {
-	return r.DB.WithContext(ctx).Save(trip).Error
+	return r.DB.WithContext(ctx).Model(&models.Trip{}).
+		Where("id = ?", trip.ID).
+		Select("*").
+		Updates(trip).Error
 }
 
 func (r *Repository) ReplaceTripItineraries(ctx context.Context, tripID uuid.UUID, itineraries []models.Itinerary) error {

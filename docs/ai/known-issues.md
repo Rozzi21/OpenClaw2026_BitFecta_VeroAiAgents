@@ -550,7 +550,10 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Verifikasi:** `go build ./...` + `go vet ./...` + `gofmt -l .` (kosong) semuanya bersih.
 - **Implementation Complexity:** Low
 
-## A.5 Temuan Audit Database (Belum Diperbaiki - 26 Jul 2026)
+## A.5 Temuan Audit Database (26 Jul 2026)
+
+DB-1 (Fixed 3 Agu 2026) dan DB-2 (Fixed 3 Agu 2026) telah diselesaikan; DB-3 masih terbuka.
+
 
 ### DB-1. ✅ TINGGI — Kinerja Query (Full Table Scan pada Pencarian Trip) (FIXED 3 Agu 2026)
 
@@ -569,15 +572,21 @@ Audit arsitektur terhadap 15 aspek (layering, package dependency, repository/ser
 - **Verifikasi:** `gofmt -w .` + `go build ./...` + `go vet ./...` + `go test ./...` semuanya bersih (exit 0).
 
 
-### DB-2. SEDANG — Overwrite Data pada Operasi `Save` (Potensi Konflik GORM)
+### DB-2. ✅ SEDANG — Overwrite Data pada Operasi `Save` (Potensi Konflik GORM) (FIXED 3 Agu 2026)
 
 - **Severity:** Medium
-- **Issue:** GORM `Save()` menimpa keseluruhan field tabel (semua *column*) dengan nilai *struct* yang ada di memori. 
-- **Impact:** Transaksi ganda. Bila *webhook* masuk dan *admin* memperbarui `payment_status` secara bersamaan, panggilan `r.DB.Save(payment)` di akhir *service* bisa meng-overwrite field lain (seperti status atau jumlah) yang telah berubah sejak pembacaan awal dari *database* (*Lost Update*). Ini mirip dengan kasus SEC-23 (TOCTOU).
+- **Issue:** GORM `Save()` menimpa keseluruhan field tabel (semua *column*) dengan nilai *struct* yang ada di memori.
+- **Impact:** Transaksi ganda. Bila *webhook* masuk dan *admin* memperbarui `payment_status` secara bersamaan, panggilan `r.DB.Save(payment)` di akhir *service* bisa meng-overwrite field lain (seperti status atau jumlah) yang telah berubah sejak pembacaan awal dari *database* (*Lost Update*). Ini mirip dengan kasus SEC-23 (TOCTOU). Lebih jauh, `Save()` pada struct hasil `Find*` (yang `Preload` relasi) juga men-**upsert asosiasi** — `Save(trip)` bisa clobber baris `Itineraries`, `Save(booking)` bisa clobber `User`/`Trip`/`Payments`, `Save(payment)` bisa clobber `Booking`.
 - **Affected Tables:** `payments`, `bookings`, `trips`
-- **Affected Repository:** `UpdatePayment`, `UpdateBooking`, `UpdateTrip` (`backend/internal/repositories/repositories.go`)
+- **Affected Repository:** `UpdatePayment` (`payment_repository.go`), `UpdateBooking` (`booking_repository.go`), `UpdateTrip` (`trip_repository.go`) — file-file ini kini terpisah per-domain sejak SEC-25.
 - **Recommendation:** Hindari `.Save()`. Gunakan spesifik `.Updates(map[string]interface{}{...})` atau `.Select("field").Updates(...)` untuk hanya memperbarui nilai kolom target yang relevan dengan instruksi dari *service*.
 - **Implementation Complexity:** Low
+- **Fix (3 Agu 2026):** Ketiga method `Update*` diganti dari `.Save()` ke `.Model(&Entity{}).Where("id = ?", id).Select("*").Updates(entity)`:
+  1. **`UpdateTrip`** (LIVE — `TripService.Update`, jalur `PUT /trips/:id` & `PUT /packages/:id`) adalah satu-satunya yang punya caller. Sebelumnya `Save(trip)` pada struct hasil `FindTrip` (yang `Preload("Itineraries")`) berisiko upsert/clobber baris itinerary. Kini `.Select("*").Updates()` menulis SEMUA kolom model trip (termasuk zero-value — sesuai semantik full-edit `buildTripFromRequest` yang memang menimpa seluruh field dari request) TANPA menyentuh asosiasi. Itinerary tetap dikelola terpisah lewat `ReplaceTripItineraries`.
+  2. **`UpdateBooking` / `UpdatePayment`** — TIDAK punya caller aktif saat ini (transisi status sudah lewat `*StatusAtomic` per SEC-23/SEC-29), tetapi tetap dipertahankan di interface `repositories.BookingRepository`/`PaymentRepository` untuk edit non-status di masa depan. Bentuk association-safe kini mencegah caller laten di masa depan mengintroduksi ulang DB-2 (mis. `Save(booking)` clobber `Payments`).
+  3. **Catatan batas (tidak ditutup, di luar lingkup DB-2 Low):** `.Select("*").Updates()` menutup vektor *association clobber* (penyebab utama Lost Update konkret di sini) tetapi TIDAK menyelesaikan race antar dua admin yang full-edit trip bersamaan — dua `PUT /trips/:id` paralel tetap last-write-wins. Menutup race itu butuh optimistic locking (kolom `version` + `WHERE version = ?`) atau `SELECT ... FOR UPDATE`, kompleksitas Medium, dicatat sebagai follow-up opsional bila kolaborasi admin intensif.
+- **Verifikasi:** `gofmt -w .` + `go build ./...` + `go vet ./...` + `go test ./...` semuanya bersih (exit 0). Test `payment_service_test.go` (replay + idempotency) tetap lolos — path webhook tak tersentuh (masih pakai `UpdatePaymentStatusAtomic`).
+
 
 ### DB-3. RENDAH — Ketiadaan Indeks pada Kolom Status Kritis
 
@@ -1065,6 +1074,8 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | SEC-31 Memory leak SSE EventStream (`time.After` timer leak) | ✅ `time.NewTicker(sseHeartbeatInterval)` + `defer Stop()` (digabung fix BUG-4, 28 Jul 2026); konfirmasi 1 Agu 2026 tidak ada `time.After(` di kode `.go` |
 | SEC-32 Goroutine leak health check database | ✅ `Health()` panggil `PingContext(ctx)` langsung tanpa goroutine/select wrapper; import `errors` dihapus (1 Agu 2026) |
 | DB-1 Full table scan pencarian trip (`LOWER LIKE %...%`) | ✅ GIN trigram index pg_trgm (`idx_trips_title/destination/location_trgm`) via `migrateTripSearchIndexes` di `AutoMigrate`; query repo tak berubah (3 Agu 2026) |
+| DB-2 Overwrite data via GORM `Save()` (lost update + association clobber) | ✅ `UpdateTrip`/`UpdateBooking`/`UpdatePayment` ganti `.Save()` → `.Select("*").Updates()` (association-safe, tak clobber `Itineraries`/`Payments`/`Booking`); status tetap via `*StatusAtomic` (3 Agu 2026) |
+
 
 
 

@@ -34,8 +34,23 @@ func (r *Repository) FindPaymentByExternalID(ctx context.Context, externalID str
 	return payment, err
 }
 
+// UpdatePayment persists the payment's editable columns without touching its
+// associations (DB-2). The previous .Save() full-overwrote every column from
+// the in-memory struct AND upserted the preloaded Booking association
+// (FindPayment/FindPaymentByExternalID Preload Booking), risking lost updates
+// and association clobber. .Select("*").Updates() writes only model columns,
+// leaving associations untouched.
+//
+// NOTE: status transitions must NOT use this method — they go through
+// UpdatePaymentStatusAtomic (SEC-29) for race-safe conditional updates in the
+// webhook path. This method has no current callers but is retained on the
+// interface for future non-status full edits; keep the association-safe form
+// so a latent caller cannot reintroduce DB-2.
 func (r *Repository) UpdatePayment(ctx context.Context, payment *models.Payment) error {
-	return r.DB.WithContext(ctx).Save(payment).Error
+	return r.DB.WithContext(ctx).Model(&models.Payment{}).
+		Where("id = ?", payment.ID).
+		Select("*").
+		Updates(payment).Error
 }
 
 // UpdatePaymentStatusAtomic applies a conditional status transition in a

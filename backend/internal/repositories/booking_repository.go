@@ -52,8 +52,24 @@ func (r *Repository) FindBookingForUser(ctx context.Context, id, userID uuid.UUI
 	return booking, err
 }
 
+// UpdateBooking persists the booking's editable columns without touching its
+// associations (DB-2). The previous .Save() full-overwrote every column from
+// the in-memory struct AND upserted preloaded associations (User/Trip/Payments
+// — FindBooking preloads all three) when invoked on a fetched record, risking
+// lost updates and association clobber (e.g. clobbering Payment rows).
+// .Select("*").Updates() writes only model columns, leaving associations and
+// preloaded slices untouched.
+//
+// NOTE: status transitions must NOT use this method — they go through
+// UpdateBookingStatusAtomic (SEC-23) for TOCTOU-safe conditional updates.
+// This method has no current callers but is retained on the interface for
+// future non-status full edits (e.g. contact info correction); keep the
+// association-safe form so a latent caller cannot reintroduce DB-2.
 func (r *Repository) UpdateBooking(ctx context.Context, booking *models.Booking) error {
-	return r.DB.WithContext(ctx).Save(booking).Error
+	return r.DB.WithContext(ctx).Model(&models.Booking{}).
+		Where("id = ?", booking.ID).
+		Select("*").
+		Updates(booking).Error
 }
 
 // UpdateBookingStatusAtomic performs an atomic conditional update of the booking

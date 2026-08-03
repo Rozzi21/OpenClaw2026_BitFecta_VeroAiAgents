@@ -200,6 +200,11 @@ Integrasi eksternal harus punya fallback. Contoh: klien AI (`ai/ai_client.go`) m
 - Menghapus kode fitur yang dinonaktifkan tanpa dokumentasi.
 - `fetch()` mentah di komponen frontend (pakai `apiFetch`).
 - Membuat file test tanpa menjalankan dan memverifikasinya (saat ini belum ada test sama sekali - lihat `known-issues.md`).
+- **GORM `.Save()` pada entity ber-relasi** (DB-2). `.Save()` menulis semua kolom dari struct memori DAN upsert asosiasi ter-preload → Lost Update + clobber `Itineraries`/`Payments`/`Booking`. Untuk update:
+  - **Full-edit semua kolom model** tanpa sentuh asosiasi: `.Model(&E{}).Where("id = ?", id).Select("*").Updates(entity)` (lihat `UpdateTrip`/`UpdateBooking`/`UpdatePayment`).
+  - **Update kolom tunggal/parsial**: `.Model(&E{}).Where("id = ?", id).Update("col", val)` atau `.Updates(map[string]interface{}{...})` (lihat `UpdateChatSessionMemorySummary`/`UpdateChatSessionActivity`).
+  - **Transisi status** (race-sensitive): `.Model(&E{}).Where("id = ? AND status = ?", id, expected).Update("status", next)` + cek `RowsAffected==1` (lihat `UpdateBookingStatusAtomic`/`UpdatePaymentStatusAtomic`).
+
 
 ---
 

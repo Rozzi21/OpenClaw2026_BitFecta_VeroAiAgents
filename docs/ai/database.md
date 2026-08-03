@@ -160,6 +160,17 @@ File (dipecah per-domain, SEC-25; satu tipe `*Repository`):
 ### Pola transaksi
 `ReplaceTripItineraries` memakai transaksi GORM untuk delete + insert. Operasi multi-langkah yang harus atomik mengikuti pola ini.
 
+### Pola update (DB-2, 3 Agu 2026) — hindari `.Save()`
+GORM `.Save()` menulis **semua kolom** dari struct memori DAN men-upsert asosiasi yang ter-preload → Lost Update + association clobber. Method `UpdateTrip`/`UpdateBooking`/`UpdatePayment` kini memakai `.Model(&Entity{}).Where("id = ?", id).Select("*").Updates(entity)`:
+
+- `Select("*")` + `Updates(struct)` menulis SEMUA kolom model (termasuk zero-value, cocok untuk full-edit) **tanpa** menyentuh asosiasi. `FindTrip`/`FindBooking`/`FindPayment` yang `Preload` relasi tidak ikut di-upsert — `Itineraries`/`Payments`/`Booking` aman.
+- **Transisi status TIDAK lewat `Update*` ini** — pakai `*StatusAtomic` (`UpdateBookingStatusAtomic` SEC-23, `UpdatePaymentStatusAtomic` SEC-29): conditional `UPDATE ... WHERE status = expected`, return `RowsAffected==1`. TOCTOU-safe.
+- Update kolom tunggal (mis. `memory_summary`, `selected_trip_id`, `expires_at`+`last_activity_at`) pakai `.Model(&Entity{}).Where("id=?", id).Update("col", val)` / `.Updates(map[string]interface{}{...})` — lihat `UpdateChatSessionMemorySummary`/`UpdateChatSessionSelectedTrip`/`UpdateChatSessionActivity`. Pola ini wajib untuk update parsial.
+- **Catatan batas:** `.Select("*").Updates()` menutup association clobber tapi bukan optimistic locking. Dua `PUT /trips/:id` paralel tetap last-write-wins. Menutup race itu butuh kolom `version` + `WHERE version = ?` (Medium, follow-up opsional).
+
+Lihat juga larangan `.Save()` di [coding-rules.md](coding-rules.md) §4.
+
+
 ### Pagination (`dto.ListQuery`)
 
 Endpoint list bookings, logs, dan tool-calls memakai `dto.ListQuery` (`Limit`, `Offset`) yang dinormalisasi via `Normalize()`:
