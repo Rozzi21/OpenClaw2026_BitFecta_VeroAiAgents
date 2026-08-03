@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"sort"
 	"strings"
 	"time"
 
@@ -301,13 +302,11 @@ func scoreTrips(query string, packages []models.Trip) []models.Trip {
 		scored = append(scored, scoredTrip{trip: trip, score: score})
 	}
 
-	for i := 0; i < len(scored)-1; i++ {
-		for j := i + 1; j < len(scored); j++ {
-			if scored[i].score < scored[j].score {
-				scored[i], scored[j] = scored[j], scored[i]
-			}
-		}
-	}
+	// PERF-2: gunakan sort.SliceStable (O(N log N)) alih-alih Bubble Sort O(N^2).
+	// Stabil agar urutan asli dari DB dipertahankan saat score seri (tie-break deterministik).
+	sort.SliceStable(scored, func(i, j int) bool {
+		return scored[i].score > scored[j].score
+	})
 
 	result := make([]models.Trip, 0, 3)
 	for _, item := range scored {

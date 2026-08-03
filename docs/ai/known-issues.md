@@ -619,13 +619,15 @@ DB-1 (Fixed 3 Agu 2026), DB-2 (Fixed 3 Agu 2026), dan DB-3 (Fixed 3 Agu 2026) te
   7. **Catatan batas (tidak diubah, disengaja):** non-stream path (`stream:false`/default) tetap ada — `apiFetch` envelope JSON, untuk client/konsumen yang tak mendukung SSE. Endpoint SSE staff `/events/stream` tak tersentuh. Tool-call rounds non-streaming by design (butuh tool_calls utuh). Rate limit + body limit 64 KiB (SEC-13/16) tetap berlaku di route yang sama. `response_format` structured output (SEC-29) belum di-stream (opsional, di masa depan).
 - **Verifikasi:** `gofmt -l .` (kosong) + `go build ./...` + `go vet ./...` + `go test ./...` exit 0; `frontend` `tsc --noEmit` exit 0.
 
-### PERF-2. TINGGI — Penggunaan *Bubble Sort* O(N^2) pada *Scoring*
+### PERF-2. ✅ TINGGI — Penggunaan *Bubble Sort* O(N^2) pada *Scoring* (FIXED 4 Agu 2026)
 
 - **Severity:** High
 - **Problem:** Logika *scoring* kemiripan nama paket terhadap perintah pengguna pada fungsi `scoreTrips` (`backend/internal/services/mcp_service.go`) menggunakan metode *Bubble Sort* manual dengan *loop* `for i ... for j`.
 - **Estimated Impact:** Kompleksitas *Bubble Sort* adalah O(N^2). Walaupun saat ini katalog data belum banyak, bertambahnya paket perjalanan dari *backoffice* akan meningkatkan latensi CPU secara eksponensial di *thread* utama layanan *backend* saat LLM memanggil alat (`tool`) pencarian paket.
 - **Recommendation:** Hapus konstruksi *looping* ganda. Gunakan paket fungsi bawaan standar *Golang* seperti `sort.Slice` or memigrasi pemfilteran logika *scoring* kemiripan kata secara komprehensif ke level *Database* menggunakan ekstensi GIN/pg_trgm untuk PostgreSQL.
 - **Complexity:** Low
+- **Fix (4 Agu 2026):** Loop `for i ... for j` (Bubble Sort O(N^2)) di `scoreTrips` diganti `sort.SliceStable` (O(N log N)) dari paket standar `sort`. Pemilihan `SliceStable` (bukan `Slice`) disengaja: algoritma stabil mempertahankan urutan asli trip dari query DB saat score seri, sehingga tie-break deterministik dan tidak ada perubahan urutan hasil pada kasus score sama. Komentar `PERF-2` ditambahkan menjelaskan alasan. Kontrak fungsi `scoreTrips` (input/output) tak berubah; pemanggil `executeSearchTrips` tak tersentuh. Opsi migrasi ke DB-level trigram (DB-1) tetap terbuka sebagai optimasi lanjutan terpisah — namun untuk scoring berbobot multi-field (title/destination/highlights) yang melibatkan bobot berbeda per field, sorting in-memory tetap diperlukan.
+- **Verifikasi:** `gofmt -l` (kosong) + `go build ./...` + `go vet ./...` + `go test ./...` semuanya bersih (exit 0).
 
 ### PERF-3. SEDANG — Alokasi Memori Berulang (Regex & JSON Marshal)
 
@@ -1088,6 +1090,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | DB-2 Overwrite data via GORM `Save()` (lost update + association clobber) | ✅ `UpdateTrip`/`UpdateBooking`/`UpdatePayment` ganti `.Save()` → `.Select("*").Updates()` (association-safe, tak clobber `Itineraries`/`Payments`/`Booking`); status tetap via `*StatusAtomic` (3 Agu 2026) |
 | DB-3 Ketiadaan index kolom status kritis (`booking_status`/`payment_status`) | ✅ Tag `gorm:"index"` di `models.Booking.BookingStatus`/`PaymentStatus`; AutoMigrate buat B-tree index equality scan (3 Agu 2026) |
 | PERF-1 Tidak ada streaming respons AI (high TTFT) | ✅ `GenerateStream` SSE di `ai_client.go` + `ChatStream`/`generateWithToolLoopStream`/`finalizeChat` di `ai_service.go` + `streamChat` handler SSE + `streamChat`/parser SSE di `frontend/src/lib/api.ts` + `ChatInterface` stream render (3 Agu 2026) |
+| PERF-2 Bubble Sort O(N^2) pada scoring `scoreTrips` | ✅ Loop `for i...for j` diganti `sort.SliceStable` (O(N log N)) di `mcp_service.go` `scoreTrips`; stabil jaga urutan DB saat tie; kontrak tak berubah (4 Agu 2026) |
 
 
 
