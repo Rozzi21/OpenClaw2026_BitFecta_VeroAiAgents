@@ -154,6 +154,23 @@ Verifikasi: `go build ./...` + `go vet` + `gofmt` bersih. Diff hanya menyentuh `
   2. `refreshMemorySummary` memanggil `UpdateChatSessionMemorySummary(sessionID, summary)` alih-alih `UpdateChatSession(&session)`.
   Verifikasi: `go build ./...` + `go test ./...` bersih.
 
+### BUG-11. ✅ SEDANG — Rekomendasi AI Hanya Tampilkan 1 Paket & Tanpa Gambar (FIXED 5 Agu 2026)
+
+**Lokasi:** `backend/internal/services/mcp_service.go` (`scoreTrips`, `executeSearchTrips`), `backend/internal/services/ai_service.go` (`extractRecommendedPackages`).
+
+Dua bug terkait rekomendasi paket AI yang menyebabkan user melihat hanya 1 paket (padahal ada 2 published) dan paket yang ditampilkan tidak punya gambar:
+
+1. **`scoreTrips` break-on-zero terlalu agresif.** Saat user query tidak kosong, scoring dilakukan terhadap field trip (title/destination/dll). Logika lama `if item.score == 0 && len(result) > 0 { break }` menghentikan loop begitu ada trip dengan score 0 setelah setidaknya satu trip dengan score > 0 masuk result. Akibatnya, jika dari 2 paket hanya 1 yang match query, paket lain di-skip. Bahkan jika SEMUA paket score 0, hanya 1 yang ditambahkan (karena setelah result ada 1 elemen, break aktif). Fallback `if len(scored) == 0` di `executeSearchTrips` tidak menolong karena `scored` berisi 1 elemen (bukan 0).
+
+2. **`executeSearchTrips` tidak mengirim `image_url` di payload tool result.** Payload result trip hanya berisi: id, title, destination, location, category, duration, summary, price, highlights. Field `image_url` (dan `slug`) tidak disertakan (AIW-2 sempat membuangnya untuk hemat token). `extractRecommendedPackages` di `ai_service.go` mencoba membaca `item["image_url"]` untuk mengisi `trip.ImageURL`, tapi field itu tidak ada → `trip.ImageURL` kosong → frontend menerima `image_url: ""` → gambar tidak dirender (hanya gradient default).
+
+Perbaikan:
+
+1. **`scoreTrips` tidak lagi break di score=0.** Loop sekarang menambahkan semua trip (urut: score tertinggi dulu berkat `sort.SliceStable`) sampai limit 3. Paket dengan score 0 tetap ditampilkan (setelah yang match) sehingga customer melihat semua opsi saat katalog kecil. Tie-break deterministik via stable sort (urutan DB dipertahankan saat score seri).
+2. **`executeSearchTrips` kini mengirim `slug` dan `image_url` di payload.** `extractRecommendedPackages` sudah punya code path untuk membaca kedua field itu (line 313-315 untuk slug, line 337-339 untuk image_url), sehingga `trip.Slug` dan `trip.ImageURL` terisi → frontend menerima field lengkap → gambar terender. `image_url` tidak di-sanitize karena berupa path/URL asset (bukan teks bebas yang bisa injeksi prompt); path di-resolve via `assetURL()` di frontend.
+
+Verifikasi: `go build ./...` + `go vet ./...` + `gofmt -l` bersih.
+
 ---
 
 ## A.10 Temuan Audit Production Readiness Backend (27 Jul 2026)
@@ -254,7 +271,7 @@ Sanitasi ditambahkan untuk string data katalog (`title`, `destination`, `locatio
 
 **Lokasi:** `backend/internal/services/mcp_service.go` (`executeSearchTrips`), `backend/internal/services/helpers.go` (`limitString`, `limitSlice`).
 
-Field detail image_url dibuang, panjang karakter summary dibatasi (maks 150), highlights dibatasi maksimal 3 item, dan list trips dibatasi maksimal 3 paket perjalanan teratas. Menghemat token context window LLM secara signifikan.
+Panjang karakter summary dibatasi (maks 150), highlights dibatasi maksimal 3 item, dan list trips dibatasi maksimal 3 paket perjalanan teratas. Menghemat token context window LLM secara signifikan. Field `image_url` sempat dibuang dari payload tool result (untuk hemat token), namun dikembalikan karena `extractRecommendedPackages` di `ai_service.go` memerlukan field tersebut agar frontend dapat merender gambar paket rekomendasi (lihat BUG-11, 5 Agu 2026).
 
 ### AIW-3. ✅ RENDAH — Tool Call Berulang Tidak Dideduplikasi Antar-Round (FIXED 29 Jul 2026)
 

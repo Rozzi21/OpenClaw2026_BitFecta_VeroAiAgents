@@ -93,7 +93,7 @@ Cleanup session dijalankan sementara oleh ticker satu jam di `cmd/server/main.go
 
 
 Tool status saat ini:
-- `search_trips` nyata: satu-satunya sumber rekomendasi paket. Menerima `query` dan `alternative`. Jika user sudah memilih paket (`SelectedTripID` terisi) tetapi tidak meminta alternatif, backend menolak tool ini untuk menghindari spam rekomendasi.
+- `search_trips` nyata: satu-satunya sumber rekomendasi paket. Menerima `query` dan `alternative`. Jika user sudah memilih paket (`SelectedTripID` terisi) tetapi tidak meminta alternatif, backend menolak tool ini untuk menghindari spam rekomendasi. Payload result tiap paket berisi: `id`, `slug`, `title`, `destination`, `location`, `category`, `duration`, `summary` (≤150 char), `price`, `highlights` (≤3), `image_url`. `scoreTrips` mengurutkan paket by score desc (stable) dan mengembalikan hingga 3 paket — paket dengan score 0 tetap disertakan (setelah yang match) agar customer melihat semua opsi saat katalog kecil (BUG-11, 5 Agu 2026).
 - `select_package(trip_id)` nyata: menyimpan paket terpilih ke `ChatSession.SelectedTripID`.
 - `collect_order_detail` nyata: menyimpan draft detail booking (pax, tanggal, kontak) tanpa membuat booking.
 - `create_booking` nyata: memanggil `BookingService.Create()` dan menyimpan booking ke DB. Response sukses memuat `{success:true, order_id, status, booking_id, booking_status, payment_status, total_price}`.

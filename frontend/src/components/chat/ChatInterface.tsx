@@ -18,7 +18,6 @@ import {
   assetURL,
   streamChat,
   TripPackage,
-  ChatResponse,
   GuestChatHistoryResponse,
 } from "@/lib/api";
 import { getTripAdultPrice, getTripChildPrice } from "@/lib/format";
@@ -103,16 +102,10 @@ export default function ChatInterface() {
     setMessages((items) => [...items, { role: "user", content: text }]);
     setCompletedTyping((items) => ({ ...items, [nextUserIndex]: true }));
 
-    // PERF-1: stream the assistant response. Insert an empty streaming
-    // assistant message first; each delta appends to its content in place,
-    // then the terminal `done` event finalizes packages/recommendation flags
-    // and clears the streaming caret. The non-stream typing animation is
-    // skipped because the text already appeared incrementally.
+    // PERF-1: stream the assistant response. The assistant message is added
+    // incrementally as deltas arrive so we don't show an empty chat bubble
+    // while the model is still thinking.
     const assistantIndex = nextUserIndex + 1;
-    setMessages((items) => [
-      ...items,
-      { role: "assistant", content: "", streaming: true },
-    ]);
 
     const abort = new AbortController();
     streamAbortRef.current = abort;
@@ -126,7 +119,10 @@ export default function ChatInterface() {
             setMessages((items) => {
               const last = items[items.length - 1];
               if (!last || last.role !== "assistant" || !last.streaming) {
-                return items;
+                return [
+                  ...items,
+                  { role: "assistant", content: fragment, streaming: true },
+                ];
               }
               const updated = { ...last, content: last.content + fragment };
               return [...items.slice(0, -1), updated];
@@ -141,18 +137,19 @@ export default function ChatInterface() {
               const content = last?.streaming
                 ? (last.content || result.message)
                 : result.message;
-              return [
-                ...items.slice(0, -1),
-                {
-                  role: "assistant",
-                  content,
-                  packages: result.recommended_packages ?? [],
-                  showRecommendations: result.show_recommendations,
-                  recommendationReason: result.recommendation_reason,
-                  workflow: result.workflow,
-                  streaming: false,
-                },
-              ];
+              const newMsg = {
+                role: "assistant" as const,
+                content,
+                packages: result.recommended_packages ?? [],
+                showRecommendations: result.show_recommendations,
+                recommendationReason: result.recommendation_reason,
+                workflow: result.workflow,
+                streaming: false,
+              };
+              if (last?.streaming) {
+                return [...items.slice(0, -1), newMsg];
+              }
+              return [...items, newMsg];
             });
             // Mark the finalized assistant message as done typing so the
             // recommendations block can render (it gates on completedTyping).

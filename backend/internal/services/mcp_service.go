@@ -237,6 +237,7 @@ func (s *MCPService) executeSearchTrips(ctx context.Context, sessionID uuid.UUID
 
 		results = append(results, map[string]interface{}{
 			"id":          trip.ID.String(),
+			"slug":        sanitizePromptInjection(trip.Slug),
 			"title":       sanitizePromptInjection(trip.Title),
 			"destination": sanitizePromptInjection(trip.Destination),
 			"location":    sanitizePromptInjection(trip.Location),
@@ -245,6 +246,7 @@ func (s *MCPService) executeSearchTrips(ctx context.Context, sessionID uuid.UUID
 			"summary":     limitString(sanitizedSummary, 150),
 			"price":       firstNonZero(trip.BasePrice, trip.EstimatedPrice),
 			"highlights":  limitSlice(sanitizedHighlights, 3),
+			"image_url":   trip.ImageURL,
 		})
 	}
 
@@ -357,11 +359,13 @@ func scoreTrips(query string, packages []models.Trip) []models.Trip {
 		return scored[i].score > scored[j].score
 	})
 
-	result := make([]models.Trip, 0, 3)
+	// Return up to 3 packages, prioritizing those with a positive score.
+	// Unlike the previous break-on-zero behaviour, packages with score 0 are
+	// still included (after the matching ones) so customers see every
+	// available option when the catalog is small. The stable sort keeps
+	// deterministic DB order among equal scores.
+	result := make([]models.Trip, 0, min(3, len(scored)))
 	for _, item := range scored {
-		if item.score == 0 && len(result) > 0 {
-			break
-		}
 		result = append(result, item.trip)
 		if len(result) == 3 {
 			break
