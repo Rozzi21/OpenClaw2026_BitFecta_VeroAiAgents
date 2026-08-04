@@ -38,7 +38,7 @@ func TestSlugify_Perf3RegexNotRecompiled(t *testing.T) {
 // slugify allocation-light. A regression to regexp.MustCompile per call would
 // show a dramatic allocation increase here.
 func BenchmarkSlugify(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = slugify("Bali Adventure Tour 2026 - Special Deal!!!")
 	}
 }
