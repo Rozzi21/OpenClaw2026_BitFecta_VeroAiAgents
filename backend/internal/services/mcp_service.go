@@ -21,11 +21,17 @@ import (
 // inter-service contracts (BookingCreator, GuestUserProvider) — instead of the
 // concrete *repositories.Repository / *BookingService / *AuthService. Tests can
 // now mock every dependency without a DB or real sibling services.
+//
+// PERF-3 #2: audit (tool call + AI log) persistence is detached from the
+// synchronous response path via a bounded worker pool (AuditPool). When audit
+// is nil (e.g. unit tests), Execute falls back to synchronous persist so the
+// audit trail is still recorded.
 type MCPService struct {
 	repo     MCPRepository
 	bus      *events.Bus
 	bookings BookingCreator
 	auth     GuestUserProvider
+	audit    *AuditPool
 }
 
 // MCPRepository is the repository contract MCPService uses (SEC-27): chat
@@ -91,44 +97,87 @@ func (s *MCPService) Execute(ctx context.Context, sessionID uuid.UUID, toolName 
 
 	log.Printf("[mcp] tool executed session=%s tool=%s status=%s duration_ms=%d", sessionID, toolName, result.Status, time.Since(start).Milliseconds())
 
-	payloadJSON, _ := json.Marshal(payload)
-	resultJSON, _ := json.Marshal(result)
-	toolCall := models.ToolCall{
-		SessionID: sessionID,
-		ToolName:  toolName,
-		Payload:   string(payloadJSON),
-		Result:    string(resultJSON),
-		Status:    result.Status,
+	// PERF-3 #2: Persist tool call + AI log audit trail asynchronously via a
+	// bounded worker pool, detached from the synchronous LLM response path.
+	// json.Marshal + DB writes happen off the request goroutine. The pool is
+	// bounded (workers + buffer) so high tool-call volume cannot flood goroutines
+	// or starve the DB connection pool (SEC-21 note). When no pool is wired
+	// (unit tests), fall back to synchronous persist so the audit trail is still
+	// recorded.
+	//
+	// Copy the mutable payload map defensively: the job is processed off the
+	// request goroutine, and callers may mutate their payload map afterwards.
+	payloadCopy := clonePayload(payload)
+	job := auditJob{
+		sessionID:     sessionID,
+		toolName:      toolName,
+		status:        result.Status,
+		executionTime: time.Since(start).Milliseconds(),
+		payload:       payloadCopy,
+		result:        result,
 	}
-	aiLog := models.AILog{
-		SessionID:     &sessionID,
-		Workflow:      "mcp_tool_execution",
-		ToolName:      toolName,
-		Status:        result.Status,
-		ExecutionTime: time.Since(start).Milliseconds(),
-		Response:      string(resultJSON),
-	}
-	// SEC-21: Persist tool call + AI log asynchronously, but bounded/rate-limited via standard means.
-	// We'll keep it simple: synchronous. Bounding goroutines here is safer to prevent flood.
-	if err := s.repo.CreateToolCall(ctx, &toolCall); err != nil {
-		auth.LogSecurity("tool_call_persist_failed", map[string]any{
-			"session_id": sessionID.String(),
-			"tool_name":  toolName,
-			"error":      err.Error(),
-		})
-	}
-	if err := s.repo.CreateAILog(ctx, &aiLog); err != nil {
-		auth.LogSecurity("ai_log_persist_failed", map[string]any{
-			"session_id": sessionID.String(),
-			"workflow":   "mcp_tool_execution",
-			"tool_name":  toolName,
-			"error":      err.Error(),
-		})
+	if s.audit != nil {
+		s.audit.Submit(job)
+	} else {
+		s.persistAuditSync(ctx, job)
 	}
 
 	// SEC-18: broadcast only tool name + status.
 	s.bus.Publish("mcp_tool_executed", map[string]interface{}{"tool": result.Tool, "status": result.Status})
 	return result, nil
+}
+
+// persistAuditSync is the fallback path when no AuditPool is wired (unit tests).
+// Mirrors AuditPool.persist so the synchronous audit trail stays identical.
+func (s *MCPService) persistAuditSync(ctx context.Context, job auditJob) {
+	payloadJSON, _ := json.Marshal(job.payload)
+	resultJSON, _ := json.Marshal(job.result)
+	toolCall := models.ToolCall{
+		SessionID: job.sessionID,
+		ToolName:  job.toolName,
+		Payload:   string(payloadJSON),
+		Result:    string(resultJSON),
+		Status:    job.status,
+	}
+	sessionID := job.sessionID
+	aiLog := models.AILog{
+		SessionID:     &sessionID,
+		Workflow:      "mcp_tool_execution",
+		ToolName:      job.toolName,
+		Status:        job.status,
+		ExecutionTime: job.executionTime,
+		Response:      string(resultJSON),
+	}
+	if err := s.repo.CreateToolCall(ctx, &toolCall); err != nil {
+		auth.LogSecurity("tool_call_persist_failed", map[string]any{
+			"session_id": job.sessionID.String(),
+			"tool_name":  job.toolName,
+			"error":      err.Error(),
+		})
+	}
+	if err := s.repo.CreateAILog(ctx, &aiLog); err != nil {
+		auth.LogSecurity("ai_log_persist_failed", map[string]any{
+			"session_id": job.sessionID.String(),
+			"workflow":   "mcp_tool_execution",
+			"tool_name":  job.toolName,
+			"error":      err.Error(),
+		})
+	}
+}
+
+// clonePayload returns a shallow copy of the tool payload map so the async
+// audit worker is not racing with a caller that mutates its own map after
+// Execute returns. Values are not deep-copied: the audit path only marshals
+// them, never mutates.
+func clonePayload(p map[string]interface{}) map[string]interface{} {
+	if p == nil {
+		return nil
+	}
+	c := make(map[string]interface{}, len(p))
+	for k, v := range p {
+		c[k] = v
+	}
+	return c
 }
 
 func (s *MCPService) executeSearchTrips(ctx context.Context, sessionID uuid.UUID, payload map[string]interface{}) ToolResult {

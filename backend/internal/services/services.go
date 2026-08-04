@@ -38,13 +38,21 @@ type Services struct {
 	Payments  *PaymentService
 	Logs      *LogService
 	Analytics *AnalyticsService
+	// audit persists MCP tool-call + AI-log records asynchronously (PERF-3 #2).
+	// Call Stop during graceful shutdown so in-flight audit records are flushed.
+	audit *AuditPool
 }
 
 func New(cfg config.Config, repo *repositories.Repository, jwt *auth.JWTService, bus *events.Bus) *Services {
 	s := &Services{Config: cfg, Repo: repo, JWT: jwt, Events: bus}
 	s.Auth = &AuthService{repo: repo, jwt: jwt, cfg: cfg}
 	s.Bookings = &BookingService{repo: repo, bus: bus}
-	s.MCP = &MCPService{repo: repo, bus: bus, bookings: s.Bookings, auth: s.Auth}
+	// PERF-3 #2: bounded audit worker pool detaches tool-call + AI-log
+	// persistence from the synchronous LLM response path. *Repository satisfies
+	// AuditWriter implicitly (SEC-27 structural typing).
+	s.audit = NewAuditPool(repo)
+	s.audit.Start()
+	s.MCP = &MCPService{repo: repo, bus: bus, bookings: s.Bookings, auth: s.Auth, audit: s.audit}
 	aiClient := ai.NewClient(cfg.AIAPIKey, cfg.AIBaseURL, cfg.AIModel, cfg.AITemperature, cfg.AITimeout)
 	s.AI = &AIService{repo: repo, mcp: s.MCP, bus: bus, client: aiClient, cfg: cfg}
 	s.Trips = &TripService{repo: repo, bus: bus}
@@ -52,6 +60,15 @@ func New(cfg config.Config, repo *repositories.Repository, jwt *auth.JWTService,
 	s.Logs = &LogService{repo: repo}
 	s.Analytics = &AnalyticsService{repo: repo}
 	return s
+}
+
+// StopAudit drains the MCP audit worker pool (PERF-3 #2). Call during graceful
+// shutdown so in-flight tool-call + AI-log records are persisted before the
+// process exits. Safe to call multiple times.
+func (s *Services) StopAudit() {
+	if s.audit != nil {
+		s.audit.Stop()
+	}
 }
 
 // AuthRequestMeta carries request-scoped audit context (IP, UA, request id)

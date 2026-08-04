@@ -27,8 +27,10 @@ Sejak refactor 25 Jun 2026, kode dipecah **per-domain dalam satu package `servic
 | `auth_service.go` | `AuthService` (Register, CreateStaff, Login, Refresh, Logout, Me, legacy booking GuestUser, issueSession) |
 | `ai_service.go` | `AIService` (Chat via `ChatContext`, `generateWithToolLoop` — orkestrasi round LLM; blok single tool-call diekstrak ke helper `executeToolCall` + `toolResultMessage` (SEC-30), katalog & rekomendasi paket, memory summary, expiry cleanup; **streaming variant `ChatStream`/`generateWithToolLoopStream`/`finalizeChat` (PERF-1, 3 Agu 2026)** — final text round di-stream via `GenerateStream`, post-LLM logic shared via `finalizeChat` agar tak drift antar path) |
 
-| `mcp_service.go` | `MCPService` (`Execute`, `executeCreateBooking`, `mock`) + `ToolResult` |
+| `mcp_service.go` | `MCPService` (`Execute`, `executeCreateBooking`, `mock`, `persistAuditSync`, `clonePayload`) + `ToolResult` |
+| `audit_pool.go` | `AuditPool` — bounded worker pool persistensi audit MCP (PERF-3); `AuditWriter` interface, `auditJob`, `Submit`/`Start`/`Stop` |
 | `trip_service.go` | `TripService` + `buildTripFromRequest`, `buildItineraries` |
+
 | `booking_service.go` | `BookingService` + `tripAdultPrice`/`tripChildPrice` |
 | `payment_service.go` | `PaymentService` (Create, Find, Webhook, verifySignature, triggerN8N) |
 | `log_service.go` / `analytics_service.go` | `LogService` / `AnalyticsService` |
@@ -87,7 +89,8 @@ Cleanup session dijalankan sementara oleh ticker satu jam di `cmd/server/main.go
 
 ### MCPService
 
-`Execute()` menjalankan tool, mencatat log tool selected/called/arguments/execution/result, lalu publish event `mcp_tool_executed`. Persistensi `ToolCall` + `AILog` dilakukan **asinkron** via goroutine agar tidak memblokir workflow chat. Goroutine ini melakukan **error logging via audit log** (`auth.LogSecurity` dengan event `tool_call_persist_failed` / `ai_log_persist_failed`) dan **single retry** (500ms delay) bila persistensi gagal.
+`Execute()` menjalankan tool, mencatat log tool selected/called/arguments/execution/result, lalu publish event `mcp_tool_executed`. Persistensi `ToolCall` + `AILog` dilakukan **asinkron via bounded worker pool** (`AuditPool`, PERF-3 — 4 Agu 2026) agar tidak memblokir workflow chat. `Execute` membangun `auditJob` (payload + result + meta, payload di-shallow-copy via `clonePayload` agar aman dari mutasi caller) lalu `s.audit.Submit(job)` — non-blocking, drop + log bila buffer penuh. Worker pool (2 worker, buffer 64) memproses job di goroutine terpisah: `json.Marshal` + `CreateToolCall` + `CreateAILog` dijalankan dengan `context.WithTimeout(context.Background(), 10s)` (detached, SEC-26). Error persistensi dicatat via `auth.LogSecurity` (event `tool_call_persist_failed` / `ai_log_persist_failed`); tidak ada retry (audit best-effort). Pool di-drain saat graceful shutdown via `Services.StopAudit()` (dipanggil `main.go` sebelum `server.Shutdown`). Saat `audit == nil` (unit test), `Execute` fallback ke `persistAuditSync` agar audit trail tetap terekam. Retry single (500ms) masih ada di `Execute` default branch (tool `mock`), terpisah dari audit pool.
+
 
 Tool status saat ini:
 - `search_trips` nyata: satu-satunya sumber rekomendasi paket. Menerima `query` dan `alternative`. Jika user sudah memilih paket (`SelectedTripID` terisi) tetapi tidak meminta alternatif, backend menolak tool ini untuk menghindari spam rekomendasi.

@@ -9,10 +9,14 @@ import (
 	"github.com/google/uuid"
 )
 
+// PERF-3 #1: regex compiled once at package init, not re-compiled per slugify
+// call. MustCompile panics on init if the pattern is invalid (it is a static
+// literal), which is the desired fail-fast behavior.
+var slugNonAlnum = regexp.MustCompile(`[^a-z0-9]+`)
+
 func slugify(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	re := regexp.MustCompile(`[^a-z0-9]+`)
-	value = strings.Trim(re.ReplaceAllString(value, "-"), "-")
+	value = strings.Trim(slugNonAlnum.ReplaceAllString(value, "-"), "-")
 	if value == "" {
 		return uuid.NewString()
 	}

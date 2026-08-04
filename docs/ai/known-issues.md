@@ -629,7 +629,7 @@ DB-1 (Fixed 3 Agu 2026), DB-2 (Fixed 3 Agu 2026), dan DB-3 (Fixed 3 Agu 2026) te
 - **Fix (4 Agu 2026):** Loop `for i ... for j` (Bubble Sort O(N^2)) di `scoreTrips` diganti `sort.SliceStable` (O(N log N)) dari paket standar `sort`. Pemilihan `SliceStable` (bukan `Slice`) disengaja: algoritma stabil mempertahankan urutan asli trip dari query DB saat score seri, sehingga tie-break deterministik dan tidak ada perubahan urutan hasil pada kasus score sama. Komentar `PERF-2` ditambahkan menjelaskan alasan. Kontrak fungsi `scoreTrips` (input/output) tak berubah; pemanggil `executeSearchTrips` tak tersentuh. Opsi migrasi ke DB-level trigram (DB-1) tetap terbuka sebagai optimasi lanjutan terpisah — namun untuk scoring berbobot multi-field (title/destination/highlights) yang melibatkan bobot berbeda per field, sorting in-memory tetap diperlukan.
 - **Verifikasi:** `gofmt -l` (kosong) + `go build ./...` + `go vet ./...` + `go test ./...` semuanya bersih (exit 0).
 
-### PERF-3. SEDANG — Alokasi Memori Berulang (Regex & JSON Marshal)
+### PERF-3. ✅ SEDANG — Alokasi Memori Berulang (Regex & JSON Marshal) (FIXED 4 Agu 2026)
 
 - **Severity:** Medium
 - **Problem:** 
@@ -640,6 +640,15 @@ DB-1 (Fixed 3 Agu 2026), DB-2 (Fixed 3 Agu 2026), dan DB-3 (Fixed 3 Agu 2026) te
   1. Deklarasikan hasil kompilasi *Regex* sebagai variabel konstan pada level *package*.
   2. Alihkan proses penulisan basis data operasional seperti `CreateAILog` menjadi *goroutine* / proses asinkron yang lepas (*detached*) dari respons sinkron layanan LLM utama (gunakan *worker pool* untuk menghindari resiko habisnya koneksi DB).
 - **Complexity:** Low
+- **Fix (4 Agu 2026):** Kedua rekomendasi diterapkan:
+  1. **Regex compile diangkat ke package-level var** (`helpers.go`): `var slugNonAlnum = regexp.MustCompile(...)` di-init sekali saat package load, dipakai ulang tiap panggilan `slugify`. `regexp.MustCompile` di dalam body fungsi dihapus. Pola literal statis → `MustCompile` panic saat init bila invalid (fail-fast, diinginkan). Tidak ada lagi re-kompilasi regex per-call.
+  2. **Audit persistence dipindah ke bounded worker pool** (file baru `backend/internal/services/audit_pool.go`): `MCPService.Execute` tidak lagi memanggil `json.Marshal` + `CreateToolCall` + `CreateAILog` secara sinkron di goroutine request. Sebagai gantinya, ia membangun `auditJob` (payload + result + meta) lalu `s.audit.Submit(job)` — non-blocking, mengembalikan `false` (drop + log) bila buffer penuh, sehingga tekanan audit tidak pernah menahan respons LLM. Worker pool (`AuditPool`, 2 worker, buffer 64) memproses job di goroutine terpisah: di sana `json.Marshal` + `CreateToolCall` + `CreateAILog` dijalankan dengan `context.WithTimeout(context.Background(), 10s)` (detached, SEC-26) karena audit outlive request HTTP. Kontrak narrow `AuditWriter` (interface `CreateToolCall` + `CreateAILog`) di-satisfy `*repositories.Repository` (SEC-27 structural typing); wiring `services.New()` + `main.go` shutdown (`StopAudit`) ditambahkan. Saat `audit == nil` (unit test), `Execute` fallback ke `persistAuditSync` agar audit trail tetap terekam.
+  3. **Defensive payload copy** (`clonePayload`): payload map di-shallow-copy sebelum di-submit ke worker, karena caller bisa memutasi map-nya setelah `Execute` return (data race dengan async marshal).
+  4. **Graceful drain** (`AuditPool.Stop`, dipanggil `main.go` sebelum `server.Shutdown`): menutup jobs channel, menunggu worker selesai bounded `auditDrainTimeout` (10s) — in-flight audit records di-flush sebelum proses exit; sisa di-drop (best-effort).
+  5. **Bounding rationale** (menutup catatan SEC-21 "bounding goroutines here is safer"): 2 worker + buffer 64 mencegah goroutine/DB-connection flood yang akan terjadi pada `go func()` unbounded per-call di volume tool-call tinggi. Worker count rendah disengaja — audit best-effort, tidak boleh kelaparan connection pool jalur request utama.
+- **Verifikasi:** `gofmt -l .` (kosong) + `go build ./...` + `go vet ./...` + `go test ./...` exit 0; `go test -race` pada test PERF-3 bersih (tidak ada data race). Regression test ditambahkan: `helpers_test.go` (`TestSlugify_Perf3RegexNotRecompiled` + `BenchmarkSlugify`) + `audit_pool_test.go` (`TestAuditPool_SubmitAndDrain`, `TestAuditPool_StopIsIdempotent`, `TestAuditPool_SubmitNonBlockingWhenFull`, `TestMCPService_AuditFallbackSync`).
+- **Catatan batas (tidak diubah, disengaja):** audit records bersifat best-effort — saat buffer penuh job di-drop (di-log), tidak di-retry. Hal ini dapat diterima karena audit MCP bersifat observability, bukan data transaksional kritis. Bila di masa depan audit butuh guaranteed delivery, naikkan ke message broker (sejajar roadmap event bus Redis #7). `CreateToolCall`/`CreateAILog` kontrak repository tidak berubah; pemanggil lain (non-MCP) bila ada tetap sinkron.
+
 
 ## A.7 Temuan Audit AI Workflow — SELESAI (FIXED 3 Agu 2026)
 
@@ -1091,15 +1100,17 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | DB-3 Ketiadaan index kolom status kritis (`booking_status`/`payment_status`) | ✅ Tag `gorm:"index"` di `models.Booking.BookingStatus`/`PaymentStatus`; AutoMigrate buat B-tree index equality scan (3 Agu 2026) |
 | PERF-1 Tidak ada streaming respons AI (high TTFT) | ✅ `GenerateStream` SSE di `ai_client.go` + `ChatStream`/`generateWithToolLoopStream`/`finalizeChat` di `ai_service.go` + `streamChat` handler SSE + `streamChat`/parser SSE di `frontend/src/lib/api.ts` + `ChatInterface` stream render (3 Agu 2026) |
 | PERF-2 Bubble Sort O(N^2) pada scoring `scoreTrips` | ✅ Loop `for i...for j` diganti `sort.SliceStable` (O(N log N)) di `mcp_service.go` `scoreTrips`; stabil jaga urutan DB saat tie; kontrak tak berubah (4 Agu 2026) |
+| PERF-3 Alokasi memori berulang (regex `slugify` re-compile + `json.Marshal` audit sinkron) | ✅ `slugNonAlnum` package-level var (regex compile sekali); audit `CreateToolCall`/`CreateAILog` dipindah ke bounded worker pool `AuditPool` (2 worker, buffer 64, detached ctx) di `audit_pool.go`; `Execute` non-blocking `Submit` + `clonePayload` defensive copy + `StopAudit` graceful drain di `main.go`; fallback `persistAuditSync` saat pool nil (4 Agu 2026) |
 
 
 
 
 
 
-> Catatan: item lama (pagination list endpoint & async logging MCP + retry) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200) dan audit log + single retry di `MCPService.Execute()`.
+> Catatan: item lama (pagination list endpoint) sudah selesai lebih dulu: `dto.ListQuery.Normalize()` (default 50, maks 200). Catatan async logging MCP + retry: audit log kini di-persist via bounded worker pool `AuditPool` (PERF-3, 4 Agu 2026) — lihat entri PERF-3 + `audit_pool.go`; retry single masih di `MCPService.Execute()` default branch.
 
 ---
+
 
 ## Lihat Juga
 - `architecture.md` — gambaran sistem & fitur aktif
