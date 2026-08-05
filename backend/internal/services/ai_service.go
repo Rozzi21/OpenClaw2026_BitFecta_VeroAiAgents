@@ -485,11 +485,17 @@ func (s *AIService) generateWithToolLoop(ctx context.Context, sessionID uuid.UUI
 }
 
 // generateWithToolLoopStream is the PERF-1 streaming variant of
-// generateWithToolLoop. Tool-call rounds remain non-streaming (the complete
-// tool_calls array is needed before MCP dispatch), but the final text round is
-// produced with Client.GenerateStream, forwarding each delta to onDelta. If the
-// very first LLM call returns no tool calls we also stream it, so even a
-// no-tool response reaches the client incrementally.
+// generateWithToolLoop. Each round uses GenerateStream directly with tools —
+// text deltas are forwarded to onDelta immediately (low TTFT), and tool_call
+// deltas are accumulated into a complete ToolCalls array for MCP dispatch.
+// This avoids the previous double-call (Generate + GenerateStream) that
+// wasted an API call and could cause the second call to fail when the first
+// consumed most of the AITimeout budget.
+//
+// If GenerateStream with tools fails (some providers reject stream + tools
+// combinations), we fall back to non-streaming Generate. The frontend's
+// shouldAnimate fallback then animates the text so the user still sees a
+// typing effect.
 func (s *AIService) generateWithToolLoopStream(ctx context.Context, sessionID uuid.UUID, prompt string, onDelta func(text string)) (ai.CompletionResponse, []ToolResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.AITimeout)
 	defer cancel()
@@ -501,31 +507,35 @@ func (s *AIService) generateWithToolLoopStream(ctx context.Context, sessionID uu
 	calledTools := make(map[string]bool)
 
 	for round := 0; round < ai.MaxToolCallRounds; round++ {
-		// Tool-selection rounds use the non-streaming Generate because they
-		// must inspect/parse a full tool_calls array before dispatching.
-		resp, err := s.client.Generate(ctx, ai.CompletionRequest{
+		// PERF-1: stream directly with tools. GenerateStream accumulates
+		// tool_calls deltas and returns them in the response, so we can
+		// still dispatch tools after the stream completes. This halves the
+		// API call count vs the old Generate+GenerateStream double-call.
+		resp, err := s.client.GenerateStream(ctx, ai.CompletionRequest{
 			Messages: messages,
 			Tools:    tools,
-		})
+		}, onDelta)
 		if err != nil {
-			return resp, allToolResults, err
+			// Fallback: some providers reject stream + tools combinations.
+			// Use non-streaming Generate to get the response. The frontend's
+			// shouldAnimate fallback will animate the text so the user still
+			// sees a typing effect.
+			log.Printf("[ai] stream with tools failed (round %d), falling back to non-streaming: %v", round+1, err)
+			resp, err = s.client.Generate(ctx, ai.CompletionRequest{
+				Messages: messages,
+				Tools:    tools,
+			})
+			if err != nil {
+				return resp, allToolResults, err
+			}
 		}
 
 		if len(resp.ToolCalls) == 0 {
-			// No tools requested — this is the final text response. Re-issue
-			// the same messages WITHOUT tools so the provider commits to a
-			// streaming text completion (some providers reject stream + tools
-			// combinations or behave inconsistently). The conversation history
-			// (including prior tool results) is already in `messages`.
-			streamResp, streamErr := s.client.GenerateStream(ctx, ai.CompletionRequest{Messages: messages}, onDelta)
-			if streamErr != nil {
-				// Fall back to the non-streamed text we already have so the
-				// user still gets a response even if the provider's streaming
-				// endpoint misbehaves.
-				log.Printf("[ai] stream failed, falling back to non-streamed text: %v", streamErr)
-				return resp, allToolResults, nil
-			}
-			return streamResp, allToolResults, nil
+			// No tools requested — this is the final text response.
+			// If streaming succeeded, text was already delivered via onDelta.
+			// If we fell back to non-streaming Generate, the frontend will
+			// animate the text via shouldAnimate.
+			return resp, allToolResults, nil
 		}
 
 		log.Printf("[ai] round %d: LLM requested %d tool call(s)", round+1, len(resp.ToolCalls))

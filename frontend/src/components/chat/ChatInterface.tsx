@@ -134,7 +134,8 @@ export default function ChatInterface() {
               const last = items[items.length - 1];
               // If deltas never arrived (empty stream / local fallback),
               // seed the content from the final result message.
-              const content = last?.streaming
+              const wasStreaming = last?.streaming === true;
+              const content = wasStreaming
                 ? (last.content || result.message)
                 : result.message;
               const newMsg = {
@@ -145,8 +146,13 @@ export default function ChatInterface() {
                 recommendationReason: result.recommendation_reason,
                 workflow: result.workflow,
                 streaming: false,
+                // PERF-1 fallback: if no deltas were received (streaming
+                // failed or was buffered), animate the text so the user
+                // still sees a ChatGPT-style typing effect instead of the
+                // full block appearing instantaneously.
+                shouldAnimate: !wasStreaming,
               };
-              if (last?.streaming) {
+              if (wasStreaming) {
                 return [...items.slice(0, -1), newMsg];
               }
               return [...items, newMsg];
