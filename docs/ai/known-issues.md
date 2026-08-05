@@ -171,6 +171,34 @@ Perbaikan:
 
 Verifikasi: `go build ./...` + `go vet ./...` + `gofmt -l` bersih.
 
+### AIW-6. ✅ SEDANG — Fallback Generik + Tool-Failure Tersilent + Kode Pelacakan Hilang (FIXED 5 Agu 2026)
+
+**Lokasi:** `backend/internal/services/ai_service.go` (`finalizeChat`, `buildMessages`, `formatAILogTrackingCode`, `failedSearchTripsAlreadySelected`, `responseMentionsSelectionOptions`), `backend/internal/services/mcp_service.go` (`executeSearchTrips`), `backend/internal/services/ai_service_test.go`.
+
+Audit system prompt + jalur error AI workflow menemukan tiga celah terhadap spesifikasi prompt sistem pemesanan paket:
+
+1. **Fallback generik tanpa konteks.** Saat `genErr` (AI provider error), `finalizeChat` persist `AILog` tapi membalas user dgn teks generik `"Maaf, saya belum bisa memproses permintaan Anda saat ini. Silakan coba lagi."` — tanpa penyataan gangguan spesifik, tanpa saran alternatif, tanpa kode pelacakan. User tak bisa korelasi ke support; raw error hanya di server. Spesifikasi minta: (a) penyataan singkat gangguan, (b) saran tindakan (coba lagi / minta alternatif), (c) kode pelacakan `AILog-xxxxxxxx`.
+
+2. **Booking-claim guard tanpa kode pelacakan.** Guard `responseClaimsOrderCreated` sudah memblok klaim booking palsu, tapi response pengganti `"Maaf, saya belum berhasil membuat pesanan Anda karena terjadi kendala pada sistem. Silakan coba beberapa saat lagi."` tidak persist `AILog` + tidak membawa kode pelacakan. Support tak bisa korelasi.
+
+3. **Tool-failure bisnis tersilent.** Saat `search_trips` mengembalikan `status=failed` dgn alasan `"a package is already selected"` (user sudah pilih paket lalu minta rekomendasi baru tanpa flag `alternative`), tool result gagal dikembalikan ke LLM tapi tidak ada backstop bila model mengabaikannya. Spesifikasi minta model mengomunikasikan konteks + opsi (lanjutkan / alternatif / batalkan). Title paket terpilih juga tidak tersedia di tool result, jadi model tidak bisa menyebut PAKET MANA yang dipilih.
+
+Perbaikan:
+
+1. **System prompt di-rewrite** (`buildMessages`) jadi Bahasa Indonesia natural dgn struktur eksplisit: TONE (ramah/singkat/actionable, keselamatan transaksi > persuasiveness), ALUR (4 langkah tool pipeline), ATURAN KRITIS (anti-klaim-booking-palsu, tool-fail surfacing dgn contoh, anti-fallback-generik, kode pelacakan), GAYA (no Markdown, no payment mention), delimiter anti-injection `CRITICAL` tetap dipertahankan (AIW-1). Prompt kini eksplisit minta info hilang step-by-step (pax dewasa, pax anak, tanggal, nama, kontak).
+
+2. **`genErr` surface kode pelacakan.** `finalizeChat` persist `AILog` (workflow `ai_generation`, status `failed`), ambil ID, format `AILog-xxxxxxxx` via `formatAILogTrackingCode` (8 hex char pertama UUID; fallback `AILog-unknown` bila persist gagal), balas user: `"Maaf, layanan AI sedang terganggu sehingga saya belum bisa menyelesaikan permintaan Anda. Silakan coba lagi sebentar atau minta alternatif paket. Kode: AILog-xxxxxxxx."` Raw error tetap di `AILog.response` + log line server-side. Error persist `AILog` di-log tapi tak gagalkan response (user tetap dapat kode, walau `AILog-unknown`).
+
+3. **Booking-claim guard kini persist `AILog` + kode.** Workflow `booking_claim_guard`, status `failed`, response berisi reason JSON. Response pengganti membawa `AILog-xxxxxxxx`. Support bisa korelasi klaim yang diblok.
+
+4. **Tool-failure surfacing backstop.** Helper `failedSearchTripsAlreadySelected` scan tool result untuk `search_trips` failed dgn error `"a package is already selected"`, ekstrak `selected_trip_title`. `responseMentionsSelectionOptions` cek apakah respons model sudah menyebut konflik/opsi (`sudah memilih`/`sudah dipilih`/`alternatif`/`batalkan`/`lanjutkan`). Bila model abaikan, `finalizeChat` ganti response: `"Terlihat Anda sudah memilih paket [nama]. Mau lanjutkan pemesanan paket ini, lihat alternatif lain, atau batalkan pilihan?"` (fallback `paket tersebut` bila title kosong). Backstop — respons LLM wajar diawetkan.
+
+5. **`executeSearchTrips` enrich failed result.** Branch "already selected" kini `FindTrip(*session.SelectedTripID)` + sertakan `selected_trip_title` di tool result Data. Model bisa menyebut paket spesifik; backstop `finalizeChat` punya title tanpa DB lookup tambahan.
+
+6. **Unit test** (`ai_service_test.go`): `TestFormatAILogTrackingCode` (format + nil fallback), `TestFailedSearchTripsAlreadySelected` (match already-selected, reject other failures/success/missing-title), `TestResponseMentionsSelectionOptions` (preservasi respons wajar vs overwrite respons yang abaikan).
+
+Verifikasi: `go build ./...` + `go vet ./...` + `gofmt -l` bersih; `go test ./internal/services/...` lolos (incl. 3 test baru).
+
 ---
 
 ## A.10 Temuan Audit Production Readiness Backend (27 Jul 2026)
@@ -1081,6 +1109,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | #19 Cleanup orphan records | ✅ Unscoped Delete `chat_messages`, `tool_calls`, `ai_logs` sblm hapus session |
 | AI-1 Indirect prompt injection pada data katalog | ✅ Sanitasi `sanitizePromptInjection` per-field katalog + delimiter keras di system prompt; field `Overview`/`AmenitiesIncluded` tidak pernah diforward ke LLM (29 Jul 2026 via AIW-1; divalidasi ulang 2 Agu 2026) |
 | AI-2 Tipe parameter tool LLM selalu "string" | ✅ `InputDefinition.Type` + konstanta `ParamType*` + `OpenAITools()` memetakan tipe JSON Schema akurat (integer/boolean/number); parsing konsumsi tetap defensif; regression test `tools_test.go` mengunci (3 Agu 2026) |
+| AIW-6 Fallback generik + tool-failure tersilent + kode pelacakan hilang | ✅ `finalizeChat` persist `AILog` + surface kode `AILog-xxxxxxxx` untuk genErr & booking-claim guard; backstop tool-fail "already selected" ganti response dgn konteks+opsi bila model abaikan; `executeSearchTrips` enrich `selected_trip_title`; system prompt di-rewrite (tone/alur/aturan kritis); 3 unit test baru (5 Agu 2026) |
 | BUG-1 Race double-rotation refresh | ✅ `RotateSession` atomik + window reuse detection di `AuthService.Refresh` |
 | BUG-2 Panic event bus `Unsubscribe` close channel | ✅ `Unsubscribe` tak tutup channel; `Publish` tak bisa kirim ke channel tertutup |
 | BUG-3 Body HTTP `triggerN8N` tidak ditutup | ✅ `NewRequestWithContext` + read+close body (`io.Copy(io.Discard)`) — digabung fix SEC-26 |

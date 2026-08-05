@@ -201,11 +201,18 @@ func (s *MCPService) executeSearchTrips(ctx context.Context, sessionID uuid.UUID
 	}
 
 	// Validator: if user already selected a package and is not explicitly asking
-	// for alternatives, refuse to search to avoid recommendation spam.
+	// for alternatives, refuse to search to avoid recommendation spam. Include
+	// the selected package title so the LLM (and the finalizeChat surfacing
+	// guard) can tell the user WHICH package is selected and offer options.
 	if session.SelectedTripID != nil && !alternative {
+		selectedTitle := ""
+		if trip, terr := s.repo.FindTrip(ctx, *session.SelectedTripID); terr == nil {
+			selectedTitle = trip.Title
+		}
 		return ToolResult{Tool: mcp.ToolSearchTrips, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{
 			"error":               "a package is already selected",
 			"selected_trip_id":    session.SelectedTripID.String(),
+			"selected_trip_title": selectedTitle,
 			"require_alternative": true,
 		}}
 	}
