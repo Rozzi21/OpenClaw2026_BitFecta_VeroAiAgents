@@ -352,19 +352,40 @@ func (c *Client) GenerateStream(ctx context.Context, req CompletionRequest, onDe
 		finish    string
 	)
 
-	scanner := bufio.NewScanner(res.Body)
-	// Some providers send large keep-alive/usage payloads; allow a generous
-	// buffer per line without unbounded growth.
-	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
+	// Use a bufio.Reader instead of bufio.Scanner for byte-level streaming.
+	// bufio.Scanner waits for a newline and may batch multiple SSE lines if
+	// the provider flushes them in the same TCP packet. A Reader lets us
+	// parse events as soon as a blank line delimiter is available, without
+	// waiting for line boundaries that may arrive together.
+	reader := bufio.NewReaderSize(res.Body, 64*1024)
+	for {
+		if ctx.Err() != nil {
 			return CompletionResponse{}, ctx.Err()
-		default:
 		}
 
-		line := scanner.Text()
-		if line == "" || !strings.HasPrefix(line, "data:") {
+		// Read until the SSE blank-line delimiter. We still block on the
+		// reader (which in turn reads from the HTTP response body), so a
+		// context cancellation will unblock the underlying connection close
+		// and return an error.
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			// A context-cancelled read returns a wrapped error; surface it
+			// only if it is not the expected cancellation path.
+			if ctx.Err() != nil {
+				return CompletionResponse{}, ctx.Err()
+			}
+			return CompletionResponse{}, err
+		}
+
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			// End of one SSE event. Continue to read the next event.
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
@@ -423,9 +444,6 @@ func (c *Client) GenerateStream(ctx context.Context, req CompletionRequest, onDe
 		if m, _ := chunk["model"].(string); m != "" {
 			metadata["model"] = m
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return CompletionResponse{}, err
 	}
 	metadata["finish_reason"] = finish
 	metadata["mode"] = "stream"

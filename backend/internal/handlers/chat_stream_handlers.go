@@ -60,9 +60,17 @@ func (h *Handler) streamChat(c *gin.Context, chatCtx services.ChatContext, req d
 	// streaming response; we manage write deadlines per-write instead.
 	_ = rc.SetWriteDeadline(time.Time{})
 
+	// ctx tracks the request lifecycle so we can stop writing as soon as the
+	// client disconnects, avoiding wasted work and goroutine hang.
+	ctx := c.Request.Context()
+
 	// send writes one SSE event and flushes. Returns false if the connection
-	// is dead (write/flush error) so the caller can stop streaming.
+	// is dead (write/flush error) or the request has been cancelled so the
+	// caller can stop streaming.
 	send := func(eventType string, data interface{}) bool {
+		if ctx.Err() != nil {
+			return false
+		}
 		payload, err := json.Marshal(data)
 		if err != nil {
 			return false
@@ -86,7 +94,7 @@ func (h *Handler) streamChat(c *gin.Context, chatCtx services.ChatContext, req d
 		}
 	}
 
-	result, err := h.Services.AI.ChatStream(c.Request.Context(), chatCtx, req, onDelta)
+	result, err := h.Services.AI.ChatStream(ctx, chatCtx, req, onDelta)
 	if err != nil {
 		// Try to surface the error to the client; if the connection is already
 		// dead the send is a no-op and we just return.
