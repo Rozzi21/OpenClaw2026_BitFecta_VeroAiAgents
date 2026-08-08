@@ -664,6 +664,20 @@ DB-1 (Fixed 3 Agu 2026), DB-2 (Fixed 3 Agu 2026), dan DB-3 (Fixed 3 Agu 2026) te
   7. **Catatan batas (tidak diubah, disengaja):** non-stream path (`stream:false`/default) tetap ada — `apiFetch` envelope JSON, untuk client/konsumen yang tak mendukung SSE. Endpoint SSE staff `/events/stream` tak tersentuh. Tool-call rounds non-streaming by design (butuh tool_calls utuh). Rate limit + body limit 64 KiB (SEC-13/16) tetap berlaku di route yang sama. `response_format` structured output (SEC-29) belum di-stream (opsional, di masa depan).
 - **Verifikasi:** `gofmt -l .` (kosong) + `go build ./...` + `go vet ./...` + `go test ./...` exit 0; `frontend` `tsc --noEmit` exit 0.
 
+### PERF-4. ✅ SEDANG — Frontend Chat: React State Update Per-Delta + Teks Ekor Hilang (FIXED 8 Agu 2026)
+
+- **Severity:** Medium
+- **Problem:** Pipeline streaming frontend (PERF-1) awalnya memicu satu `setMessages()` → satu render `ChatInterface` untuk SETIAP delta SSE. Pada token berfrekuensi tinggi ini memaksa ratusan render per respons. Dua bug laten menyertai: (1) `onDone`/`onError` memanggil `stopStreamScheduler()` yang membuang buffer ref tanpa flush → delta yang tiba setelah frame terakhir ("tail") hilang, terlihat sebagai kalimat terpotong; (2) `completedTyping` ditulis memakai message-ID tetapi dibaca memakai index array (`completedTyping[index]`) → blok `PackageRecommendations` tidak pernah ter-render untuk pesan hasil stream. Daftar pesan juga memakai `key={index}` sehingga `AssistantMessage` (yang di-`memo`) remount setiap ada pesan baru.
+- **Recommendation:** Buffer fragmen delta di mutable ref, jadwalkan paling banyak satu `requestAnimationFrame`, dan flush sekali per frame dengan satu `setMessages()`; gunakan message-ID stabil; samakan kunci `completedTyping` by-ID; pakai `key={message.id}`.
+- **Complexity:** Low
+- **Fix (8 Agu 2026):** Semua di `frontend/src/components/chat/ChatInterface.tsx` — backend & kontrak API tidak disentuh.
+  1. **Frame scheduler.** `streamStateRef` `{active, buffer, assistantId, rafId}` menampung fragmen delta. `onDelta` hanya append ke `buffer` + `scheduleStreamFlush()` (no-op bila rAF sudah pending). `flushStreamBuffer()` membaca buffer, melakukan SATU `setMessages()` meng-append teks ke pesan assistant via `assistantId` stabil (`findIndex(m.id === assistantId)`, BUKAN `items[length-1]`), membersihkan buffer, lalu `scrollToBottom("auto")`. Hasil: frekuensi update ≈ 1×/animation frame (16–30ms), tanpa delay buatan.
+  2. **Tail-flush saat terminal.** `onDone`/`onError` menangkap `streamStateRef.current.buffer` SEBELUM `stopStreamScheduler()` dan menggabungkannya ke `setMessages` finalisasi (`target.content + pending`), sehingga teks ekor tidak hilang. `onError` menampilkan error di bawah teks parsial (bukan menimpanya).
+  3. **Stable identity + memo.** Daftar pesan memakai `key={message.id}`; `AssistantMessage` menerima prop `id` (bukan `index`) dan `handleTypingDone` menulis `[id]: true`.
+  4. **`completedTyping` by-ID konsisten.** State `Record<string, boolean>` dibaca `completedTyping[message.id]` dan ditulis `[id]: true` — blok rekomendasi kini ter-render setelah stream selesai. Prop type `onTypingDone` diperbaiki ke `Record<string, boolean>`.
+- **Catatan batas (disengaja):** Optimasi scroll rAF yang sudah ada (`scrollToBottom` throttle) dipertahankan. Streaming dan `TypingText` tetap mutually exclusive. Tidak memakai `startTransition` sebagai solusi utama. Jumlah render per respons turun dari ~N (per token) menjadi ≈ N/60 (per frame) + finalisasi.
+- **Verifikasi:** `frontend` `npx tsc --noEmit` exit 0; backend `go build ./...` exit 0; `go test ./...` exit 0 (cached, tidak ada perubahan backend).
+
 ### PERF-2. ✅ TINGGI — Penggunaan *Bubble Sort* O(N^2) pada *Scoring* (FIXED 4 Agu 2026)
 
 - **Severity:** High

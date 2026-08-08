@@ -30,6 +30,7 @@ import {
 import { getTripAdultPrice, getTripChildPrice } from "@/lib/format";
 
 type ChatMessage = {
+  id: string;
   role: "user" | "assistant";
   content: string;
   workflow?: Record<string, unknown>[];
@@ -44,19 +45,23 @@ type ChatMessage = {
   streaming?: boolean;
 };
 
+let messageIdCounter = 0;
+function nextMessageId() {
+  return `msg-${++messageIdCounter}`;
+}
+
 export default function ChatInterface() {
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
+      id: nextMessageId(),
       role: "assistant",
       content:
         "Halo, saya Vero Travel. Ceritakan destinasi, budget, durasi, dan gaya perjalanan yang Anda inginkan.",
     },
   ]);
   const [selectedPackage, setSelectedPackage] = useState<TripPackage | null>(null);
-  const [completedTyping, setCompletedTyping] = useState<Record<number, boolean>>({
-    0: true,
-  });
+  const [completedTyping, setCompletedTyping] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   // PERF-1: AbortController for the in-flight streaming chat request so the
@@ -68,6 +73,81 @@ export default function ChatInterface() {
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
+  // Throttle scroll-to-bottom during streaming so high-frequency token deltas
+  // do not queue many smooth-scroll animations or force layout thrashing.
+  const scrollTickRef = useRef(false);
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    if (behavior === "auto" && scrollTickRef.current) {
+      return;
+    }
+    scrollTickRef.current = true;
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
+      scrollTickRef.current = false;
+    });
+  }, []);
+
+  // Frame-based streaming scheduler state. Delta fragments are accumulated in
+  // a mutable ref and flushed to React state at most once per animation frame.
+  const streamStateRef = useRef<{
+    active: boolean;
+    buffer: string;
+    assistantId: string | null;
+    rafId: number | null;
+  }>({ active: false, buffer: "", assistantId: null, rafId: null });
+
+  const flushStreamBuffer = useCallback(() => {
+    const state = streamStateRef.current;
+    if (!state.active || state.assistantId === null) {
+      state.buffer = "";
+      state.rafId = null;
+      return;
+    }
+    const buffered = state.buffer;
+    if (buffered === "") {
+      state.rafId = null;
+      return;
+    }
+    state.buffer = "";
+    setMessages((items) => {
+      const targetIndex = items.findIndex((m) => m.id === state.assistantId);
+      if (targetIndex === -1) {
+        return items;
+      }
+      const target = items[targetIndex];
+      if (!target.streaming) {
+        return items;
+      }
+      const updated = { ...target, content: target.content + buffered };
+      const next = [...items];
+      next[targetIndex] = updated;
+      return next;
+    });
+    scrollToBottom("auto");
+    state.rafId = null;
+  }, [scrollToBottom]);
+
+  const scheduleStreamFlush = useCallback(() => {
+    const state = streamStateRef.current;
+    if (state.rafId !== null || !state.active) {
+      return;
+    }
+    state.rafId = requestAnimationFrame(() => {
+      flushStreamBuffer();
+    });
+  }, [flushStreamBuffer]);
+
+  const stopStreamScheduler = useCallback(() => {
+    const state = streamStateRef.current;
+    if (state.rafId !== null) {
+      cancelAnimationFrame(state.rafId);
+      state.rafId = null;
+    }
+    state.active = false;
+    state.buffer = "";
+    state.assistantId = null;
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void apiFetch<GuestChatHistoryResponse>("/api/v1/chat/history")
@@ -75,14 +155,15 @@ export default function ChatInterface() {
         if (cancelled || data.messages.length === 0) {
           return;
         }
-        const nextMessages = data.messages.map((message) => ({
+        const nextMessages: ChatMessage[] = data.messages.map((message) => ({
+          id: nextMessageId(),
           role: message.role,
           content: message.content,
           shouldAnimate: false,
         }));
         setMessages(nextMessages);
         setCompletedTyping(
-          Object.fromEntries(data.messages.map((_, index) => [index, true]))
+          Object.fromEntries(nextMessages.map((m) => [m.id, true]))
         );
       })
       .catch(() => {
@@ -98,16 +179,13 @@ export default function ChatInterface() {
   useEffect(() => {
     return () => {
       streamAbortRef.current?.abort();
+      stopStreamScheduler();
     };
-  }, []);
-
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
-  }, []);
+  }, [stopStreamScheduler]);
 
   // Scroll on loading state changes and after messages finalize; avoid
   // scrolling on every message array update during streaming to keep rendering
-  // cheap. onDelta performs its own auto-scroll.
+  // cheap. The scheduler performs its own auto-scroll on each frame flush.
   useEffect(() => {
     scrollToBottom("auto");
   }, [loading, scrollToBottom]);
@@ -122,11 +200,12 @@ export default function ChatInterface() {
       setPrompt("");
       setLoading(true);
 
-      setMessages((items) => {
-        const nextUserIndex = items.length;
-        setCompletedTyping((prev) => ({ ...prev, [nextUserIndex]: true }));
-        return [...items, { role: "user" as const, content: text }];
-      });
+      const userId = nextMessageId();
+      setMessages((items) => [
+        ...items,
+        { id: userId, role: "user" as const, content: text },
+      ]);
+      setCompletedTyping((prev) => ({ ...prev, [userId]: true }));
 
       // PERF-1: stream the assistant response. The assistant message is added
       // incrementally as deltas arrive so we don't show an empty chat bubble
@@ -134,7 +213,20 @@ export default function ChatInterface() {
       const abort = new AbortController();
       streamAbortRef.current = abort;
 
-      let assistantIndex = -1;
+      const assistantId = nextMessageId();
+      streamStateRef.current = {
+        active: true,
+        buffer: "",
+        assistantId,
+        rafId: null,
+      };
+
+      // Seed the empty assistant message before the first delta so the UI has
+      // a stable target to update during the frame scheduler.
+      setMessages((items) => [
+        ...items,
+        { id: assistantId, role: "assistant" as const, content: "", streaming: true },
+      ]);
 
       try {
         await streamChat(
@@ -142,33 +234,28 @@ export default function ChatInterface() {
           { prompt: text, stream: true },
           {
             onDelta: (fragment) => {
-              setMessages((items) => {
-                const last = items[items.length - 1];
-                if (!last || last.role !== "assistant" || !last.streaming) {
-                  const next = [
-                    ...items,
-                    { role: "assistant" as const, content: fragment, streaming: true },
-                  ];
-                  assistantIndex = items.length;
-                  return next;
-                }
-                // Mutate in place via a new last object to keep the update O(1)
-                // and avoid re-rendering unchanged sibling messages.
-                const updated = { ...last, content: last.content + fragment };
-                return [...items.slice(0, -1), updated];
-              });
-              scrollToBottom("auto");
+              const state = streamStateRef.current;
+              if (!state.active || state.assistantId !== assistantId) {
+                return;
+              }
+              state.buffer += fragment;
+              scheduleStreamFlush();
             },
             onDone: (result) => {
+              // Flush the scheduler tail: deltas that arrived after the last
+              // animation frame are still sitting in the buffer. Merge them
+              // into this final setMessages so no trailing text is lost.
+              const pending = streamStateRef.current.buffer;
+              stopStreamScheduler();
               setMessages((items) => {
-                const last = items[items.length - 1];
-                // If deltas never arrived (empty stream / local fallback),
-                // seed the content from the final result message.
-                const wasStreaming = last?.streaming === true;
+                const targetIndex = items.findIndex((m) => m.id === assistantId);
+                const target = targetIndex !== -1 ? items[targetIndex] : null;
+                const wasStreaming = target?.streaming === true;
                 const content = wasStreaming
-                  ? (last.content || result.message)
+                  ? (target.content + pending || result.message)
                   : result.message;
                 const newMsg: ChatMessage = {
+                  id: assistantId,
                   role: "assistant",
                   content,
                   packages: result.recommended_packages ?? [],
@@ -183,33 +270,49 @@ export default function ChatInterface() {
                   shouldAnimate: !wasStreaming,
                 };
                 if (wasStreaming) {
-                  return [...items.slice(0, -1), newMsg];
+                  const next = [...items];
+                  next[targetIndex] = newMsg;
+                  return next;
                 }
-                assistantIndex = items.length;
                 return [...items, newMsg];
               });
               // Mark the finalized assistant message as done typing so the
               // recommendations block can render (it gates on completedTyping).
               setCompletedTyping((items) => ({
                 ...items,
-                [assistantIndex]: true,
+                [assistantId]: true,
               }));
             },
             onError: (message) => {
+              // Same tail-flush as onDone: keep buffered deltas that never
+              // reached a frame, then surface the error below them.
+              const pending = streamStateRef.current.buffer;
+              stopStreamScheduler();
               setMessages((items) => {
-                const last = items[items.length - 1];
+                const targetIndex = items.findIndex((m) => m.id === assistantId);
+                const target = targetIndex !== -1 ? items[targetIndex] : null;
                 // If we already streamed partial text, keep it and append the
                 // error notice; otherwise replace the empty placeholder.
-                if (last?.streaming) {
-                  if (last.content) {
-                    return [
-                      ...items.slice(0, -1),
-                      { ...last, content: last.content + "\n\n" + message, streaming: false },
-                    ];
+                if (target?.streaming) {
+                  const partial = target.content + pending;
+                  if (partial) {
+                    const next = [...items];
+                    next[targetIndex] = {
+                      ...target,
+                      content: partial + "\n\n" + message,
+                      streaming: false,
+                    };
+                    return next;
                   }
-                  return [...items.slice(0, -1), { role: "assistant" as const, content: message }];
+                  const next = [...items];
+                  next[targetIndex] = {
+                    id: assistantId,
+                    role: "assistant",
+                    content: message,
+                  };
+                  return next;
                 }
-                return [...items, { role: "assistant" as const, content: message }];
+                return [...items, { id: assistantId, role: "assistant", content: message }];
               });
             },
           },
@@ -220,7 +323,7 @@ export default function ChatInterface() {
         setLoading(false);
       }
     },
-    [loading, prompt, scrollToBottom]
+    [loading, prompt, scheduleStreamFlush, stopStreamScheduler]
   );
 
   return (
@@ -232,19 +335,19 @@ export default function ChatInterface() {
       >
       <div className="flex-1 overflow-y-auto px-8 py-10 pb-32">
         <div className={`${selectedPackage ? "max-w-3xl" : "max-w-4xl"} mx-auto space-y-8`}>
-          {messages.map((message, index) =>
+          {messages.map((message) =>
             message.role === "user" ? (
-              <div key={index} className="flex justify-end">
+              <div key={message.id} className="flex justify-end">
                 <div className="bg-[#f0e8e8] text-slate-800 px-6 py-4 rounded-2xl rounded-tr-sm max-w-[80%] shadow-sm">
                   <p className="text-[15px] leading-relaxed">{message.content}</p>
                 </div>
               </div>
             ) : (
               <AssistantMessage
-                key={index}
-                index={index}
+                key={message.id}
+                id={message.id}
                 message={message}
-                completedTyping={completedTyping[index]}
+                completedTyping={completedTyping[message.id]}
                 onSelectPackage={setSelectedPackage}
                 scrollToBottom={scrollToBottom}
                 onTypingDone={setCompletedTyping}
@@ -305,16 +408,16 @@ export default function ChatInterface() {
 }
 
 type AssistantMessageProps = {
-  index: number;
+  id: string;
   message: ChatMessage;
   completedTyping: boolean;
   onSelectPackage: (trip: TripPackage) => void;
   scrollToBottom: (behavior?: ScrollBehavior) => void;
-  onTypingDone: React.Dispatch<React.SetStateAction<Record<number, boolean>>>;
+  onTypingDone: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
 };
 
 const AssistantMessage = memo(function AssistantMessage({
-  index,
+  id,
   message,
   completedTyping,
   onSelectPackage,
@@ -322,8 +425,8 @@ const AssistantMessage = memo(function AssistantMessage({
   onTypingDone,
 }: AssistantMessageProps) {
   const handleTypingDone = useCallback(() => {
-    onTypingDone((items) => ({ ...items, [index]: true }));
-  }, [onTypingDone, index]);
+    onTypingDone((items) => ({ ...items, [id]: true }));
+  }, [onTypingDone, id]);
 
   return (
     <div className="flex items-start gap-4">
