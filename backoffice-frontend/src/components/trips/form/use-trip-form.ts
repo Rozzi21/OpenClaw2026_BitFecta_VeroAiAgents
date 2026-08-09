@@ -29,6 +29,8 @@ const EMPTY_DEFAULTS: TripFormStaticDefaults = {
   child_price: "",
   discount_price: "",
   child_discount_price: "",
+  discount_percent: "",
+  child_discount_percent: "",
   discount_enabled: false,
   child_discount_enabled: false,
   package_start: "",

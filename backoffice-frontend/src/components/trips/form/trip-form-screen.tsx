@@ -87,6 +87,8 @@ export function TripFormScreen() {
               child_price={defaults.child_price}
               discount_price={defaults.discount_price}
               child_discount_price={defaults.child_discount_price}
+              discount_percent={defaults.discount_percent}
+              child_discount_percent={defaults.child_discount_percent}
               discount_enabled={defaults.discount_enabled}
               child_discount_enabled={defaults.child_discount_enabled}
             />

@@ -16,6 +16,8 @@ export type TripFormStaticDefaults = {
   child_price: string;
   discount_price: string;
   child_discount_price: string;
+  discount_percent: string;
+  child_discount_percent: string;
   discount_enabled: boolean;
   child_discount_enabled: boolean;
   package_start: string;
@@ -41,6 +43,16 @@ export type TripFormControlledState = {
   adultPax: string;
   childPax: string;
 };
+
+export function computeDiscountPercent(
+  basePrice: number,
+  discountPrice: number
+): string {
+  if (basePrice <= 0 || discountPrice <= 0 || discountPrice >= basePrice) {
+    return "";
+  }
+  return String(Math.round(((basePrice - discountPrice) / basePrice) * 100));
+}
 
 export function parseDuration(duration: string): { days: string; nights: string } {
   const match = duration.match(/(\d+)\s*Days?\s*\/\s*(\d+)\s*Nights?/i);
@@ -125,6 +137,14 @@ export function mapTripToForm(trip: TripPackage): {
       child_price: String(trip.child_price ?? ""),
       discount_price: String(trip.discount_price ?? ""),
       child_discount_price: String(trip.child_discount_price ?? ""),
+      discount_percent: computeDiscountPercent(
+        trip.base_price ?? 0,
+        trip.discount_price ?? 0
+      ),
+      child_discount_percent: computeDiscountPercent(
+        trip.child_price ?? 0,
+        trip.child_discount_price ?? 0
+      ),
       discount_enabled: trip.discount_enabled ?? false,
       child_discount_enabled: trip.child_discount_enabled ?? false,
       package_start: formatDateForInput(trip.package_start_date),
