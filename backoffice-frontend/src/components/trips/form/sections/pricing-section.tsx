@@ -1,7 +1,6 @@
 "use client";
 
 import { FormSection } from "../ui/form-section";
-import { Field } from "../ui/field";
 import { Checkbox } from "../ui/checkbox";
 import { TripFormStaticDefaults } from "../map-trip-to-form";
 import { useState, useEffect, useCallback } from "react";

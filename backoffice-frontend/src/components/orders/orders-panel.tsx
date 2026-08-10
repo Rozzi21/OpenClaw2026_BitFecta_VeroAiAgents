@@ -606,7 +606,7 @@ export function OrdersPanel() {
   };
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_right,_#fff1f2_0,_transparent_28rem),linear-gradient(180deg,_#ffffff_0%,_#fcfcff_100%)] px-0 pb-8 text-[#161a23] sm:px-2 lg:px-0">
+    <div className="min-h-screen px-0 pb-8 text-[#161a23] sm:px-2 lg:px-0">
       <div className="mx-auto max-w-[1180px]">
         <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
           <div>
