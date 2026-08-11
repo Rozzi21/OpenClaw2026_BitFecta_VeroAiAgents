@@ -213,7 +213,6 @@ func (s *MCPService) executeSearchTrips(ctx context.Context, sessionID uuid.UUID
 			"error":               "a package is already selected",
 			"selected_trip_id":    session.SelectedTripID.String(),
 			"selected_trip_title": selectedTitle,
-			"require_alternative": true,
 		}}
 	}
 

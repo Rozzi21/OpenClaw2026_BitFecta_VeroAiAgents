@@ -269,7 +269,14 @@ func (s *AIService) finalizeChat(ctx context.Context, sessionID uuid.UUID, aiRes
 		}
 	}
 
-	if selectedTripID != nil && !hasSearchTripsAlternative(toolResults) {
+	// BUG-13 (11 Agu 2026): suppress recommendations whenever the user has
+	// already selected a package, regardless of whether search_trips was
+	// called with alternative=true. Previously the guard only fired when
+	// hasSearchTripsAlternative was false, allowing the LLM to bypass it by
+	// calling search_trips(alternative=true) after the first failure — which
+	// leaked unrelated packages to the frontend while the user was asking
+	// about the one package they already selected.
+	if selectedTripID != nil {
 		showRecommendations = false
 		recommendationReason = ""
 		recommendedPackages = nil

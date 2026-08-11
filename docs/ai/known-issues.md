@@ -698,6 +698,24 @@ Perbaikan (3 lapis, 11 Agu 2026):
 
 Verifikasi: `go build ./...` + `gofmt -l .` (kosong) bersih; `frontend` `npx tsc --noEmit` exit 0.
 
+### BUG-13. ✅ SEDANG — Rekomendasi Paket Lain Muncul Setelah User Memilih Paket via `select_package` (FIXED 11 Agu 2026)
+
+**Lokasi:** `backend/internal/services/mcp_service.go` (`executeSearchTrips`), `backend/internal/services/ai_service.go` (`finalizeChat`).
+
+Saat user sudah memilih paket via `select_package` lalu menanyakan detail paket tersebut, backend malah menampilkan ulang SEMUA paket rekomendasi (bukan 0 atau hanya paket yang dipilih). Dua celah:
+
+1. **`executeSearchTrips` failure response membocorkan hint `require_alternative: true` ke LLM.** Saat `search_trips` gagal karena `"a package is already selected"`, payload failure mengandung field `"require_alternative": true`. LLM melihat field ini dan menyimpulkan ia harus memanggil ulang `search_trips(alternative: true)` — yang mem-bypass guard "already selected" di `executeSearchTrips` → return SEMUA paket katalog.
+
+2. **Guard `finalizeChat` terlalu longgar.** Guard suppress recommendations hanya aktif saat `selectedTripID != nil && !hasSearchTripsAlternative`. Karena round 2 search_trips sukses dengan `reason: "alternative"`, `hasSearchTripsAlternative` = true → guard tidak jalan → semua paket lolos ke frontend bersama `show_recommendations: true`.
+
+Perbaikan (Opsi C — kombinasi):
+
+1. **`executeSearchTrips`** — hapus `"require_alternative": true` dari failure response. System prompt sudah cukup menginstruksikan LLM untuk merespons dengan teks opsi (lanjutkan/alternatif/batalkan) saat search_trips gagal. Tidak perlu hint tambahan yang membingungkan LLM.
+
+2. **`finalizeChat`** — perketat guard: suppress recommendations setiap kali `selectedTripID != nil`, tanpa syarat `hasSearchTripsAlternative`. User yang sudah memilih paket tidak boleh melihat rekomendasi paket lain, terlepas dari apakah search_trips dipanggil dengan `alternative: true` atau tidak.
+
+Verifikasi: `go build ./...` bersih.
+
 ### PERF-2. ✅ TINGGI — Penggunaan *Bubble Sort* O(N^2) pada *Scoring* (FIXED 4 Agu 2026)
 
 - **Severity:** High
@@ -1182,6 +1200,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | PERF-2 Bubble Sort O(N^2) pada scoring `scoreTrips` | ✅ Loop `for i...for j` diganti `sort.SliceStable` (O(N log N)) di `mcp_service.go` `scoreTrips`; stabil jaga urutan DB saat tie; kontrak tak berubah (4 Agu 2026) |
 | PERF-3 Alokasi memori berulang (regex `slugify` re-compile + `json.Marshal` audit sinkron) | ✅ `slugNonAlnum` package-level var (regex compile sekali); audit `CreateToolCall`/`CreateAILog` dipindah ke bounded worker pool `AuditPool` (2 worker, buffer 64, detached ctx) di `audit_pool.go`; `Execute` non-blocking `Submit` + `clonePayload` defensive copy + `StopAudit` graceful drain di `main.go`; fallback `persistAuditSync` saat pool nil (4 Agu 2026) |
 | BUG-12 Streaming bocor token reasoning ("The" prefix) + container kosong saat thinking | ✅ `GenerateStream` akumulasi `reasoning_content` terpisah (tak di-stream via `onDelta`); `ChatInterface` skip render pesan streaming dgn `content === ""` (11 Agu 2026) |
+| BUG-13 Rekomendasi paket lain muncul setelah user memilih paket via `select_package` | ✅ Hapus `require_alternative: true` dari failure response `executeSearchTrips`; perketat guard `finalizeChat` suppress recommendations saat `selectedTripID != nil` tanpa syarat `hasSearchTripsAlternative` (11 Agu 2026) |
 
 
 
