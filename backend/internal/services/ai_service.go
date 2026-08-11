@@ -595,10 +595,18 @@ func (s *AIService) generateWithToolLoopStream(ctx context.Context, sessionID uu
 		// tool_calls deltas and returns them in the response, so we can
 		// still dispatch tools after the stream completes. This halves the
 		// API call count vs the old Generate+GenerateStream double-call.
+		//
+		// BUG-12 (11 Agu 2026): pass nil onDelta here. Some providers emit
+		// partial `content` alongside `tool_calls` in tool-selection rounds
+		// (e.g. reasoning preamble "The..."). If forwarded to onDelta, that
+		// fragment is appended to the frontend buffer; the final round then
+		// streams the full text again → duplicated prefix ("TheTheHalo!").
+		// Only the FINAL text round (no tool_calls, or exhausted rounds)
+		// forwards deltas to the user.
 		resp, err := s.client.GenerateStream(ctx, ai.CompletionRequest{
 			Messages: messages,
 			Tools:    tools,
-		}, onDelta)
+		}, nil)
 		if err != nil {
 			// Fallback: some providers reject stream + tools combinations.
 			// Use non-streaming Generate to get the response. The frontend's
@@ -615,10 +623,18 @@ func (s *AIService) generateWithToolLoopStream(ctx context.Context, sessionID uu
 		}
 
 		if len(resp.ToolCalls) == 0 {
-			// No tools requested — this is the final text response.
-			// If streaming succeeded, text was already delivered via onDelta.
-			// If we fell back to non-streaming Generate, the frontend will
-			// animate the text via shouldAnimate.
+			// No tools requested — this is the final text response, but it
+			// was produced with nil onDelta (see BUG-12 above), so the text
+			// was NOT streamed live. Re-stream it now so the user sees it
+			// token-by-token via the frontend shouldAnimate fallback path
+			// (onDone sets shouldAnimate=!wasStreaming, and since no deltas
+			// arrived, wasStreaming is effectively false → animate).
+			// Actually: we cannot re-stream an already-complete response.
+			// Instead, emit the full text as a single delta so the frontend
+			// appends it in one shot (caret still shows via streaming flag).
+			if resp.Text != "" && onDelta != nil {
+				onDelta(resp.Text)
+			}
 			return resp, allToolResults, nil
 		}
 

@@ -346,10 +346,11 @@ func (c *Client) GenerateStream(ctx context.Context, req CompletionRequest, onDe
 	}
 
 	var (
-		fullText  strings.Builder
-		toolCalls = map[int]*ToolCall{} // accumulate deltas keyed by tool index
-		metadata  = map[string]interface{}{}
-		finish    string
+		fullText      strings.Builder
+		reasoningText strings.Builder       // reasoning_content, NOT streamed to user
+		toolCalls     = map[int]*ToolCall{} // accumulate deltas keyed by tool index
+		metadata      = map[string]interface{}{}
+		finish        string
 	)
 
 	// Use a bufio.Reader instead of bufio.Scanner for byte-level streaming.
@@ -420,16 +421,16 @@ func (c *Client) GenerateStream(ctx context.Context, req CompletionRequest, onDe
 			if tcsRaw, ok := delta["tool_calls"].([]interface{}); ok {
 				accumulateToolCallDeltas(toolCalls, tcsRaw)
 			}
-			// Reasoning models sometimes stream reasoning_content instead of
-			// content; fall back to it only if no content arrived at all, so we
-			// match extractText semantics for non-streaming responses.
-			if fullText.Len() == 0 {
-				if rc, _ := delta["reasoning_content"].(string); rc != "" {
-					fullText.WriteString(rc)
-					if onDelta != nil {
-						onDelta(rc)
-					}
-				}
+			// Reasoning models (DeepSeek/Qwen) stream reasoning_content during
+			// the "thinking" phase BEFORE content arrives. Accumulate it
+			// separately as a fallback (used only if the stream ends with
+			// zero content, matching extractText semantics) but NEVER forward
+			// it to onDelta. Previously the per-chunk `fullText.Len() == 0`
+			// guard let the FIRST reasoning token ("The") leak into fullText
+			// and onDelta; when real content ("Halo!") arrived it appended to
+			// "The" -> "TheHalo!". Reasoning tokens must not reach the user.
+			if rc, _ := delta["reasoning_content"].(string); rc != "" {
+				reasoningText.WriteString(rc)
 			}
 		}
 
@@ -455,7 +456,14 @@ func (c *Client) GenerateStream(ctx context.Context, req CompletionRequest, onDe
 		RawStatus: res.StatusCode,
 	}
 	if len(out.ToolCalls) == 0 && out.Text == "" {
-		out.Text = "AI provider returned an empty text response."
+		// No content streamed; fall back to reasoning_content if the provider
+		// sent any (pure reasoning models). It was not streamed live, so the
+		// frontend handler animates it via shouldAnimate.
+		if reasoningText.Len() > 0 {
+			out.Text = reasoningText.String()
+		} else {
+			out.Text = "AI provider returned an empty text response."
+		}
 	}
 	return out, nil
 }

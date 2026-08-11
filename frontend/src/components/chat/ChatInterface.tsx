@@ -343,15 +343,21 @@ export default function ChatInterface() {
                 </div>
               </div>
             ) : (
-              <AssistantMessage
-                key={message.id}
-                id={message.id}
-                message={message}
-                completedTyping={completedTyping[message.id]}
-                onSelectPackage={setSelectedPackage}
-                scrollToBottom={scrollToBottom}
-                onTypingDone={setCompletedTyping}
-              />
+              // PERF-1: while a streaming message is still empty (model is
+              // thinking, no content delta arrived yet) hide the bubble — the
+              // "Thinking" dots below already indicate work in progress.
+              // Rendering an empty bubble with a caret looked broken.
+              (message.content || !message.streaming) && (
+                <AssistantMessage
+                  key={message.id}
+                  id={message.id}
+                  message={message}
+                  completedTyping={completedTyping[message.id]}
+                  onSelectPackage={setSelectedPackage}
+                  scrollToBottom={scrollToBottom}
+                  onTypingDone={setCompletedTyping}
+                />
+              )
             )
           )}
 

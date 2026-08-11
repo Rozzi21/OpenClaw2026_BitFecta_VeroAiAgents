@@ -678,6 +678,26 @@ DB-1 (Fixed 3 Agu 2026), DB-2 (Fixed 3 Agu 2026), dan DB-3 (Fixed 3 Agu 2026) te
 - **Catatan batas (disengaja):** Optimasi scroll rAF yang sudah ada (`scrollToBottom` throttle) dipertahankan. Streaming dan `TypingText` tetap mutually exclusive. Tidak memakai `startTransition` sebagai solusi utama. Jumlah render per respons turun dari ~N (per token) menjadi ≈ N/60 (per frame) + finalisasi.
 - **Verifikasi:** `frontend` `npx tsc --noEmit` exit 0; backend `go build ./...` exit 0; `go test ./...` exit 0 (cached, tidak ada perubahan backend).
 
+### BUG-12. ✅ SEDANG — Streaming Bocor Token Reasoning ("The" Prefix) + Container Kosong Saat Thinking (FIXED 11 Agu 2026)
+
+**Lokasi:** `backend/internal/ai/ai_client.go` (`GenerateStream`), `frontend/src/components/chat/ChatInterface.tsx`.
+
+Dua bug pada pipeline streaming (PERF-1):
+
+1. **Token reasoning bocor ke output.** Model penalaran (DeepSeek/Qwen) mengirim `choices[0].delta.reasoning_content` selama fase "thinking" SEBELUM `content` asli tiba. `GenerateStream` lama memakai guard `if fullText.Len() == 0` per-chunk: token reasoning pertama (sering "The") menulis ke `fullText` + dipanggil ke `onDelta`. Saat `content` asli ("Halo!...") tiba, ia di-append ke "The" → user melihat `"TheHalo! Senang..."`. Reasoning tidak boleh sampai ke user.
+
+2. **Container chat muncul saat masih thinking.** `ChatInterface.tsx` men-seed pesan assistant kosong (`content: ""`, `streaming: true`) sebelum delta pertama tiba. Bubble kosong + caret langsung render bersamaan dengan dots "Thinking" → terlihat rusak.
+
+Perbaikan (3 lapis, 11 Agu 2026):
+
+1. **`GenerateStream`** — `reasoning_content` kini di-akumulasi ke `reasoningText strings.Builder` terpisah, TIDAK pernah diteruskan ke `onDelta`. Hanya `delta.content` yang di-stream. Fallback: bila stream berakhir tanpa `content` sama sekali (model reasoning murni), `reasoningText` dipakai sebagai `out.Text` (di-animate frontend via `shouldAnimate`), konsisten dgn semantik `extractText` non-streaming.
+
+2. **`generateWithToolLoopStream`** — `onDelta` kini `nil` saat round tool-selection (`len(resp.ToolCalls) > 0`). Beberapa provider mengirim `content` parsial ("The...") bareng `tool_calls` di round 1; bila diteruskan ke `onDelta`, frontend buffer menerima fragmen itu, lalu round final streaming ulang teks utuh → duplikat prefix ("TheTheHalo!"). Round final (no tool_calls) kini `onDelta(resp.Text)` single-shot bila text belum di-stream (kasus round 1 = final). Exhausted-round path tetap `GenerateStream(..., onDelta)` seperti biasa.
+
+3. **`ChatInterface.tsx`** — pesan assistant dengan `streaming: true` DAN `content === ""` tidak dirender (guard `(message.content || !message.streaming)`). Dots "Thinking" sudah mengindikasikan pekerjaan; bubble kosong tidak muncul lagi. Begitu delta pertama tiba, content terisi → bubble muncul dengan caret.
+
+Verifikasi: `go build ./...` + `gofmt -l .` (kosong) bersih; `frontend` `npx tsc --noEmit` exit 0.
+
 ### PERF-2. ✅ TINGGI — Penggunaan *Bubble Sort* O(N^2) pada *Scoring* (FIXED 4 Agu 2026)
 
 - **Severity:** High
@@ -1161,6 +1181,7 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | PERF-1 Tidak ada streaming respons AI (high TTFT) | ✅ `GenerateStream` SSE di `ai_client.go` + `ChatStream`/`generateWithToolLoopStream`/`finalizeChat` di `ai_service.go` + `streamChat` handler SSE + `streamChat`/parser SSE di `frontend/src/lib/api.ts` + `ChatInterface` stream render (3 Agu 2026) |
 | PERF-2 Bubble Sort O(N^2) pada scoring `scoreTrips` | ✅ Loop `for i...for j` diganti `sort.SliceStable` (O(N log N)) di `mcp_service.go` `scoreTrips`; stabil jaga urutan DB saat tie; kontrak tak berubah (4 Agu 2026) |
 | PERF-3 Alokasi memori berulang (regex `slugify` re-compile + `json.Marshal` audit sinkron) | ✅ `slugNonAlnum` package-level var (regex compile sekali); audit `CreateToolCall`/`CreateAILog` dipindah ke bounded worker pool `AuditPool` (2 worker, buffer 64, detached ctx) di `audit_pool.go`; `Execute` non-blocking `Submit` + `clonePayload` defensive copy + `StopAudit` graceful drain di `main.go`; fallback `persistAuditSync` saat pool nil (4 Agu 2026) |
+| BUG-12 Streaming bocor token reasoning ("The" prefix) + container kosong saat thinking | ✅ `GenerateStream` akumulasi `reasoning_content` terpisah (tak di-stream via `onDelta`); `ChatInterface` skip render pesan streaming dgn `content === ""` (11 Agu 2026) |
 
 
 
