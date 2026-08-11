@@ -716,6 +716,22 @@ Perbaikan (Opsi C — kombinasi):
 
 Verifikasi: `go build ./...` bersih.
 
+### BUG-14. ✅ SEDANG — Context Deadline Exceeded pada Multi-Round Tool Loop (create_booking) (FIXED 12 Agu 2026)
+
+**Lokasi:** `backend/internal/services/ai_service.go` (`generateWithToolLoop`, `generateWithToolLoopStream`).
+
+`context.WithTimeout(ctx, s.cfg.AITimeout)` (35s) membungkus SELURUH tool loop, bukan per-round. Workflow multi-round (search_trips → select_package → collect_order_detail → create_booking) butuh 4-5 round API call; masing-masing 5-10 detik → kumulatif >35s → `context deadline exceeded` → `genErr` → `finalizeChat` balas pesan error `"Maaf, layanan AI sedang terganggu..."` + kode `AILog-xxxxxxxx`. Chat normal (1-2 round) tetap sukses, hanya create_booking (round terakhir) yang gagal.
+
+**Root cause:** HTTP client (`ai.Client`) sudah punya timeout 35s per-call via `http.Client{Timeout: cfg.AITimeout}`. `context.WithTimeout` loop-level redundant dan kontraproduktif: ia membatasi total waktu loop, bukan per-call.
+
+Perbaikan:
+1. **`generateWithToolLoop`** — hapus `context.WithTimeout(ctx, s.cfg.AITimeout)`. Gunakan request context langsung; setiap `Generate()` call dilindungi timeout HTTP client 35s. Loop dibatasi `MaxToolCallRounds` (5).
+2. **`generateWithToolLoopStream`** — sama, hapus `context.WithTimeout`.
+3. **`config.go`** — `AIAPIKey` kini di-`strings.TrimSpace()` sebagai defense-in-depth (spasi di `.env` tidak lagi menyebabkan auth gagal).
+4. **`.env`** — hapus spasi di depan `AI_API_KEY` (dari ` sk-...` ke `sk-...`).
+
+Verifikasi: `go build ./...` + `go vet ./...` bersih.
+
 ### PERF-2. ✅ TINGGI — Penggunaan *Bubble Sort* O(N^2) pada *Scoring* (FIXED 4 Agu 2026)
 
 - **Severity:** High

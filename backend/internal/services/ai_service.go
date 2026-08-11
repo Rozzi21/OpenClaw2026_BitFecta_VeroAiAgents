@@ -555,13 +555,15 @@ func responseMentionsSelectionOptions(response string) bool {
 // PERF-4: accepts the already-fetched session struct instead of re-querying
 // it in buildMessages. The caller (Chat) has validated + loaded the session.
 func (s *AIService) generateWithToolLoop(ctx context.Context, session models.ChatSession, prompt string) (ai.CompletionResponse, []ToolResult, error) {
-	// SEC-26: derive the AI timeout from the incoming request context instead
-	// of context.Background() so a client disconnect cancels the LLM call and
-	// the tool loop's DB/tool work. Whichever fires first (client cancel or
-	// AITimeout) wins; both now propagate cancellation downstream.
-	ctx, cancel := context.WithTimeout(ctx, s.cfg.AITimeout)
-	defer cancel()
-
+	// SEC-26: use the incoming request context directly so a client disconnect
+	// cancels the LLM call and the tool loop's DB/tool work. Each individual
+	// API call is guarded by the HTTP client's timeout (cfg.AITimeout, 35s),
+	// so no single round can hang forever. The overall loop is bounded by
+	// MaxToolCallRounds (5). Previously a single context.WithTimeout wrapped
+	// the entire loop, so multi-round workflows (e.g. search_trips →
+	// select_package → collect_order_detail → create_booking) would exhaust
+	// the 35s budget before the final round, causing "context deadline
+	// exceeded" on create_booking.
 	sessionID := session.ID
 	messages := s.buildMessages(ctx, session, prompt)
 	tools := mcp.OpenAITools()
@@ -617,9 +619,10 @@ func (s *AIService) generateWithToolLoop(ctx context.Context, session models.Cha
 // shouldAnimate fallback then animates the text so the user still sees a
 // typing effect.
 func (s *AIService) generateWithToolLoopStream(ctx context.Context, session models.ChatSession, prompt string, onDelta func(text string)) (ai.CompletionResponse, []ToolResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, s.cfg.AITimeout)
-	defer cancel()
-
+	// Same rationale as generateWithToolLoop: each individual API call is guarded
+	// by the HTTP client's timeout (cfg.AITimeout, 35s). The overall loop is
+	// bounded by MaxToolCallRounds (5). A single context.WithTimeout wrapping
+	// the entire loop would exhaust before multi-round workflows complete.
 	sessionID := session.ID
 	messages := s.buildMessages(ctx, session, prompt)
 	tools := mcp.OpenAITools()
