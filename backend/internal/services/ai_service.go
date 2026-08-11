@@ -121,7 +121,12 @@ func (s *AIService) Chat(ctx context.Context, chatCtx ChatContext, req dto.ChatR
 
 	// Use tool-driven workflow. The LLM decides whether to call search_trips,
 	// select_package, collect_order_detail, or create_booking.
-	aiResponse, toolResults, err := s.generateWithToolLoop(ctx, sessionID, req.Prompt)
+	//
+	// PERF-4: pass the already-fetched `session` struct down to the tool loop
+	// and buildMessages instead of re-fetching it. Chat() already validated
+	// and loaded the session above; a second FindChatSession in buildMessages
+	// was a redundant DB round-trip (~10-30ms) per request.
+	aiResponse, toolResults, err := s.generateWithToolLoop(ctx, session, req.Prompt)
 	return s.finalizeChat(ctx, sessionID, aiResponse, toolResults, err)
 }
 
@@ -328,7 +333,9 @@ func (s *AIService) ChatStream(ctx context.Context, chatCtx ChatContext, req dto
 		return ChatResult{}, err
 	}
 
-	aiResponse, toolResults, err := s.generateWithToolLoopStream(ctx, sessionID, req.Prompt, onDelta)
+	// PERF-4: pass the already-fetched `session` struct (same rationale as
+	// Chat above) to avoid a redundant FindChatSession in buildMessages.
+	aiResponse, toolResults, err := s.generateWithToolLoopStream(ctx, session, req.Prompt, onDelta)
 	return s.finalizeChat(ctx, sessionID, aiResponse, toolResults, err)
 }
 
@@ -519,7 +526,10 @@ func responseMentionsSelectionOptions(response string) bool {
 // If the LLM responds with tool_calls, this function executes them via MCP,
 // appends the results back into the conversation, and calls the LLM again
 // so it can generate a final text response based on actual tool results.
-func (s *AIService) generateWithToolLoop(ctx context.Context, sessionID uuid.UUID, prompt string) (ai.CompletionResponse, []ToolResult, error) {
+//
+// PERF-4: accepts the already-fetched session struct instead of re-querying
+// it in buildMessages. The caller (Chat) has validated + loaded the session.
+func (s *AIService) generateWithToolLoop(ctx context.Context, session models.ChatSession, prompt string) (ai.CompletionResponse, []ToolResult, error) {
 	// SEC-26: derive the AI timeout from the incoming request context instead
 	// of context.Background() so a client disconnect cancels the LLM call and
 	// the tool loop's DB/tool work. Whichever fires first (client cancel or
@@ -527,7 +537,8 @@ func (s *AIService) generateWithToolLoop(ctx context.Context, sessionID uuid.UUI
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.AITimeout)
 	defer cancel()
 
-	messages := s.buildMessages(ctx, sessionID, prompt)
+	sessionID := session.ID
+	messages := s.buildMessages(ctx, session, prompt)
 	tools := mcp.OpenAITools()
 
 	var allToolResults []ToolResult
@@ -580,11 +591,12 @@ func (s *AIService) generateWithToolLoop(ctx context.Context, sessionID uuid.UUI
 // combinations), we fall back to non-streaming Generate. The frontend's
 // shouldAnimate fallback then animates the text so the user still sees a
 // typing effect.
-func (s *AIService) generateWithToolLoopStream(ctx context.Context, sessionID uuid.UUID, prompt string, onDelta func(text string)) (ai.CompletionResponse, []ToolResult, error) {
+func (s *AIService) generateWithToolLoopStream(ctx context.Context, session models.ChatSession, prompt string, onDelta func(text string)) (ai.CompletionResponse, []ToolResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.AITimeout)
 	defer cancel()
 
-	messages := s.buildMessages(ctx, sessionID, prompt)
+	sessionID := session.ID
+	messages := s.buildMessages(ctx, session, prompt)
 	tools := mcp.OpenAITools()
 
 	var allToolResults []ToolResult
@@ -625,16 +637,12 @@ func (s *AIService) generateWithToolLoopStream(ctx context.Context, sessionID uu
 		if len(resp.ToolCalls) == 0 {
 			// No tools requested — this is the final text response, but it
 			// was produced with nil onDelta (see BUG-12 above), so the text
-			// was NOT streamed live. Re-stream it now so the user sees it
-			// token-by-token via the frontend shouldAnimate fallback path
-			// (onDone sets shouldAnimate=!wasStreaming, and since no deltas
-			// arrived, wasStreaming is effectively false → animate).
-			// Actually: we cannot re-stream an already-complete response.
-			// Instead, emit the full text as a single delta so the frontend
-			// appends it in one shot (caret still shows via streaming flag).
-			if resp.Text != "" && onDelta != nil {
-				onDelta(resp.Text)
-			}
+			// was NOT streamed live. Do NOT emit a single-shot delta here:
+			// that would make the text appear all at once (wasStreaming=true
+			// → shouldAnimate=false → no typing effect). Instead, return the
+			// response as-is; since no deltas arrived, the frontend's onDone
+			// handler sets shouldAnimate=!wasStreaming=true, and TypingText
+			// animates the text token-by-token (ChatGPT-style typing effect).
 			return resp, allToolResults, nil
 		}
 
@@ -711,7 +719,8 @@ func toolResultMessage(tc ai.ToolCall, result ToolResult) ai.Message {
 	}
 }
 
-func (s *AIService) buildMessages(ctx context.Context, sessionID uuid.UUID, prompt string) []ai.Message {
+func (s *AIService) buildMessages(ctx context.Context, session models.ChatSession, prompt string) []ai.Message {
+	sessionID := session.ID
 	messages := []ai.Message{
 		{
 			Role: "system",
@@ -740,10 +749,13 @@ func (s *AIService) buildMessages(ctx context.Context, sessionID uuid.UUID, prom
 		},
 	}
 
-	chatSession, err := s.repo.FindChatSession(ctx, sessionID)
+	// PERF-4: use the in-memory session passed by the caller instead of a
+	// redundant FindChatSession DB round-trip. Chat()/ChatStream() already
+	// loaded + validated this session; re-querying here added ~10-30ms of
+	// latency to every chat request with no benefit.
 	var memorySummary string
-	if err == nil && chatSession.MemorySummary != "" {
-		memorySummary = chatSession.MemorySummary
+	if session.MemorySummary != "" {
+		memorySummary = session.MemorySummary
 	}
 
 	recent, _ := s.repo.ListRecentChatMessages(ctx, sessionID, s.cfg.AIRecentMessages)

@@ -254,6 +254,12 @@ export default function ChatInterface() {
                 const content = wasStreaming
                   ? (target.content + pending || result.message)
                   : result.message;
+                // BUG-12: wasStreaming=true but no deltas arrived (round 1
+                // was final, onDelta was nil for tool-selection rounds).
+                // In that case target.content === "" and pending === "".
+                // Animate via TypingText so text appears token-by-token
+                // (ChatGPT-style) instead of all at once.
+                const noDeltasReceived = wasStreaming && target.content === "" && pending === "";
                 const newMsg: ChatMessage = {
                   id: assistantId,
                   role: "assistant",
@@ -267,7 +273,7 @@ export default function ChatInterface() {
                   // failed or was buffered), animate the text so the user
                   // still sees a ChatGPT-style typing effect instead of the
                   // full block appearing instantaneously.
-                  shouldAnimate: !wasStreaming,
+                  shouldAnimate: !wasStreaming || noDeltasReceived,
                 };
                 if (wasStreaming) {
                   const next = [...items];
