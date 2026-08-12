@@ -987,7 +987,9 @@ Field `Trip.References` (`jsonb []string`) dipakai fitur **Other Package Referen
 - Isi array = **UUID trip lain** (bukan title). Hook `use-package-references.ts` mengirim `references: selected.map(item => item.id)` saat submit.
 - Nilai legacy (title bebas dari input teks lama) **difilter saat load** — hanya string yang lolos pola UUID (`isTripId`) yang di-resolve menjadi card. Title lama hilang dari UI edit dan tertimpa saat save berikutnya.
 - Judul card saat edit di-resolve via `GET /admin/packages?limit=200`; paket yang sudah dihapus tampil sebagai "Paket tidak ditemukan" (tetap bisa di-remove).
-- Backend TIDAK memvalidasi keberadaan ID referensi (self-reference juga tidak dicegah) — pengetatan validasi ada di sisi frontend saja.
+- Backend TIDAK memvalidasi keberadaan ID referensi — pengetatan validasi ada di sisi frontend saja.
+- Self-reference dicegah di frontend (12 Agu 2026): `usePackageReferences` menerima `excludeTripId` (edit ID), memfilter paket itu dari hasil search, menolak di `selectPackage`, membuangnya dari initial load, dan `handleSubmit` memfilter ulang `id !== editId` sebelum submit.
+
 
 ## B. Placeholder & Integrasi Belum Selesai
 

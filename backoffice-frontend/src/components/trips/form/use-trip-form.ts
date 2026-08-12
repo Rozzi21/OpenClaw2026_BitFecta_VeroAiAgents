@@ -106,7 +106,8 @@ export function useTripForm() {
     useState<TripFormStaticDefaults>(EMPTY_DEFAULTS);
   const [formKey, setFormKey] = useState(editId ?? "new");
   const submitStatus = useRef<SubmitStatus>("draft");
-  const references = usePackageReferences(loadedTrip?.references, formKey);
+  const references = usePackageReferences(loadedTrip?.references, formKey, editId);
+
 
 
   useEffect(() => {
@@ -412,7 +413,10 @@ export function useTripForm() {
       package_end_date: scheduleType === "date_range" ? packageEndDate : "",
       publish_start_date: publishStartDate,
       publish_end_date: publishEndDate,
-      references: references.selected.map((item) => item.id),
+      references: references.selected
+        .map((item) => item.id)
+        .filter((id) => id !== editId),
+
 
       itineraries: itineraries
         .map((item, index) => ({

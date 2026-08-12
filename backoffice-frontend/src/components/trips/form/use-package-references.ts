@@ -37,14 +37,17 @@ async function fetchPackages(search: string, limit: number, signal?: AbortSignal
 
 export function usePackageReferences(
   initialReferences: string[] | undefined,
-  formKey: string
+  formKey: string,
+  excludeTripId?: string | null
 ) {
+
   const [selected, setSelected] = useState<PackageReference[]>([]);
   const [query, setQuery] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [searchState, setSearchState] = useState<SearchState>({ status: "idle" });
 
   const selectedRef = useRef<PackageReference[]>([]);
+  const excludeRef = useRef(excludeTripId ?? null);
   const abortRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -53,10 +56,19 @@ export function usePackageReferences(
     selectedRef.current = selected;
   }, [selected]);
 
+  useEffect(() => {
+    excludeRef.current = excludeTripId ?? null;
+  }, [excludeTripId]);
+
+
   // Resolve initial references (trip IDs from the loaded trip) into
   // {id, title} cards. Non-ID legacy values (plain titles) are dropped.
   useEffect(() => {
-    const ids = (initialReferences ?? []).map((item) => item.trim()).filter(isTripId);
+    const ids = (initialReferences ?? [])
+      .map((item) => item.trim())
+      .filter(isTripId)
+      .filter((id) => id !== excludeRef.current);
+
     setQuery("");
     setDropdownOpen(false);
     setSearchState({ status: "idle" });
@@ -107,8 +119,11 @@ export function usePackageReferences(
         const selectedIds = new Set(selectedRef.current.map((item) => item.id));
         setSearchState({
           status: "success",
-          results: packages.filter((pkg) => !selectedIds.has(pkg.id)),
+          results: packages.filter(
+            (pkg) => !selectedIds.has(pkg.id) && pkg.id !== excludeRef.current
+          ),
         });
+
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted || requestId !== requestIdRef.current) {
@@ -148,9 +163,13 @@ export function usePackageReferences(
   );
 
   const selectPackage = useCallback((pkg: PackageReference) => {
+    if (pkg.id === excludeRef.current) {
+      return;
+    }
     setSelected((items) =>
       items.some((item) => item.id === pkg.id) ? items : [...items, pkg]
     );
+
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
