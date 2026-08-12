@@ -980,7 +980,17 @@ Origins dibaca dari env `CORS_ALLOWED_ORIGINS` (CSV), fallback ke localhost dev.
 
 ---
 
+## B.0 Kontrak Data: `Trip.References` berisi Trip ID (12 Agu 2026)
+
+Field `Trip.References` (`jsonb []string`) dipakai fitur **Other Package Reference** di form trip backoffice. Kontrak baru:
+
+- Isi array = **UUID trip lain** (bukan title). Hook `use-package-references.ts` mengirim `references: selected.map(item => item.id)` saat submit.
+- Nilai legacy (title bebas dari input teks lama) **difilter saat load** — hanya string yang lolos pola UUID (`isTripId`) yang di-resolve menjadi card. Title lama hilang dari UI edit dan tertimpa saat save berikutnya.
+- Judul card saat edit di-resolve via `GET /admin/packages?limit=200`; paket yang sudah dihapus tampil sebagai "Paket tidak ditemukan" (tetap bisa di-remove).
+- Backend TIDAK memvalidasi keberadaan ID referensi (self-reference juga tidak dicegah) — pengetatan validasi ada di sisi frontend saja.
+
 ## B. Placeholder & Integrasi Belum Selesai
+
 
 ### 0. Guest Chat Session Hardening (IMPLEMENTED)
 

@@ -24,8 +24,8 @@ export type TripFormStaticDefaults = {
   package_end: string;
   publish_start: string;
   publish_end: string;
-  reference: string;
 };
+
 
 export type TripFormControlledState = {
   category: TripCategory;
@@ -151,7 +151,7 @@ export function mapTripToForm(trip: TripPackage): {
       package_end: formatDateForInput(trip.package_end_date),
       publish_start: publishStart,
       publish_end: publishEnd,
-      reference: trip.references?.[0] ?? "",
     },
+
   };
 }

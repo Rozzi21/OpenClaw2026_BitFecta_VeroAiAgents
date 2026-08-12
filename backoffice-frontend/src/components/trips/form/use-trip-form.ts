@@ -20,8 +20,10 @@ import {
   UploadedMedia,
 } from "./types";
 import { invalidateTripsCache } from "../list/use-trips-list";
+import { usePackageReferences } from "./use-package-references";
 
 const EMPTY_DEFAULTS: TripFormStaticDefaults = {
+
   title: "",
   location: "",
   summary: "",
@@ -37,8 +39,8 @@ const EMPTY_DEFAULTS: TripFormStaticDefaults = {
   package_end: "",
   publish_start: "",
   publish_end: "",
-  reference: "",
 };
+
 
 function applyControlledState(
   controlled: ReturnType<typeof mapTripToForm>["controlled"],
@@ -104,6 +106,8 @@ export function useTripForm() {
     useState<TripFormStaticDefaults>(EMPTY_DEFAULTS);
   const [formKey, setFormKey] = useState(editId ?? "new");
   const submitStatus = useRef<SubmitStatus>("draft");
+  const references = usePackageReferences(loadedTrip?.references, formKey);
+
 
   useEffect(() => {
     if (!getToken()) {
@@ -408,7 +412,8 @@ export function useTripForm() {
       package_end_date: scheduleType === "date_range" ? packageEndDate : "",
       publish_start_date: publishStartDate,
       publish_end_date: publishEndDate,
-      references: [String(form.get("reference") || "")].filter(Boolean),
+      references: references.selected.map((item) => item.id),
+
       itineraries: itineraries
         .map((item, index) => ({
           day: index + 1,
@@ -534,7 +539,9 @@ export function useTripForm() {
       visibilityEnabled,
       setVisibilityEnabled,
     },
+    references,
   };
 }
+
 
 export type UseTripFormReturn = ReturnType<typeof useTripForm>;

@@ -105,6 +105,8 @@ Struktur komponen `trips/`:
 | Trip card | `backoffice-frontend/src/components/trips/list/trip-card.tsx` | Kartu paket di list |
 | Form screen | `backoffice-frontend/src/components/trips/form/trip-form-screen.tsx` | Form create/edit paket |
 | Form hook | `backoffice-frontend/src/components/trips/form/use-trip-form.ts` | Logika form: create (`POST`), update (`PUT`), upload media (`POST /admin/uploads`) |
+| Reference hook | `backoffice-frontend/src/components/trips/form/use-package-references.ts` | State "Other Package Reference": search package via `GET /admin/packages?search=` (debounce 400ms, min 2 karakter, `AbortController` + request-ID guard anti race), multi-select card, resolve ID→title saat edit |
+
 | Form sections | `backoffice-frontend/src/components/trips/form/sections/` | 9 seksi: basic-info, summary, pricing, scheduling, itinerary, amenities, highlights, media, reference |
 | Form UI | `backoffice-frontend/src/components/trips/form/ui/` | 11 widget reusable: field, label, checkbox, number-stepper, date-range, upload-box, dll |
 | Shared | `backoffice-frontend/src/components/trips/shared/` | `backoffice-sidebar.tsx`, `format-trip-pax.ts`, `trip-status-tone.ts`, `format-date-range.ts` |

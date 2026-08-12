@@ -99,7 +99,8 @@ export function TripFormScreen() {
               publish_start={defaults.publish_start}
               publish_end={defaults.publish_end}
             />
-            <ReferenceSection defaultValue={defaults.reference} />
+            <ReferenceSection references={form.references} />
+
           </form>
         </div>
       </main>
