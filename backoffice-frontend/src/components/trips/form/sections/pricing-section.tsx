@@ -44,6 +44,31 @@ function computePercentFromPrice(
   return String(Math.round(((base - discount) / base) * 100));
 }
 
+function PriceInput({
+  name,
+  value,
+  onChange,
+  placeholder = "0",
+}: {
+  name: string;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  placeholder?: string;
+}) {
+  return (
+    <div className="mt-2 flex h-10 items-center rounded-md border border-[#e6dfe5] bg-white">
+      <span className="pl-3 text-sm font-semibold text-[#707684]">Rp</span>
+      <input
+        name={name}
+        value={value}
+        onChange={onChange}
+        className="h-full flex-1 bg-transparent pr-3 text-sm outline-none placeholder:text-[#9da2ad]"
+        placeholder={placeholder}
+      />
+    </div>
+  );
+}
+
 export function PricingSection({
   base_price: initialBase = "",
   child_price: initialChild = "",
@@ -195,12 +220,10 @@ export function PricingSection({
             <span className="mb-2 block text-xs font-bold uppercase tracking-[0.08em] text-[#8a8f9d]">
               Base Price
             </span>
-            <input
+            <PriceInput
               name="base_price"
               value={basePrice}
               onChange={handleBasePriceChange}
-              className="mt-2 h-10 w-full rounded-md border border-[#e6dfe5] bg-white px-3 text-sm outline-none placeholder:text-[#9da2ad]"
-              placeholder="0.00"
             />
           </label>
 
@@ -215,12 +238,10 @@ export function PricingSection({
             <span className="mb-2 block text-xs font-bold uppercase tracking-[0.08em] text-[#8a8f9d]">
               Child Pricing
             </span>
-            <input
+            <PriceInput
               name="child_price"
               value={childPrice}
               onChange={handleChildPriceChange}
-              className="mt-2 h-10 w-full rounded-md border border-[#e6dfe5] bg-white px-3 text-sm outline-none placeholder:text-[#9da2ad]"
-              placeholder="0.00"
             />
           </label>
 
@@ -241,12 +262,10 @@ export function PricingSection({
                 <span className="mb-2 block text-xs font-bold uppercase tracking-[0.08em] text-[#8a8f9d]">
                   Discount Price
                 </span>
-                <input
+                <PriceInput
                   name="discount_price"
                   value={discountPrice}
                   onChange={handleDiscountPriceChange}
-                  className="mt-2 h-10 w-full rounded-md border border-[#e6dfe5] bg-white px-3 text-sm outline-none placeholder:text-[#9da2ad]"
-                  placeholder="0.00"
                 />
               </label>
 
@@ -282,12 +301,10 @@ export function PricingSection({
                 <span className="mb-2 block text-xs font-bold uppercase tracking-[0.08em] text-[#8a8f9d]">
                   Child Discount Price
                 </span>
-                <input
+                <PriceInput
                   name="child_discount_price"
                   value={childDiscountPrice}
                   onChange={handleChildDiscountPriceChange}
-                  className="mt-2 h-10 w-full rounded-md border border-[#e6dfe5] bg-white px-3 text-sm outline-none placeholder:text-[#9da2ad]"
-                  placeholder="0.00"
                 />
               </label>
 
