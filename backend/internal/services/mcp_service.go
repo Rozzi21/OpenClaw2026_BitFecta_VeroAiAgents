@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -83,7 +84,17 @@ func (s *MCPService) Execute(ctx context.Context, sessionID uuid.UUID, toolName 
 		result = s.executeCollectOrderDetail(toolName, payload)
 
 	case mcp.ToolCreateBooking, mcp.ToolCreateOrder:
-		result = s.executeCreateBooking(ctx, payload)
+		result = s.executeCreateBooking(ctx, sessionID, payload)
+
+	// AIW-5: detail / pricing / availability tools.
+	case mcp.ToolGetTripDetail:
+		result = s.executeGetTripDetail(ctx, payload)
+	case mcp.ToolCalculateTripPrice:
+		result = s.executeCalculateTripPrice(ctx, payload)
+	case mcp.ToolCheckTripAvailability:
+		result = s.executeCheckTripAvailability(ctx, payload)
+	case mcp.ToolCheckOrderStatus:
+		result = s.executeCheckOrderStatus(ctx, sessionID)
 
 	default:
 		for attempt := 1; attempt <= 3; attempt++ {
@@ -241,6 +252,13 @@ func (s *MCPService) executeSearchTrips(ctx context.Context, sessionID uuid.UUID
 			sanitizedHighlights = append(sanitizedHighlights, sanitizePromptInjection(h))
 		}
 
+		// AIW-5: expose safe, relevant pricing so the LLM can answer discount /
+		// child-price questions grounded in backend data (source of truth).
+		// Prices reuse the same effective-price helpers as the booking flow, so
+		// the catalog card quote never contradicts the charged total. `price` is
+		// kept (effective adult price) for backward compatibility with the
+		// frontend recommendation cards; the new fields add the full picture.
+		pb := priceBreakdown(trip, 1, 0)
 		results = append(results, map[string]interface{}{
 			"id":          trip.ID.String(),
 			"slug":        sanitizePromptInjection(trip.Slug),
@@ -251,8 +269,16 @@ func (s *MCPService) executeSearchTrips(ctx context.Context, sessionID uuid.UUID
 			"duration":    sanitizePromptInjection(trip.Duration),
 			"summary":     limitString(sanitizedSummary, 150),
 			"price":       firstNonZero(trip.BasePrice, trip.EstimatedPrice),
-			"highlights":  limitSlice(sanitizedHighlights, 3),
-			"image_url":   trip.ImageURL,
+			// New pricing fields (effective adult price honors discount).
+			"adult_price":            pb.AdultNormalPrice,
+			"adult_effective_price":  pb.AdultUnitPrice,
+			"child_price":            trip.ChildPrice,
+			"discount_enabled":       pb.AdultDiscountEnabled,
+			"discount_price":         trip.DiscountPrice,
+			"child_discount_enabled": pb.ChildDiscountEnabled,
+			"child_discount":         trip.ChildDiscount,
+			"highlights":             limitSlice(sanitizedHighlights, 3),
+			"image_url":              trip.ImageURL,
 		})
 	}
 
@@ -325,6 +351,295 @@ func (s *MCPService) executeCollectOrderDetail(toolName string, payload map[stri
 	}}
 }
 
+// resolveAITrip is a shared lookup for the AI-facing read tools (AIW-5). It
+// parses trip_id from the payload and loads the trip (with itineraries
+// preloaded by the repository). Returns a user/AI-safe error message when the
+// id is malformed or the trip does not exist — never a raw DB error.
+func (s *MCPService) resolveAITrip(ctx context.Context, payload map[string]interface{}) (models.Trip, uuid.UUID, string) {
+	tripIDStr := getString(payload, "trip_id")
+	tripID, err := uuid.Parse(tripIDStr)
+	if err != nil {
+		return models.Trip{}, uuid.Nil, "invalid trip_id"
+	}
+	trip, err := s.repo.FindTrip(ctx, tripID)
+	if err != nil {
+		return models.Trip{}, uuid.Nil, "trip not found"
+	}
+	return trip, tripID, ""
+}
+
+// sanitizeStringSlice applies prompt-injection sanitization to a slice of
+// free-text catalog strings before they are sent to the LLM (AIW-1).
+func sanitizeStringSlice(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		out = append(out, sanitizePromptInjection(it))
+	}
+	return out
+}
+
+// executeGetTripDetail returns the full, AI-safe detail of ONE package (AIW-5).
+// It deliberately exposes only fields the AI needs to answer detail questions —
+// no internal DB bookkeeping (CreatedAt/UpdatedAt/DeletedAt, soft-delete, raw
+// publish scheduling internals). All free-text is sanitized (AIW-1) and prices
+// reuse the booking pricing helpers so the AI never contradicts the backend.
+func (s *MCPService) executeGetTripDetail(ctx context.Context, payload map[string]interface{}) ToolResult {
+	trip, tripID, errMsg := s.resolveAITrip(ctx, payload)
+	if errMsg != "" {
+		return ToolResult{Tool: mcp.ToolGetTripDetail, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": errMsg}}
+	}
+
+	pb := priceBreakdown(trip, 1, 0)
+
+	// Itinerary (daily plan), sanitized + ordered by day.
+	itinerary := make([]map[string]interface{}, 0, len(trip.Itineraries))
+	for _, it := range trip.Itineraries {
+		itinerary = append(itinerary, map[string]interface{}{
+			"day":         it.Day,
+			"title":       sanitizePromptInjection(it.Title),
+			"description": sanitizePromptInjection(it.Description),
+		})
+	}
+
+	// Media gallery (URL + type + alt text only).
+	media := make([]map[string]interface{}, 0, len(trip.Media))
+	for _, m := range trip.Media {
+		media = append(media, map[string]interface{}{
+			"url":      m.URL,
+			"type":     m.Type,
+			"alt_text": sanitizePromptInjection(m.AltText),
+		})
+	}
+
+	data := map[string]interface{}{
+		"id":          tripID.String(),
+		"slug":        sanitizePromptInjection(trip.Slug),
+		"title":       sanitizePromptInjection(trip.Title),
+		"destination": sanitizePromptInjection(trip.Destination),
+		"location":    sanitizePromptInjection(trip.Location),
+		"category":    sanitizePromptInjection(trip.Category),
+		"status":      trip.Status,
+		"duration":    sanitizePromptInjection(trip.Duration),
+		"overview":    sanitizePromptInjection(trip.Overview),
+		"summary":     sanitizePromptInjection(trip.Summary),
+		// Pricing (source of truth = booking helpers).
+		"adult_price":            pb.AdultNormalPrice,
+		"adult_effective_price":  pb.AdultUnitPrice,
+		"child_price":            trip.ChildPrice,
+		"discount_enabled":       pb.AdultDiscountEnabled,
+		"discount_price":         trip.DiscountPrice,
+		"child_discount_enabled": pb.ChildDiscountEnabled,
+		"child_discount":         trip.ChildDiscount,
+		// Capacity (default pax quota configured on the package).
+		"adult_pax_quota": trip.AdultPax,
+		"child_pax_quota": trip.ChildPax,
+		// Rich detail.
+		"highlights":         sanitizeStringSlice(trip.Highlights),
+		"amenities_included": sanitizeStringSlice(trip.AmenitiesIncluded),
+		"amenities_excluded": sanitizeStringSlice(trip.AmenitiesExcluded),
+		"references":         sanitizeStringSlice(trip.References),
+		"itinerary":          itinerary,
+		"media":              media,
+		"image_url":          trip.ImageURL,
+	}
+	// Travel window (only when configured) so the AI can reason about dates.
+	if trip.PackageStartDate != nil {
+		data["package_start_date"] = trip.PackageStartDate.Format("2006-01-02")
+	}
+	if trip.PackageEndDate != nil {
+		data["package_end_date"] = trip.PackageEndDate.Format("2006-01-02")
+	}
+
+	return ToolResult{Tool: mcp.ToolGetTripDetail, Status: models.ToolResultStatusSuccess, Data: data}
+}
+
+// executeCalculateTripPrice returns the authoritative price quote for a given
+// pax mix (AIW-5). The LLM must never compute a total itself; it calls this and
+// reports breakdown.Total. Because priceBreakdown is the same helper used by
+// BookingService.Create, the quoted total equals the total charged at booking.
+func (s *MCPService) executeCalculateTripPrice(ctx context.Context, payload map[string]interface{}) ToolResult {
+	trip, tripID, errMsg := s.resolveAITrip(ctx, payload)
+	if errMsg != "" {
+		return ToolResult{Tool: mcp.ToolCalculateTripPrice, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": errMsg}}
+	}
+
+	adultPax := parsePax(payload, "adult_pax", 1)
+	childPax := parsePax(payload, "child_pax", 0)
+	// Enforce the same server-side pax bounds as booking (SEC-11) so a quote can
+	// never be produced for an impossible/absurd pax count.
+	if adultPax < 0 || childPax < 0 || adultPax > dto.MaxBookingPax || childPax > dto.MaxBookingPax {
+		return ToolResult{Tool: mcp.ToolCalculateTripPrice, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "pax must be between 0 and " + strconv.Itoa(dto.MaxBookingPax)}}
+	}
+	if adultPax <= 0 && childPax <= 0 {
+		adultPax = 1
+	}
+
+	pb := priceBreakdown(trip, adultPax, childPax)
+	return ToolResult{Tool: mcp.ToolCalculateTripPrice, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{
+		"trip_id":                tripID.String(),
+		"title":                  sanitizePromptInjection(trip.Title),
+		"currency":               "IDR",
+		"adult_normal_price":     pb.AdultNormalPrice,
+		"adult_discount_enabled": pb.AdultDiscountEnabled,
+		"adult_discount_price":   pb.AdultDiscountPrice,
+		"adult_unit_price":       pb.AdultUnitPrice,
+		"adult_pax":              pb.AdultPax,
+		"adult_subtotal":         pb.AdultSubtotal,
+		"child_normal_price":     pb.ChildNormalPrice,
+		"child_discount_enabled": pb.ChildDiscountEnabled,
+		"child_discount_price":   pb.ChildDiscountPrice,
+		"child_unit_price":       pb.ChildUnitPrice,
+		"child_pax":              pb.ChildPax,
+		"child_subtotal":         pb.ChildSubtotal,
+		"total":                  pb.Total,
+	}}
+}
+
+// executeCheckTripAvailability verifies whether a package can be booked for a
+// given travel date + pax count, derived from backend catalog data (source of
+// truth): publish status, package travel window, and the configured default pax
+// quota. The platform has no per-date slot/inventory table, so this is a
+// best-effort verification from catalog truth — NOT a guess. When availability
+// cannot be positively confirmed from catalog data, it returns
+// availability_confirmed=false so the AI tells the user it needs verification
+// instead of over-promising.
+func (s *MCPService) executeCheckTripAvailability(ctx context.Context, payload map[string]interface{}) ToolResult {
+	trip, tripID, errMsg := s.resolveAITrip(ctx, payload)
+	if errMsg != "" {
+		return ToolResult{Tool: mcp.ToolCheckTripAvailability, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": errMsg}}
+	}
+
+	adultPax := parsePax(payload, "adult_pax", 1)
+	childPax := parsePax(payload, "child_pax", 0)
+	if adultPax < 0 || childPax < 0 || adultPax > dto.MaxBookingPax || childPax > dto.MaxBookingPax {
+		return ToolResult{Tool: mcp.ToolCheckTripAvailability, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "invalid pax count"}}
+	}
+	if adultPax <= 0 && childPax <= 0 {
+		adultPax = 1
+	}
+
+	travelDateStr := getString(payload, "travel_date")
+	travelDate := parseDate(travelDateStr)
+	if travelDate == nil {
+		return ToolResult{Tool: mcp.ToolCheckTripAvailability, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "invalid travel_date format, please use ISO format (YYYY-MM-DD)"}}
+	}
+
+	// Collect blocking reasons. Each is a concrete, backend-verifiable fact.
+	reasons := []string{}
+	if trip.Status != "published" {
+		reasons = append(reasons, "package is not currently published")
+	}
+	// Travel window check (only when a window is configured).
+	if trip.PackageStartDate != nil && travelDate.Before(*trip.PackageStartDate) {
+		reasons = append(reasons, "travel_date is before the package start date ("+trip.PackageStartDate.Format("2006-01-02")+")")
+	}
+	if trip.PackageEndDate != nil && travelDate.After(*trip.PackageEndDate) {
+		reasons = append(reasons, "travel_date is after the package end date ("+trip.PackageEndDate.Format("2006-01-02")+")")
+	}
+	// Quota check against configured default pax (0 = no explicit cap configured).
+	if trip.AdultPax > 0 && adultPax > trip.AdultPax {
+		reasons = append(reasons, "adult_pax exceeds the package quota")
+	}
+	if trip.ChildPax > 0 && childPax > trip.ChildPax {
+		reasons = append(reasons, "child_pax exceeds the package quota")
+	}
+
+	available := len(reasons) == 0
+	data := map[string]interface{}{
+		"trip_id":     tripID.String(),
+		"title":       sanitizePromptInjection(trip.Title),
+		"travel_date": travelDate.Format("2006-01-02"),
+		"adult_pax":   adultPax,
+		"child_pax":   childPax,
+		"available":   available,
+		// availability_confirmed signals whether the backend can positively
+		// confirm from catalog truth. Without a per-date inventory table we can
+		// confirm "not blocked" but the AI should still phrase availability as
+		// subject to final confirmation, not a hard guarantee.
+		"availability_confirmed": available,
+		"adult_pax_quota":        trip.AdultPax,
+		"child_pax_quota":        trip.ChildPax,
+	}
+	if trip.PackageStartDate != nil {
+		data["package_start_date"] = trip.PackageStartDate.Format("2006-01-02")
+	}
+	if trip.PackageEndDate != nil {
+		data["package_end_date"] = trip.PackageEndDate.Format("2006-01-02")
+	}
+	if !available {
+		data["reasons"] = reasons
+	} else {
+		data["note"] = "Available based on catalog schedule and quota. Final availability is confirmed when the booking is created."
+	}
+
+	return ToolResult{Tool: mcp.ToolCheckTripAvailability, Status: models.ToolResultStatusSuccess, Data: data}
+}
+
+// orderMarkerPrefix tags the system ChatMessage written after a successful
+// create_booking so the order can be found again for THIS session (AIW-8). The
+// bookings table has no session_id column, so the linkage is stored as a
+// marker message on the chat session (chat_messages.session_id already exists
+// and is indexed) — no schema change required.
+const orderMarkerPrefix = "__order_created__:"
+
+// orderMarker holds the fields persisted into the marker message content as
+// JSON after the prefix. PII is kept minimal (contact name only); email/phone
+// are deliberately NOT stored here because chat messages are replayed to the
+// LLM as conversation history.
+type orderMarker struct {
+	BookingID     string  `json:"booking_id"`
+	BookingStatus string  `json:"booking_status"`
+	PaymentStatus string  `json:"payment_status"`
+	TotalPrice    float64 `json:"total_price"`
+	ContactName   string  `json:"contact_name,omitempty"`
+}
+
+// findSessionOrder scans recent chat messages for an order marker (AIW-8).
+// Returns nil when no order has been created in this session yet.
+func (s *MCPService) findSessionOrder(ctx context.Context, sessionID uuid.UUID) *orderMarker {
+	msgs, err := s.repo.ListRecentChatMessages(ctx, sessionID, 200)
+	if err != nil {
+		return nil
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		c := msgs[i].Content
+		if !strings.HasPrefix(c, orderMarkerPrefix) {
+			continue
+		}
+		var m orderMarker
+		if json.Unmarshal([]byte(strings.TrimPrefix(c, orderMarkerPrefix)), &m) == nil && m.BookingID != "" {
+			return &m
+		}
+	}
+	return nil
+}
+
+// executeCheckOrderStatus reports whether an order already exists in THIS chat
+// session (AIW-8). Session-scoped: it never touches other sessions' orders.
+// Lets the AI answer "is my order ready / what's my order id" from backend
+// truth instead of guessing, and feeds create_booking's duplicate guard.
+func (s *MCPService) executeCheckOrderStatus(ctx context.Context, sessionID uuid.UUID) ToolResult {
+	m := s.findSessionOrder(ctx, sessionID)
+	if m == nil {
+		return ToolResult{Tool: mcp.ToolCheckOrderStatus, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{
+			"order_exists": false,
+			"note":         "No order has been created in this chat session yet.",
+		}}
+	}
+	return ToolResult{Tool: mcp.ToolCheckOrderStatus, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{
+		"order_exists":   true,
+		"order_id":       m.BookingID,
+		"booking_id":     m.BookingID,
+		"booking_status": m.BookingStatus,
+		"payment_status": m.PaymentStatus,
+		"total_price":    m.TotalPrice,
+		"note":           "An order was already created in this session. Do NOT create another one for the same request.",
+	}}
+}
+
 func scoreTrips(query string, packages []models.Trip) []models.Trip {
 	if len(packages) == 0 {
 		return nil
@@ -381,10 +696,14 @@ func scoreTrips(query string, packages []models.Trip) []models.Trip {
 }
 
 func parsePax(payload map[string]interface{}, key string, fallback int) int {
-	if v, ok := payload[key].(float64); ok {
+	switch v := payload[key].(type) {
+	case float64:
 		return int(v)
-	}
-	if v, ok := payload[key].(string); ok {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case string:
 		return parseIntFallback(v, fallback)
 	}
 	return fallback
@@ -409,8 +728,25 @@ func (s *MCPService) mock(toolName string, _ map[string]any) ToolResult {
 	}
 }
 
-func (s *MCPService) executeCreateBooking(ctx context.Context, payload map[string]interface{}) ToolResult {
+func (s *MCPService) executeCreateBooking(ctx context.Context, sessionID uuid.UUID, payload map[string]interface{}) ToolResult {
 	log.Printf("[mcp] create_booking called args=%+v", payload)
+
+	// AIW-8 duplicate-order guard: if an order already exists for THIS session,
+	// refuse to create a second one and return the existing order instead. This
+	// prevents double orders when the user re-confirms ("lanjut") after a
+	// successful create_booking.
+	if existing := s.findSessionOrder(ctx, sessionID); existing != nil {
+		log.Printf("[mcp] create_booking blocked duplicate session=%s existing_booking=%s", sessionID, existing.BookingID)
+		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{
+			"success":        false,
+			"error":          "an order already exists for this chat session",
+			"order_exists":   true,
+			"order_id":       existing.BookingID,
+			"booking_status": existing.BookingStatus,
+			"total_price":    existing.TotalPrice,
+		}}
+	}
+
 	guestUser, err := s.auth.GuestUser(ctx)
 	if err != nil {
 		log.Printf("[mcp] create_booking failed guest_user error=%v", err)
@@ -456,6 +792,24 @@ func (s *MCPService) executeCreateBooking(ctx context.Context, payload map[strin
 		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": err.Error()}}
 	}
 	log.Printf("[mcp] create_booking saved booking_id=%s status=%s payment_status=%s total=%.2f", booking.ID, booking.BookingStatus, booking.PaymentStatus, booking.TotalPrice)
+
+	// AIW-8: persist an order marker on the chat session so check_order_status
+	// and the duplicate guard can find this order later. Best-effort: a marker
+	// write failure does not fail the already-created booking. The marker stores
+	// only non-PII identifiers + total (contact name at most); email/phone are
+	// deliberately excluded because chat history is replayed to the LLM.
+	marker := orderMarker{
+		BookingID:     booking.ID.String(),
+		BookingStatus: booking.BookingStatus,
+		PaymentStatus: booking.PaymentStatus,
+		TotalPrice:    booking.TotalPrice,
+		ContactName:   req.ContactName,
+	}
+	if mj, merr := json.Marshal(marker); merr == nil {
+		if aerr := s.repo.AddChatMessage(ctx, &models.ChatMessage{SessionID: sessionID, Role: "system", Content: orderMarkerPrefix + string(mj)}); aerr != nil {
+			log.Printf("[mcp] create_booking order marker persist failed session=%s booking=%s err=%v", sessionID, booking.ID, aerr)
+		}
+	}
 
 	return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{
 		"success":        true,

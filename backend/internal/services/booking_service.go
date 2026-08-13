@@ -52,7 +52,10 @@ func (s *BookingService) Create(ctx context.Context, userID uuid.UUID, req dto.B
 	if adultPax <= 0 && childPax <= 0 {
 		adultPax = 1
 	}
-	total := tripAdultPrice(trip)*float64(adultPax) + tripChildPrice(trip)*float64(childPax)
+	// Reuse the shared priceBreakdown helper so the booking total is computed by
+	// the exact same code path that backs the calculate_trip_price tool. This
+	// keeps a quoted total identical to the charged total (source of truth).
+	total := priceBreakdown(trip, adultPax, childPax).Total
 	booking := models.Booking{
 		UserID:        userID,
 		TripID:        req.TripID,
@@ -164,4 +167,54 @@ func tripChildPrice(trip models.Trip) float64 {
 		return trip.ChildDiscount
 	}
 	return trip.ChildPrice
+}
+
+// TripPriceBreakdown is the authoritative, AI-facing price breakdown for a
+// trip. It reuses tripAdultPrice/tripChildPrice — the SAME logic BookingService
+// .Create uses to compute TotalPrice — so a quote from calculate_trip_price is
+// guaranteed identical to the total charged when the booking is created. The
+// LLM must never compute totals itself; it reads Total from this struct.
+type TripPriceBreakdown struct {
+	// Normal (pre-discount) catalog unit prices.
+	AdultNormalPrice float64 `json:"adult_normal_price"`
+	ChildNormalPrice float64 `json:"child_normal_price"`
+	// Effective (post-discount, when enabled) unit prices actually charged.
+	AdultUnitPrice float64 `json:"adult_unit_price"`
+	ChildUnitPrice float64 `json:"child_unit_price"`
+	// Discount flags + amounts (0/absent when the discount is off).
+	AdultDiscountEnabled bool    `json:"adult_discount_enabled"`
+	AdultDiscountPrice   float64 `json:"adult_discount_price,omitempty"`
+	ChildDiscountEnabled bool    `json:"child_discount_enabled"`
+	ChildDiscountPrice   float64 `json:"child_discount_price,omitempty"`
+	// Quantities used for the quote.
+	AdultPax int `json:"adult_pax"`
+	ChildPax int `json:"child_pax"`
+	// Line subtotals + final total (source of truth == booking total).
+	AdultSubtotal float64 `json:"adult_subtotal"`
+	ChildSubtotal float64 `json:"child_subtotal"`
+	Total         float64 `json:"total"`
+}
+
+// priceBreakdown builds the authoritative quote for a trip + pax counts. Shared
+// by the MCP calculate_trip_price tool and kept in lockstep with Create above.
+func priceBreakdown(trip models.Trip, adultPax, childPax int) TripPriceBreakdown {
+	adultUnit := tripAdultPrice(trip)
+	childUnit := tripChildPrice(trip)
+	adultSub := adultUnit * float64(adultPax)
+	childSub := childUnit * float64(childPax)
+	return TripPriceBreakdown{
+		AdultNormalPrice:     firstNonZero(trip.BasePrice, trip.EstimatedPrice),
+		ChildNormalPrice:     trip.ChildPrice,
+		AdultUnitPrice:       adultUnit,
+		ChildUnitPrice:       childUnit,
+		AdultDiscountEnabled: trip.DiscountEnabled && trip.DiscountPrice > 0,
+		AdultDiscountPrice:   trip.DiscountPrice,
+		ChildDiscountEnabled: trip.ChildDiscountEnabled && trip.ChildDiscount > 0,
+		ChildDiscountPrice:   trip.ChildDiscount,
+		AdultPax:             adultPax,
+		ChildPax:             childPax,
+		AdultSubtotal:        adultSub,
+		ChildSubtotal:        childSub,
+		Total:                adultSub + childSub,
+	}
 }

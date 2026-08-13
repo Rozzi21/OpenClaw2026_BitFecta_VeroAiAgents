@@ -109,3 +109,40 @@ func TestResponseMentionsSelectionOptions(t *testing.T) {
 		})
 	}
 }
+
+// TestHasSuccessfulInfoTool locks AIW-7: when an informational read tool
+// (get_trip_detail / calculate_trip_price / check_trip_availability) succeeds
+// in the same round as a stray failed search_trips, finalizeChat must NOT
+// overwrite the informative answer with the "already selected" conflict
+// backstop. The user asked a detail/price/availability question about the
+// selected package — not a new search.
+func TestHasSuccessfulInfoTool(t *testing.T) {
+	failedSearch := ToolResult{Tool: mcp.ToolSearchTrips, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{
+		"error": "a package is already selected",
+	}}
+
+	// get_trip_detail success -> info present.
+	if !hasSuccessfulInfoTool([]ToolResult{failedSearch, {Tool: mcp.ToolGetTripDetail, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{"title": "Bali"}}}) {
+		t.Fatal("expected true when get_trip_detail succeeded")
+	}
+	// calculate_trip_price success -> info present.
+	if !hasSuccessfulInfoTool([]ToolResult{{Tool: mcp.ToolCalculateTripPrice, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{"total": 1.0}}}) {
+		t.Fatal("expected true when calculate_trip_price succeeded")
+	}
+	// check_trip_availability success -> info present.
+	if !hasSuccessfulInfoTool([]ToolResult{{Tool: mcp.ToolCheckTripAvailability, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{"available": true}}}) {
+		t.Fatal("expected true when check_trip_availability succeeded")
+	}
+	// Only failed search -> no info tool.
+	if hasSuccessfulInfoTool([]ToolResult{failedSearch}) {
+		t.Fatal("expected false when only a failed search_trips is present")
+	}
+	// Info tool that FAILED does not count.
+	if hasSuccessfulInfoTool([]ToolResult{{Tool: mcp.ToolGetTripDetail, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "trip not found"}}}) {
+		t.Fatal("expected false when the info tool failed")
+	}
+	// create_booking success is not an info tool.
+	if hasSuccessfulInfoTool([]ToolResult{{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{"success": true}}}) {
+		t.Fatal("expected false for create_booking (not an info tool)")
+	}
+}
