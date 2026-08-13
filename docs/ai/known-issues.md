@@ -12,6 +12,41 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit kesiapan production terhadap 5 kategori (Observability, Deployment, Reliability, Scalability, Security) menemukan 10 temuan (PRR-P0-1..PRR-P3-2). **Semuanya telah diselesaikan (FIXED 29 Jul 2026).**
 
+> Audit dead-code + clean-code backend: 14 Agu 2026 — dicatat di bagian A.12. Hanya kandidat yang terbukti aman yang dihapus; sisanya didokumentasikan sebagai "Potential dead code" (tidak dihapus karena ambigu/di-keep sengaja).
+
+---
+
+## A.12 Audit Dead Code + Clean Code Backend (14 Agu 2026)
+
+Audit dependency/reference-tracing menyeluruh terhadap backend (fokus: `mcp/tools.go`, `mcp_service.go`, `booking_service.go`, `ai_service.go`, tracing ke seluruh `backend/`). Prinsip: correctness > safety > dead-code removal. Tidak ada perubahan behavior. Verifikasi: `gofmt -l` kosong, `go vet`, `go build`, `go test ./...` semua PASS.
+
+### Removed (terbukti tidak dipakai)
+
+1. **`min()` helper lokal** di `mcp_service.go` — duplikat dari built-in Go 1.21+ (`go.mod` = Go 1.25). Dihapus; 3 call site (`executeSearchTrips`, `scoreTrips`) kini memakai built-in `min()`. Behavior identik.
+2. **`parseIntFallback()` wrapper** di `mcp_service.go` — redundant one-liner yang hanya meneruskan ke `ParseIntFromString()` (`helpers.go`). Dihapus; `parsePax` kini memanggil `ParseIntFromString` langsung. Behavior identik.
+
+### Refactored (rapi, tanpa ubah behavior)
+
+3. **Magic strings → constants** di `mcp_service.go` `Execute()`: case `"search_destination"`, `"search_hotels"`, `"calculate_budget"`, `"generate_itinerary"` diganti ke konstanta `mcp.ToolSearchDestination`/`ToolSearchHotels`/`ToolCalculateBudget`/`ToolGenerateItinerary` yang sudah ada. Menutup risiko drift literal-vs-konstanta (konsisten dgn SEC-29 single-source-of-truth).
+
+### Potential dead code — SENGAJA TIDAK dihapus (ambigu / di-keep untuk masa depan)
+
+Jangan hapus item di bawah tanpa instruksi eksplisit; masing-masing punya alasan keep:
+
+- **`Repository.FindBookingBySession`** (`booking_repository.go`) — **berbahaya bila dipanggil**: query kolom `bookings.session_id` yang TIDAK ADA di model/DB → error runtime. Saat ini TIDAK ada caller produksi (link order↔session memakai marker `ChatMessage` `__order_created__:` via `findSessionOrder`, AIW-8). Satu-satunya referensi adalah mock di `mcp_pricing_tools_test.go` (untuk satisfy interface `MCPRepository`). **Tetap di interface + tidak dihapus** karena bagian dari kontrak `repositories.BookingRepository` (SEC-27) dan bisa diperlukan bila suatu saat kolom `session_id` ditambah. Opsi perbaikan nyata: tambah kolom + migrasi, ATAU hapus method + cabut dari interface bila dipastikan tidak pernah diperlukan. Dibiarkan apa adanya agar tidak mengubah kontrak publik repo.
+- **`Repository.UpdateBooking` / `Repository.UpdatePayment`** — tidak ada caller aktif (transisi status sudah lewat `UpdateBookingStatusAtomic`/`UpdatePaymentStatusAtomic` per SEC-23/SEC-29). Di-keep di interface untuk edit non-status masa depan dalam bentuk association-safe (mencegah caller laten mengintroduksi ulang DB-2). Sudah didokumentasikan di komentar method.
+- **`Repository.UpdateChatSession` (GORM `Save`)** — tidak ada caller produksi setelah BUG-10 (`refreshMemorySummary` pindah ke `UpdateChatSessionMemorySummary`). Di-keep di `ChatRepository` interface; masih di-mock test. `Save` full-overwrite berisiko lost-update (DB-2/BUG-10) bila dipakai — jangan dipakai untuk update parsial.
+- **`Repository.CountExpiredChatSessions`** — tidak ada caller produksi (hanya mock test). Observability helper (count sebelum delete). Di-keep di `ChatRepository` interface.
+- **Legacy MCP tool yang disabled** di `tools.go` (`create_order`, `create_payment`, `send_whatsapp`, `search_destination`, `search_hotels`, `calculate_budget`, `generate_itinerary`, `update_order_draft`) — `Enabled:false`, TIDAK bocor ke `OpenAITools()` (dikunci `tools_test.go`). Di-keep: `create_order` alias kompatibilitas (AIW-5); `create_payment` menunggu DOKU (jangan aktifkan tanpa instruksi); `send_whatsapp` untuk masa depan; 4 mock lama dirutekan ke `executeSearchTrips` sebagai safety-net bila LLM stale memanggil nama lama.
+- **`ai.ResponseFormat` struct + field `CompletionRequest.ResponseFormat`** — exported API, tidak pernah di-set caller mana pun dan tidak diserialisasi di `Generate`/`GenerateStream` payload. Landasan SEC-29 untuk structured-output masa depan. Di-keep (public API, sengaja disiapkan).
+- **`mcp.Catalog()` legacy mock entries** — sengaja dipertahankan di katalog internal (bukan OpenAI) untuk dokumentasi + potensi re-aktivasi.
+
+### Catatan verifikasi
+
+- `priceBreakdown()` tetap single source of truth pricing — tidak ada duplikat pricing ditemukan di booking vs MCP (`calculate_trip_price` + `BookingService.Create` sama-sama memakai `priceBreakdown`; `search_trips`/`get_trip_detail` membaca field-nya). Tidak ada pricing calculation kedua.
+- `requiredInputs()` sinkron dgn schema tool aktif (dikunci `tools_test.go` `TestOpenAITools_RequiredArrays`).
+- Tidak ada unreachable code, commented-out code usang, atau unused import/const/var terdeteksi di scope yang diaudit.
+
 ---
 
 ## A.11 Temuan Bug Hunting Backend (27 Jul 2026)

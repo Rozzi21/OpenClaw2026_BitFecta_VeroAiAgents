@@ -73,8 +73,9 @@ func (s *MCPService) Execute(ctx context.Context, sessionID uuid.UUID, toolName 
 		// DOKU/payment tools are temporarily disabled.
 		result = ToolResult{Tool: toolName, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"error": "payment tools are temporarily disabled"}}
 
-	case mcp.ToolSearchTrips, "search_destination", "search_hotels", "calculate_budget", "generate_itinerary":
-		// Unify legacy recommendation-like calls into search_trips behavior.
+	// Legacy recommendation mock names route to the same catalog search so a
+	// stale LLM tool call still returns real data instead of "unknown tool".
+	case mcp.ToolSearchTrips, mcp.ToolSearchDestination, mcp.ToolSearchHotels, mcp.ToolCalculateBudget, mcp.ToolGenerateItinerary:
 		result = s.executeSearchTrips(ctx, sessionID, payload)
 
 	case mcp.ToolSelectPackage:
@@ -685,6 +686,7 @@ func scoreTrips(query string, packages []models.Trip) []models.Trip {
 	// still included (after the matching ones) so customers see every
 	// available option when the catalog is small. The stable sort keeps
 	// deterministic DB order among equal scores.
+	// min() is the Go 1.21+ built-in (the local duplicate helper was removed).
 	result := make([]models.Trip, 0, min(3, len(scored)))
 	for _, item := range scored {
 		result = append(result, item.trip)
@@ -704,16 +706,9 @@ func parsePax(payload map[string]interface{}, key string, fallback int) int {
 	case int64:
 		return int(v)
 	case string:
-		return parseIntFallback(v, fallback)
+		return ParseIntFromString(v, fallback)
 	}
 	return fallback
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func (s *MCPService) mock(toolName string, _ map[string]any) ToolResult {
@@ -827,8 +822,4 @@ func getString(m map[string]interface{}, key string) string {
 		return v
 	}
 	return ""
-}
-
-func parseIntFallback(v string, fallback int) int {
-	return ParseIntFromString(v, fallback)
 }

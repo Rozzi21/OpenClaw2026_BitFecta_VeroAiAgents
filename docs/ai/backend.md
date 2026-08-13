@@ -34,7 +34,7 @@ Sejak refactor 25 Jun 2026, kode dipecah **per-domain dalam satu package `servic
 | `booking_service.go` | `BookingService` + `tripAdultPrice`/`tripChildPrice` + shared `priceBreakdown`/`TripPriceBreakdown` (AIW-5 — source of truth pricing, dipakai booking + tool MCP) |
 | `payment_service.go` | `PaymentService` (Create, Find, Webhook, verifySignature, triggerN8N) |
 | `log_service.go` / `analytics_service.go` | `LogService` / `AnalyticsService` |
-| `helpers.go` | util bersama: `slugify`, `normalize`, `firstNonEmpty`, `firstNonZero`, `parseDate` |
+| `helpers.go` | util bersama: `slugify`, `normalize`, `firstNonEmpty`, `firstNonZero`, `parseDate`, `ParseIntFromString`, `sanitizePromptInjection`, `limitString`, `limitSlice` |
 
 Pola umum: tiap service adalah struct dengan dependency `repo` (repository), dan opsional `bus` (event), `cfg` (config), `jwt`, `mcp`, `client` (AI). Dependency di-inject manual via `services.New()`.
 
