@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -20,13 +21,21 @@ import (
 )
 
 func setupTestDB(t *testing.T) (*gorm.DB, *repositories.Repository) {
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	// Use a unique in-memory database per test. The shared DSN allowed tables and
+	// rows from one test to survive into another and made parallel tests flaky.
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
-		t.Fatalf("Failed to open test database: %v", err)
+		t.Fatalf("failed to open test database: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("failed to get test database handle: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	err = db.AutoMigrate(&models.User{}, &models.Trip{}, &models.Booking{}, &models.Payment{})
 	if err != nil {
-		t.Fatalf("Failed to migrate test database: %v", err)
+		t.Fatalf("failed to migrate test database: %v", err)
 	}
 	return db, repositories.New(db)
 }

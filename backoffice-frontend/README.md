@@ -39,7 +39,7 @@ Agar dokumentasi jujur:
 
 - **Dashboard = "On Development".** Panel dashboard menampilkan layar "sedang dalam pengembangan" (`on-development-panel.tsx`) dan tidak memanggil endpoint analytics/dashboard.
 - **Route `/orders`, `/settings`, `/trips/[id]`** hanya me-render layar daftar trip (`CurrentTripsScreen`), belum punya implementasi sendiri.
-- **Data mock tak terpakai** di `src/lib/data.ts` (`travelCards`, `orders`, `payments`, `workflowSteps`) — tidak dirender di komponen mana pun.
+- **Data mock tak terpakai** (dahulu `src/lib/data.ts`) telah dihapus.
 - **Tidak ada UI pembayaran aktif** dan **tidak ada pengambilan bookings** dari backend. Ini selaras dengan backend yang sengaja menonaktifkan `create_payment` di workflow chat.
 - Endpoint `bookings`, `logs`, dan `analytics/dashboard` **belum dipanggil** dari backoffice.
 
