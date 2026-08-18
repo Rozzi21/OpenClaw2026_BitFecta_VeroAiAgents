@@ -41,14 +41,14 @@ Modul Go: `github.com/rozzi/vero-ai-travel-agents/backend`. Pola umum: `Handler 
 
 ### `internal/repositories`
 - Tujuan: satu-satunya lapisan yang menyentuh DB. CRUD untuk semua entitas.
-- File penting: [`backend/internal/repositories/repositories.go`](../../backend/internal/repositories/repositories.go), [`backend/internal/repositories/auth_sessions.go`](../../backend/internal/repositories/auth_sessions.go)
+- File penting: [`backend/internal/repositories/repositories.go`](../../backend/internal/repositories/repositories.go), [`backend/internal/repositories/auth_sessions.go`](../../backend/internal/repositories/auth_sessions.go), [`backend/internal/repositories/guest_repository.go`](../../backend/internal/repositories/guest_repository.go) (GuestSession untuk guest order limit)
 - Bergantung pada: `models`, `dto` (untuk query struct), GORM.
 - Dipakai oleh: `services`.
 - Pola: semua method ber-receiver `*Repository`; tidak ada logika bisnis di sini.
 
 ### `internal/services`
 - Tujuan: SEMUA logika bisnis. Berisi `AuthService`, `MCPService`, `AIService`, `TripService`, `BookingService`, `PaymentService`, `LogService`, `AnalyticsService`.
-- File penting: dipecah per-domain dalam package `services` — `services.go` (wiring `New()` + tipe bersama), `auth_service.go`, `ai_service.go`, `mcp_service.go`, `trip_service.go`, `booking_service.go`, `payment_service.go`, `log_service.go`, `analytics_service.go`, `helpers.go`.
+- File penting: dipecah per-domain dalam package `services` — `services.go` (wiring `New()` + tipe bersama), `auth_service.go`, `ai_service.go`, `mcp_service.go`, `trip_service.go`, `booking_service.go`, `guest_service.go` (guest identity + order-limit claim), `payment_service.go`, `log_service.go`, `analytics_service.go`, `helpers.go`.
 - Bergantung pada: `repositories`, `auth`, `ai`, `mcp`, `events`, `config`, `dto`, `models`.
 - Dipakai oleh: `handlers`.
 - Catatan: ini file terpenting & terbesar. Lihat [backend.md](backend.md) untuk rincian tiap service.

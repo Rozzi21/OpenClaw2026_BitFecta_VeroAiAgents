@@ -177,3 +177,32 @@ tetap bisa diakses melalui existing owner path/staff dan perlu support flow.
 - Claim guest order explicit, authorized, single-use; tidak ada email-only claim.
 - Audit events: `guest_order_created`, `guest_order_limit_reached`,
   `guest_order_linked`, `guest_order_auth_required`; log hanya safe IDs/hash.
+
+## 15. Hasil implementasi (final, 18 Agu 2026)
+
+- Entity: `GuestSession` (`guest_sessions`) dengan `UserID` user guest
+  terisolasi; `chat_sessions.guest_session_id`; `bookings.guest_session_id`;
+  `bookings.idempotency_key_hash` (unique partial). Migration:
+  `backend/migrations/20260818_guest_order_limit.sql` + AutoMigrate.
+- Identity: cookie `vero_guest_session` (opaque 256-bit, SHA-256 hash at rest,
+  path `/api/v1`, TTL `GUEST_IDENTITY_TTL_HOURS`).
+- Enforcement: `BookingService.create()` dalam satu transaction via
+  `WithBookingTransaction`; `LockGuestSession` (`FOR UPDATE`) + conditional
+  `ConsumeGuestOrder`. MCP `create_booking` memanggil `CreateGuest` yang sama
+  (bukan bypass). Alias `create_order` mengikuti policy identik.
+- Error: `GUEST_ORDER_LIMIT_REACHED` (403, `status=authentication_required`),
+  `IDEMPOTENCY_KEY_REQUIRED`, `BOOKING_VALIDATION_FAILED` (400). Structured di
+  HTTP envelope dan MCP `ToolResult.Data` (`status`, `code`, `message`).
+- AI: system prompt melarang retry setelah code limit dan klaim sukses tanpa
+  tool success; booking-claim guard existing dipertahankan.
+- Frontend: `APIError` dengan `error.code`; halaman trip menampilkan success +
+  tracking/login/register, auth gate saat limit; halaman `/login`, `/register`,
+  `/order/[id]` baru; komponen bersama `AuthForm`.
+- Login/register: handler meng-claim order guest via
+  `GuestService.ClaimOrder` (cookie-diverifikasi, single-use, atomic UPDATE).
+- Tests: `backend/internal/services/guest_order_limit_test.go` — policy,
+  ownership/IDOR, failed attempts, race (diverifikasi `-race`), idempotency,
+  authenticated-not-limited, claim single-use.
+- Verifikasi: `go build`, `go vet`, `go test ./...`, `go test -race` (services,
+  middlewares), `tsc --noEmit` (kedua frontend), `npm run build` (frontend),
+  `npm run lint` — semua PASS.

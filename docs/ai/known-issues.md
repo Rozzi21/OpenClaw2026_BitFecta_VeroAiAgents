@@ -16,6 +16,30 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 ---
 
+## A.13 Guest Order Limit (18 Agu 2026) — FITUR AKTIF, BUKAN TECH DEBT
+
+Fitur "satu order per guest" aktif: identitas = `GuestSession` (cookie
+`vero_guest_session`, opaque 256-bit, hash SHA-256 di DB, TTL
+`GUEST_IDENTITY_TTL_HOURS` default 720 jam). Enforcement final di
+`BookingService.create()` dalam SATU transaction (`WithBookingTransaction`):
+lock row guest `FOR UPDATE` -> cek `order_count` -> validasi trip/kontak/tanggal
+-> insert booking -> `ConsumeGuestOrder` conditional (`WHERE order_count=0`).
+Idempotency wajib via header `Idempotency-Key` (hash di
+`bookings.idempotency_key_hash`, unique partial). Regression tests:
+`backend/internal/services/guest_order_limit_test.go` (policy, ownership,
+race, idempotency, claim single-use). Docs lengkap:
+`docs/GUEST_ORDER_LIMIT.md`.
+
+Batasan diketahui:
+- Token guest 30 hari; order guest yang belum di-claim setelah expiry hanya
+  bisa diakses staff.
+- Tombol "Continue with Google" di frontend masih placeholder (belum ada OAuth
+  provider di backend).
+- Booking legacy sebelum fitur ini tidak punya `guest_session_id` dan tidak
+  bisa di-claim; tetap jalur staff/owner lama.
+
+---
+
 ## A.12 Audit Dead Code + Clean Code Backend (14 Agu 2026)
 
 Audit dependency/reference-tracing menyeluruh terhadap backend (fokus: `mcp/tools.go`, `mcp_service.go`, `booking_service.go`, `ai_service.go`, tracing ke seluruh `backend/`). Prinsip: correctness > safety > dead-code removal. Tidak ada perubahan behavior. Verifikasi: `gofmt -l` kosong, `go vet`, `go build`, `go test ./...` semua PASS.
