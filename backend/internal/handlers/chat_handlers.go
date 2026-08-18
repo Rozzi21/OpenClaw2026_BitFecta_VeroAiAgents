@@ -50,6 +50,16 @@ func (h *Handler) GuestChat(c *gin.Context) {
 		utils.ServerError(c, err)
 		return
 	}
+	identity, err := h.Services.Guests.Resolve(c.Request.Context(), auth.GetGuestIdentityCookie(c))
+	if err != nil {
+		utils.ServerError(c, err)
+		return
+	}
+	if err := h.Services.Guests.AttachChat(c.Request.Context(), sessionID, identity.Session.ID); err != nil {
+		utils.ServerError(c, err)
+		return
+	}
+	auth.SetGuestIdentityCookie(c, h.Services.Config, identity.Token, int(h.Services.Config.GuestIdentityTTL.Seconds()))
 
 	// PERF-1: streaming path. The guest session cookie must be set BEFORE the
 	// first byte of the SSE body is written (headers cannot change after the

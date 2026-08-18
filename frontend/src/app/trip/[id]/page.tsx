@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, MapPin, Clock, CheckCircle2, Plane, BedDouble, Ticket, ShieldCheck } from "lucide-react";
-import { apiFetch, assetURL, BookingOrder, TripPackage } from "@/lib/api";
+import { APIError, apiFetch, assetURL, BookingOrder, getCustomerAccessToken, TripPackage } from "@/lib/api";
 import { getTripAdultPrice, getTripChildPrice } from "@/lib/format";
 import { TripPriceBlock, TripPriceInline } from "@/components/pricing/TripPriceBlock";
 
@@ -12,6 +12,8 @@ export default function TripDetailPage({ params }: { params: { id: string } }) {
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [order, setOrder] = useState<BookingOrder | null>(null);
   const [orderError, setOrderError] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     apiFetch<TripPackage>(`/api/v1/packages/${params.id}`)
@@ -37,13 +39,23 @@ export default function TripDetailPage({ params }: { params: { id: string } }) {
     }
     setCreatingOrder(true);
     setOrderError(null);
+    setAuthRequired(false);
     try {
-      const created = await apiFetch<BookingOrder>("/api/v1/orders", {
+	  idempotencyKeyRef.current ??= crypto.randomUUID();
+	  const authenticated = Boolean(getCustomerAccessToken());
+      const created = await apiFetch<BookingOrder>(authenticated ? "/api/v1/bookings" : "/api/v1/orders", {
         method: "POST",
-        body: JSON.stringify({ trip_id: trip.id, adult_pax: 1, child_pax: 0 }),
+		headers: { "Idempotency-Key": idempotencyKeyRef.current },
+		body: JSON.stringify({ trip_id: trip.id, adult_pax: 1, child_pax: 0, contact_name: "Guest", contact_phone: "provided-via-chat", travel_date: trip.package_start_date ?? new Date(Date.now() + 86400000).toISOString().slice(0, 10) }),
       });
       setOrder(created);
+	  idempotencyKeyRef.current = null;
     } catch (error) {
+	  if (error instanceof APIError && error.code === "GUEST_ORDER_LIMIT_REACHED") {
+		setAuthRequired(true);
+		setOrderError("Your guest order has already been used. Sign in to create another order.");
+		return;
+	  }
       setOrderError(
         error instanceof Error
           ? error.message
@@ -171,15 +183,31 @@ export default function TripDetailPage({ params }: { params: { id: string } }) {
                 {order ? "Order Saved" : creatingOrder ? "Saving Order..." : "Confirm & Create Order"}
               </button>
               {order ? (
-                <div className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">
-                  Order #{order.id.slice(0, 8)} saved as {order.booking_status}. Admin will process manually.
-                </div>
+				<div className="space-y-3 rounded-xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
+				  <p>Your order has been created successfully.</p>
+				  <p>You can continue tracking this order as a guest. To create another order, please sign in.</p>
+				  <div className="flex flex-wrap gap-2">
+					<Link href={`/order/${order.id}`} className="rounded-lg bg-emerald-700 px-3 py-2 text-white">Continue Tracking</Link>
+					<Link href="/login" className="rounded-lg border border-emerald-700 px-3 py-2">Login</Link>
+					<Link href="/register" className="rounded-lg border border-emerald-700 px-3 py-2">Register</Link>
+				  </div>
+				</div>
               ) : null}
               {orderError ? (
                 <div className="rounded-xl bg-rose-50 p-3 text-sm font-semibold text-rose-700">
                   {orderError}
                 </div>
               ) : null}
+			  {authRequired ? (
+				<div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+				  <p className="font-bold">Sign in to create another order.</p>
+				  <div className="grid gap-2">
+					<button type="button" disabled className="rounded-lg bg-white px-3 py-2 text-slate-400">Continue with Google</button>
+					<Link href="/login" className="rounded-lg bg-[#df3333] px-3 py-2 text-center font-bold text-white">Login</Link>
+					<Link href="/register" className="rounded-lg border border-amber-700 px-3 py-2 text-center font-bold">Create Account</Link>
+				  </div>
+				</div>
+			  ) : null}
             </div>
 
             <div className="mt-6 flex items-center justify-center gap-2 text-xs text-slate-400 font-medium">

@@ -145,6 +145,18 @@ type AuthSession struct {
 	RevokedAt *time.Time `json:"revoked_at,omitempty" gorm:"index"`
 }
 
+// GuestSession is the durable, server-side identity for an unauthenticated
+// visitor. The browser only receives an opaque random token; TokenHash stores
+// its SHA-256 digest so a database leak cannot be used as a bearer credential.
+type GuestSession struct {
+	BaseModel
+	TokenHash    string     `json:"-" gorm:"size:64;uniqueIndex;not null"`
+	UserID       uuid.UUID  `json:"-" gorm:"type:uuid;index;not null"`
+	FirstOrderID *uuid.UUID `json:"first_order_id,omitempty" gorm:"type:uuid;index"`
+	OrderCount   int        `json:"order_count" gorm:"not null;default:0"`
+	ExpiresAt    time.Time  `json:"expires_at" gorm:"index;not null"`
+}
+
 type ChatSession struct {
 	BaseModel
 	Title          string        `json:"title" gorm:"size:180;not null"`
@@ -152,6 +164,7 @@ type ChatSession struct {
 	SelectedTripID *uuid.UUID    `json:"selected_trip_id" gorm:"type:uuid;index"`
 	Messages       []ChatMessage `json:"messages,omitempty" gorm:"foreignKey:SessionID"`
 	UserID         *uuid.UUID    `json:"user_id" gorm:"type:uuid;index"`
+	GuestSessionID *uuid.UUID    `json:"-" gorm:"type:uuid;index"`
 	User           *User         `json:"-" gorm:"foreignKey:UserID"`
 	ExpiresAt      *time.Time    `json:"expires_at" gorm:"index"`
 	LastActivityAt *time.Time    `json:"last_activity_at" gorm:"index"`
@@ -217,21 +230,23 @@ type Itinerary struct {
 
 type Booking struct {
 	BaseModel
-	UserID        uuid.UUID  `json:"user_id" gorm:"type:uuid;index;not null"`
-	User          User       `json:"user,omitempty" gorm:"foreignKey:UserID"`
-	TripID        uuid.UUID  `json:"trip_id" gorm:"type:uuid;index;not null"`
-	Trip          Trip       `json:"trip,omitempty" gorm:"foreignKey:TripID"`
-	BookingStatus string     `json:"booking_status" gorm:"size:40;not null;default:pending;index"`
-	PaymentStatus string     `json:"payment_status" gorm:"size:40;not null;default:waiting_payment;index"`
-	AdultPax      int        `json:"adult_pax" gorm:"not null;default:1"`
-	ChildPax      int        `json:"child_pax" gorm:"not null;default:0"`
-	ContactName   string     `json:"contact_name" gorm:"size:120"`
-	ContactEmail  string     `json:"contact_email" gorm:"size:180"`
-	ContactPhone  string     `json:"contact_phone" gorm:"size:40"`
-	TravelDate    *time.Time `json:"travel_date,omitempty"`
-	TotalPrice    float64    `json:"total_price" gorm:"type:numeric(14,2);not null"`
-	BookingDate   time.Time  `json:"booking_date" gorm:"not null"`
-	Payments      []Payment  `json:"payments,omitempty" gorm:"foreignKey:BookingID"`
+	UserID             uuid.UUID  `json:"user_id" gorm:"type:uuid;index;not null"`
+	User               User       `json:"user,omitempty" gorm:"foreignKey:UserID"`
+	GuestSessionID     *uuid.UUID `json:"-" gorm:"type:uuid;index"`
+	TripID             uuid.UUID  `json:"trip_id" gorm:"type:uuid;index;not null"`
+	Trip               Trip       `json:"trip,omitempty" gorm:"foreignKey:TripID"`
+	BookingStatus      string     `json:"booking_status" gorm:"size:40;not null;default:pending;index"`
+	PaymentStatus      string     `json:"payment_status" gorm:"size:40;not null;default:waiting_payment;index"`
+	AdultPax           int        `json:"adult_pax" gorm:"not null;default:1"`
+	ChildPax           int        `json:"child_pax" gorm:"not null;default:0"`
+	ContactName        string     `json:"contact_name" gorm:"size:120"`
+	ContactEmail       string     `json:"contact_email" gorm:"size:180"`
+	ContactPhone       string     `json:"contact_phone" gorm:"size:40"`
+	TravelDate         *time.Time `json:"travel_date,omitempty"`
+	TotalPrice         float64    `json:"total_price" gorm:"type:numeric(14,2);not null"`
+	BookingDate        time.Time  `json:"booking_date" gorm:"not null"`
+	Payments           []Payment  `json:"payments,omitempty" gorm:"foreignKey:BookingID"`
+	IdempotencyKeyHash string     `json:"-" gorm:"size:64;uniqueIndex"`
 }
 
 // CanTransitionTo reports whether the booking may move to target under the

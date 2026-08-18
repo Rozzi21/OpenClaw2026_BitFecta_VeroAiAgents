@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"sort"
 	"strconv"
@@ -43,12 +44,13 @@ type MCPRepository interface {
 	repositories.LogRepository
 	FindTrip(ctx context.Context, id uuid.UUID) (models.Trip, error)
 	ListTrips(ctx context.Context, query repositories.TripRepositoryFilter) ([]models.Trip, error)
+	FindGuestSession(ctx context.Context, id uuid.UUID) (models.GuestSession, error)
 }
 
 // BookingCreator is the inter-service contract MCPService uses to create a
 // booking via the booking domain (SEC-27). *BookingService satisfies it.
 type BookingCreator interface {
-	Create(ctx context.Context, userID uuid.UUID, req dto.BookingRequest) (models.Booking, error)
+	CreateGuest(ctx context.Context, userID, guestID uuid.UUID, idempotencyKey string, req dto.BookingRequest) (models.Booking, error)
 }
 
 // GuestUserProvider is the inter-service contract MCPService uses to resolve a
@@ -742,12 +744,6 @@ func (s *MCPService) executeCreateBooking(ctx context.Context, sessionID uuid.UU
 		}}
 	}
 
-	guestUser, err := s.auth.GuestUser(ctx)
-	if err != nil {
-		log.Printf("[mcp] create_booking failed guest_user error=%v", err)
-		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": err.Error()}}
-	}
-
 	tripIDStr, _ := payload["trip_id"].(string)
 	tripID, err := uuid.Parse(tripIDStr)
 	if err != nil {
@@ -780,11 +776,26 @@ func (s *MCPService) executeCreateBooking(ctx context.Context, sessionID uuid.UU
 		log.Printf("[mcp] create_booking failed invalid_date travel_date=%q", req.TravelDate)
 		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "invalid travel_date format, please use ISO format (YYYY-MM-DD)"}}
 	}
+	session, err := s.repo.FindChatSession(ctx, sessionID)
+	if err != nil || session.GuestSessionID == nil {
+		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "guest session is unavailable"}}
+	}
+	guest, err := s.repo.FindGuestSession(ctx, *session.GuestSessionID)
+	if err != nil {
+		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "guest session is unavailable"}}
+	}
+	payloadJSON, _ := json.Marshal(payload)
+	idempotencyKey := "mcp:" + sessionID.String() + ":" + HashGuestToken(string(payloadJSON))
 
-	booking, err := s.bookings.Create(ctx, guestUser.ID, req)
+	booking, err := s.bookings.CreateGuest(ctx, guest.UserID, guest.ID, idempotencyKey, req)
 	if err != nil {
 		log.Printf("[mcp] create_booking save failed error=%v", err)
-		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": err.Error()}}
+		if errors.Is(err, ErrGuestOrderLimitReached) {
+			return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{
+				"success": false, "status": "requires_authentication", "code": "GUEST_ORDER_LIMIT_REACHED", "message": "Please sign in to create another order.",
+			}}
+		}
+		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "booking creation failed"}}
 	}
 	log.Printf("[mcp] create_booking saved booking_id=%s status=%s payment_status=%s total=%.2f", booking.ID, booking.BookingStatus, booking.PaymentStatus, booking.TotalPrice)
 

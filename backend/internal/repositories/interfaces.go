@@ -83,6 +83,24 @@ type BookingRepository interface {
 	UpdateBookingStatusAtomic(ctx context.Context, id uuid.UUID, fromStatus, toStatus string) (bool, error)
 }
 
+type GuestRepository interface {
+	CreateGuestSession(ctx context.Context, session *models.GuestSession) error
+	FindGuestSessionByTokenHash(ctx context.Context, hash string) (models.GuestSession, error)
+	FindGuestSession(ctx context.Context, id uuid.UUID) (models.GuestSession, error)
+	UpdateChatSessionGuest(ctx context.Context, chatID, guestID uuid.UUID) error
+	ClaimGuestOrder(ctx context.Context, guestID, userID uuid.UUID) (uuid.UUID, error)
+}
+
+// BookingTransactionRepository is implemented by Repository both normally and
+// when backed by a GORM transaction handle.
+type BookingTransactionRepository interface {
+	FindTrip(ctx context.Context, id uuid.UUID) (models.Trip, error)
+	CreateBooking(ctx context.Context, booking *models.Booking) error
+	LockGuestSession(ctx context.Context, id uuid.UUID) (models.GuestSession, error)
+	ConsumeGuestOrder(ctx context.Context, guestID, bookingID uuid.UUID) error
+	FindBookingByIdempotency(ctx context.Context, ownerID uuid.UUID, guest bool, hash string) (models.Booking, error)
+}
+
 // PaymentRepository — payment persistence + atomic status transitions.
 type PaymentRepository interface {
 	CreatePayment(ctx context.Context, payment *models.Payment) error
@@ -122,6 +140,7 @@ var (
 	_ ChatRepository        = (*Repository)(nil)
 	_ TripRepository        = (*Repository)(nil)
 	_ BookingRepository     = (*Repository)(nil)
+	_ GuestRepository       = (*Repository)(nil)
 	_ PaymentRepository     = (*Repository)(nil)
 	_ LogRepository         = (*Repository)(nil)
 	_ AnalyticsRepository   = (*Repository)(nil)

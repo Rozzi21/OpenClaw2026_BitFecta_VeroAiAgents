@@ -36,7 +36,11 @@ func (m *mockMCPRepo) ListTrips(_ context.Context, _ repositories.TripRepository
 // ChatRepository / LogRepository stubs (unused by the read tools but required
 // to satisfy the MCPRepository interface).
 func (m *mockMCPRepo) FindChatSession(_ context.Context, id uuid.UUID) (models.ChatSession, error) {
-	return models.ChatSession{BaseModel: models.BaseModel{ID: id}}, nil
+	guestID := uuid.New()
+	return models.ChatSession{BaseModel: models.BaseModel{ID: id}, GuestSessionID: &guestID}, nil
+}
+func (m *mockMCPRepo) FindGuestSession(_ context.Context, id uuid.UUID) (models.GuestSession, error) {
+	return models.GuestSession{BaseModel: models.BaseModel{ID: id}, UserID: uuid.New()}, nil
 }
 func (m *mockMCPRepo) CreateChatSession(_ context.Context, s *models.ChatSession) error { return nil }
 func (m *mockMCPRepo) UpdateChatSession(_ context.Context, _ *models.ChatSession) error { return nil }
@@ -88,7 +92,7 @@ type mockBookingCreator struct {
 	createCalls int
 }
 
-func (b *mockBookingCreator) Create(_ context.Context, _ uuid.UUID, req dto.BookingRequest) (models.Booking, error) {
+func (b *mockBookingCreator) CreateGuest(_ context.Context, _, _ uuid.UUID, _ string, req dto.BookingRequest) (models.Booking, error) {
 	b.createCalls++
 	return models.Booking{
 		BaseModel:     models.BaseModel{ID: uuid.New()},

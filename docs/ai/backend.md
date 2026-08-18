@@ -117,6 +117,18 @@ CRUD trip + transformasi DTO. Pola penting:
 - Saat status `published` dan `PublishedAt` kosong, set timestamp.
 - Itinerary di-replace via `ReplaceTripItineraries()` (hapus + insert ulang dalam transaksi).
 
+### GuestService (GUEST ORDER LIMIT, 18 Agu 2026)
+
+`guest_service.go` mengelola identitas tamu server-side untuk kebijakan satu
+order per guest. `Resolve()` membaca cookie `vero_guest_session` (opaque random
+256-bit, hash SHA-256 di `guest_sessions.token_hash`) atau membuat session baru
++ user guest terisolasi; `Authenticate()` memvalidasi token untuk tracking;
+`AttachChat()` menautkan chat ke guest identity; `ClaimOrder()` mentransfer
+order guest ke akun setelah login/register (cookie-diverifikasi, single-use,
+audit `guest_order_linked`). Audit tambahan: `guest_order_created`,
+`guest_order_limit_reached`, `guest_order_auth_required` — hanya safe IDs, tanpa
+raw token. Detail: [GUEST_ORDER_LIMIT.md](../GUEST_ORDER_LIMIT.md).
+
 ### BookingService & PaymentService
 
 - `BookingService.Create()`: booking/order baru selalu `booking_status=pending`, `payment_status=pending_admin_processing` selama DOKU dinonaktifkan sementara. **Harga dihitung server-side** (SEC-3), bukan dari body client. Sejak AIW-5 (14 Agu 2026) total dihitung via shared helper `priceBreakdown(trip, adultPax, childPax).Total` — helper yang sama dipakai tool MCP `calculate_trip_price`, sehingga quote AI identik dengan tagihan booking. `priceBreakdown` internal memakai `tripAdultPrice`/`tripChildPrice` (menghormati diskon) — logic pricing tidak diduplikasi.

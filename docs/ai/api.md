@@ -127,7 +127,16 @@ Request penting:
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/v1/orders` | 🔓 (rate limit 5/menit per-IP, SEC-13) | Buat order dari customer UI setelah pilih paket; tersimpan sebagai `booking_status=pending`, `payment_status=pending_admin_processing`; tidak membuat DOKU payment/session |
+| POST | `/api/v1/orders` | 🔓 guest cookie (rate limit 5/menit per-IP, SEC-13) | Buat order guest; tersimpan sebagai `booking_status=pending`, `payment_status=pending_admin_processing`; tidak membuat DOKU payment/session. **Satu order per GuestSession** (lihat di bawah); wajib header `Idempotency-Key` |
+| GET | `/api/v1/orders/:id` | 🔓 guest cookie | Detail order MILIK guest session saat ini (anti-IDOR: cookie token + `bookings.guest_session_id` harus cocok; UUID saja tidak cukup) |
+
+**Guest Order Limit (18 Agu 2026).** Identitas guest adalah `GuestSession` server-side; browser membawa token opaque random 256-bit via cookie HttpOnly `vero_guest_session` (path `/api/v1`, TTL `GUEST_IDENTITY_TTL_HOURS`, default 720 jam; hanya SHA-256 hash disimpan di DB). Kebijakan ditegakkan di `BookingService` dalam SATU transaction: lock row guest `FOR UPDATE`, validasi trip/pax/tanggal/kontak, insert booking, konsumsi entitlement (`order_count=1`). Chat baru/refresh/hapus localStorage TIDAK mereset allowance. Percobaan order kedua dibalas HTTP 403:
+
+```json
+{ "success": false, "message": "Please sign in to create another order.", "error": { "status": "authentication_required", "code": "GUEST_ORDER_LIMIT_REACHED" } }
+```
+
+`Idempotency-Key` (16-200 char) wajib di `POST /orders` dan `POST /bookings`; retry dengan key sama mengembalikan booking yang sama (hash di `bookings.idempotency_key_hash`, unique). Error validasi dibalas `400` dengan `error.code` = `BOOKING_VALIDATION_FAILED` atau `IDEMPOTENCY_KEY_REQUIRED` - keduanya TIDAK mengonsumsi allowance. Setelah login/register sukses, backend meng-claim order guest ke akun (cookie-diverifikasi, single-use, atomic) dan user bisa membuat order tambahan via `POST /bookings`. Detail lengkap: [GUEST_ORDER_LIMIT.md](../GUEST_ORDER_LIMIT.md).
 
 - `chat` request: `{prompt(min 2, max 4000), session_id?, stream?}` (DTO `ChatRequest`). Body maksimum 64 KiB. `session_id` hanya dipakai bila milik caller; ID sesi asing/tidak ditemukan diabaikan dan request dibuat pada sesi baru milik caller (SEC-17). `stream` (bool, default `false`) mengaktifkan mode streaming SSE (PERF-1).
 - `chat` response data: `{message, workflow[], show_recommendations, recommendation_reason, recommended_packages[]}` (lihat `ChatResult`). Session identifier tidak dikembalikan di JSON; browser memakai HttpOnly cookie `vero_chat_session`.

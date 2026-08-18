@@ -2,11 +2,14 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rozzi/vero-ai-travel-agents/backend/internal/auth"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/dto"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/events"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/models"
@@ -15,6 +18,10 @@ import (
 
 // ErrBookingNotFound is a sentinel error for missing bookings.
 var ErrBookingNotFound = errors.New("booking not found")
+var ErrGuestOrderLimitReached = errors.New("guest order limit reached")
+var ErrIdempotencyKeyRequired = errors.New("idempotency key is required")
+var ErrBookingContactRequired = errors.New("contact email or phone is required")
+var ErrBookingTravelDateInvalid = errors.New("travel date is invalid")
 
 // SEC-27: BookingService depends on a narrow repository interface instead of
 // the concrete *repositories.Repository. It needs bookings + trip lookup
@@ -31,55 +38,140 @@ type BookingService struct {
 type BookingRepository interface {
 	repositories.BookingRepository
 	FindTrip(ctx context.Context, id uuid.UUID) (models.Trip, error)
+	WithBookingTransaction(ctx context.Context, fn func(repositories.BookingTransactionRepository) error) error
+	FindBookingForGuest(ctx context.Context, id, guestID uuid.UUID) (models.Booking, error)
 }
 
-func (s *BookingService) Create(ctx context.Context, userID uuid.UUID, req dto.BookingRequest) (models.Booking, error) {
-	// SEC-3: never trust a client-supplied price. Resolve the trip and compute
-	// the total from the catalog price and the requested pax server-side.
-	trip, err := s.repo.FindTrip(ctx, req.TripID)
-	if err != nil {
-		return models.Booking{}, errors.New("trip not found")
+func hashIdempotency(ownerID uuid.UUID, guest bool, key string) string {
+	prefix := "user:"
+	if guest {
+		prefix = "guest:"
 	}
-	// SEC-11: enforce sane pax bounds server-side too, not only via DTO binding,
-	// because non-HTTP callers (MCP create_booking) bypass request binding.
-	// Negative pax would yield negative/zero totals; huge pax risks float
-	// overflow and absurd bills.
-	adultPax := req.AdultPax
-	childPax := req.ChildPax
-	if adultPax < 0 || childPax < 0 || adultPax > dto.MaxBookingPax || childPax > dto.MaxBookingPax {
-		return models.Booking{}, fmt.Errorf("pax must be between 0 and %d", dto.MaxBookingPax)
-	}
-	if adultPax <= 0 && childPax <= 0 {
-		adultPax = 1
-	}
-	// Reuse the shared priceBreakdown helper so the booking total is computed by
-	// the exact same code path that backs the calculate_trip_price tool. This
-	// keeps a quoted total identical to the charged total (source of truth).
-	total := priceBreakdown(trip, adultPax, childPax).Total
-	booking := models.Booking{
-		UserID:        userID,
-		TripID:        req.TripID,
-		BookingStatus: models.BookingStatusPending,
-		// Payments are temporarily disabled. New orders stay pending for manual
-		// backoffice/admin processing. Re-enable DOKU by restoring the old
-		// waiting_payment status alongside PAYMENTS_ENABLED=true.
-		PaymentStatus: models.PaymentStatusPendingAdminProcessing,
+	sum := sha256.Sum256([]byte(prefix + ownerID.String() + ":" + key))
+	return hex.EncodeToString(sum[:])
+}
 
-		AdultPax:     adultPax,
-		ChildPax:     childPax,
-		ContactName:  req.ContactName,
-		ContactEmail: req.ContactEmail,
-		ContactPhone: req.ContactPhone,
-		TravelDate:   parseDate(req.TravelDate),
-		TotalPrice:   total,
-		BookingDate:  time.Now(),
+func (s *BookingService) Create(ctx context.Context, userID uuid.UUID, idempotencyKey string, req dto.BookingRequest) (models.Booking, error) {
+	return s.create(ctx, userID, nil, idempotencyKey, req)
+}
+
+func (s *BookingService) CreateGuest(ctx context.Context, userID, guestID uuid.UUID, idempotencyKey string, req dto.BookingRequest) (models.Booking, error) {
+	return s.create(ctx, userID, &guestID, idempotencyKey, req)
+}
+
+func (s *BookingService) create(ctx context.Context, userID uuid.UUID, guestID *uuid.UUID, idempotencyKey string, req dto.BookingRequest) (models.Booking, error) {
+	if len(idempotencyKey) < 16 || len(idempotencyKey) > 200 {
+		return models.Booking{}, ErrIdempotencyKeyRequired
 	}
-	if err := s.repo.CreateBooking(ctx, &booking); err != nil {
-		return booking, err
+	ownerID := userID
+	isGuest := guestID != nil
+	if isGuest {
+		ownerID = *guestID
+	}
+	keyHash := hashIdempotency(ownerID, isGuest, idempotencyKey)
+	var booking models.Booking
+	err := s.repo.WithBookingTransaction(ctx, func(tx repositories.BookingTransactionRepository) error {
+		if existing, err := tx.FindBookingByIdempotency(ctx, ownerID, isGuest, keyHash); err == nil {
+			booking = existing
+			return nil
+		}
+		if isGuest {
+			guest, err := tx.LockGuestSession(ctx, *guestID)
+			if err != nil {
+				return ErrGuestSessionInvalid
+			}
+			if guest.OrderCount >= 1 {
+				if existing, err := tx.FindBookingByIdempotency(ctx, ownerID, true, keyHash); err == nil {
+					booking = existing
+					return nil
+				}
+				return ErrGuestOrderLimitReached
+			}
+		}
+
+		// SEC-3: never trust a client-supplied price. Resolve the trip and compute
+		// the total from the catalog price and the requested pax server-side.
+		trip, err := tx.FindTrip(ctx, req.TripID)
+		if err != nil {
+			return errors.New("trip not found")
+		}
+		// SEC-11: enforce sane pax bounds server-side too, not only via DTO binding,
+		// because non-HTTP callers (MCP create_booking) bypass request binding.
+		// Negative pax would yield negative/zero totals; huge pax risks float
+		// overflow and absurd bills.
+		adultPax := req.AdultPax
+		childPax := req.ChildPax
+		if adultPax < 0 || childPax < 0 || adultPax > dto.MaxBookingPax || childPax > dto.MaxBookingPax {
+			return fmt.Errorf("pax must be between 0 and %d", dto.MaxBookingPax)
+		}
+		if adultPax <= 0 && childPax <= 0 {
+			adultPax = 1
+		}
+		if req.ContactEmail == "" && req.ContactPhone == "" {
+			return ErrBookingContactRequired
+		}
+		travelDate := parseDate(req.TravelDate)
+		if travelDate == nil {
+			return ErrBookingTravelDateInvalid
+		}
+		if trip.Status != "published" {
+			return errors.New("trip is unavailable")
+		}
+		if trip.PackageStartDate != nil && travelDate.Before(*trip.PackageStartDate) {
+			return errors.New("trip is unavailable for travel date")
+		}
+		if trip.PackageEndDate != nil && travelDate.After(*trip.PackageEndDate) {
+			return errors.New("trip is unavailable for travel date")
+		}
+		if trip.AdultPax > 0 && adultPax > trip.AdultPax || trip.ChildPax > 0 && childPax > trip.ChildPax {
+			return errors.New("trip capacity exceeded")
+		}
+		// Reuse the shared priceBreakdown helper so the booking total is computed by
+		// the exact same code path that backs the calculate_trip_price tool. This
+		// keeps a quoted total identical to the charged total (source of truth).
+		total := priceBreakdown(trip, adultPax, childPax).Total
+		booking = models.Booking{
+			UserID:         userID,
+			GuestSessionID: guestID,
+			TripID:         req.TripID,
+			BookingStatus:  models.BookingStatusPending,
+			// Payments are temporarily disabled. New orders stay pending for manual
+			// backoffice/admin processing. Re-enable DOKU by restoring the old
+			// waiting_payment status alongside PAYMENTS_ENABLED=true.
+			PaymentStatus: models.PaymentStatusPendingAdminProcessing,
+
+			AdultPax:           adultPax,
+			ChildPax:           childPax,
+			ContactName:        req.ContactName,
+			ContactEmail:       req.ContactEmail,
+			ContactPhone:       req.ContactPhone,
+			TravelDate:         travelDate,
+			TotalPrice:         total,
+			BookingDate:        time.Now(),
+			IdempotencyKeyHash: keyHash,
+		}
+		if err := tx.CreateBooking(ctx, &booking); err != nil {
+			return err
+		}
+		if isGuest {
+			if err := tx.ConsumeGuestOrder(ctx, *guestID, booking.ID); err != nil {
+				return ErrGuestOrderLimitReached
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, ErrGuestOrderLimitReached) {
+			auth.LogSecurity("guest_order_limit_reached", map[string]any{"guest_session_id": ownerID.String()})
+		}
+		return models.Booking{}, err
 	}
 	// SEC-18: minimal signal only; the booking struct carries contact PII
 	// (name/email/phone) that must not be broadcast to every SSE subscriber.
 	s.bus.Publish("booking_created", map[string]interface{}{"booking_id": booking.ID, "trip_id": booking.TripID, "status": booking.BookingStatus})
+	if isGuest {
+		auth.LogSecurity("guest_order_created", map[string]any{"guest_session_id": ownerID.String(), "booking_id": booking.ID.String()})
+	}
 	return booking, nil
 }
 func (s *BookingService) List(ctx context.Context, query dto.ListQuery) ([]models.Booking, error) {
@@ -99,6 +191,14 @@ func (s *BookingService) Find(ctx context.Context, id, userID uuid.UUID, isStaff
 	} else {
 		booking, err = s.repo.FindBookingForUser(ctx, id, userID)
 	}
+	if err != nil {
+		return models.Booking{}, ErrBookingNotFound
+	}
+	return booking, nil
+}
+
+func (s *BookingService) FindGuest(ctx context.Context, id, guestID uuid.UUID) (models.Booking, error) {
+	booking, err := s.repo.FindBookingForGuest(ctx, id, guestID)
 	if err != nil {
 		return models.Booking{}, ErrBookingNotFound
 	}

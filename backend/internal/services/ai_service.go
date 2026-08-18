@@ -802,7 +802,9 @@ func (s *AIService) buildMessages(ctx context.Context, session models.ChatSessio
 				"- Jika informasi yang user minta belum tersedia di konteks, panggil tool yang sesuai (get_trip_detail / calculate_trip_price / check_trip_availability) daripada menjawab dari asumsi.\n" +
 				"\n" +
 				"ATURAN KRITIS:\n" +
-				"- JANGAN pernah klaim pesanan berhasil dibuat sampai create_booking mengembalikan status=success. Jika create_booking gagal, minta maaf dan sarankan coba lagi. Jangan mengarang order_id atau detail booking.\n" +
+				"- Guest boleh membuat tepat satu order tanpa login. Order guest pertama TIDAK memerlukan login; order berikutnya memerlukan login/register. Backend adalah otoritas final.\n" +
+				"- Jika create_booking mengembalikan code=GUEST_ORDER_LIMIT_REACHED, JANGAN retry tool. Beri tahu user bahwa guest order sudah digunakan dan minta login/register untuk order lain.\n" +
+				"- JANGAN pernah klaim pesanan berhasil dibuat sampai create_booking mengembalikan status=success. Jika create_booking gagal, minta maaf dan sarankan tindakan sesuai structured code. Jangan mengarang order_id atau detail booking.\n" +
 				"- Jika sebuah tool mengembalikan status=failed dengan alasan bisnis jelas (mis. \"a package is already selected\"), komunikasikan ke user konteksnya dan beri opsi: lanjutkan pemesanan paket yang sudah dipilih, lihat alternatif lain, atau batalkan pilihan. Contoh: \"Terlihat Anda sudah memilih paket [nama paket]. Mau lanjutkan pemesanan paket ini, lihat alternatif lain, atau batalkan pilihan?\"\n" +
 				"- Jika trip_id tidak ditemukan (error \"trip not found\" / \"invalid trip_id\"), jangan mengarang data paket; katakan paket tidak ditemukan dan tawarkan mencari paket lain via search_trips.\n" +
 				"- Jangan kembalikan jawaban fallback generik kecuali benar-benar tidak ada data. Jika terjadi gangguan sistem, sistem akan menyisipkan kode pelacakan (format AILog-xxxxxxxx) ke pesan Anda — sampaikan kode itu apa adanya kepada user.\n" +

@@ -63,8 +63,14 @@ func (h *Handler) OpenAPI(c *gin.Context) {
 			// Guest AI chat (no auth) — consumed by the customer frontend
 			"/api/v1/chat": gin.H{"post": op("Chat", "Run the autonomous AI chat workflow as guest", false)},
 
-			// Public manual order creation while DOKU payment is disabled
-			"/api/v1/orders": gin.H{"post": op("Orders", "Create pending order for manual backoffice processing", false)},
+			// Public manual order creation while DOKU payment is disabled.
+			// Guest identity comes from the vero_guest_session HttpOnly cookie
+			// (opaque random token, hashed server-side). Exactly ONE successful
+			// order per guest session; a second attempt returns HTTP 403 with
+			// error {status:"authentication_required", code:"GUEST_ORDER_LIMIT_REACHED"}.
+			// Requires an Idempotency-Key header (16..200 chars) for safe retries.
+			"/api/v1/orders":      gin.H{"post": op("Orders", "Create pending order for manual backoffice processing (guest: one order, requires Idempotency-Key header)", false)},
+			"/api/v1/orders/{id}": gin.H{"get": op("Orders", "Get a guest order by id (guest cookie ownership required)", false)},
 
 			// Authenticated chat history
 			"/api/v1/chat/sessions":      gin.H{"get": op("Chat", "List chat sessions for current user", true)},

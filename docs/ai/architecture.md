@@ -78,6 +78,7 @@ flowchart TD
   E1 --> E3["select_package -> simpan SelectedTripID ke session"]
   E1 --> E4["collect_order_detail -> draft detail booking"]
   E1 --> E5["create_booking -> BookingService.Create -> DB"]
+   E5 --> E5a["GuestSession row lock FOR UPDATE -> cek order_count -> insert booking + konsumsi entitlement atomik (guest order limit)"]
   E2 --> F["Append hasil tool (role=tool), panggil LLM lagi sampai teks final"]
   F --> G["Guard: klaim order sukses tanpa create_booking success -> diganti pesan gagal aman"]
   G --> H["Simpan pesan asisten + refresh memory summary"]
@@ -175,7 +176,7 @@ Pola frontend (kedua app): **custom hook untuk data/logic** (`use-trip-form.ts`,
 
 1. **`create_payment` MCP dinonaktifkan di workflow chat.** Agar AI tidak pernah menyebut QRIS/pembayaran saat DOKU disabled. Ditandai `Enabled: false` di `internal/mcp/tools.go`, diblok di `MCPService.Execute()`, dan dikomentari di `internal/services/ai_service.go` (langkah workflow `Chat()`). Jangan aktifkan kembali tanpa `PAYMENTS_ENABLED=true` dan wiring booking+payment end-to-end.
 2. **Tool MCP lama masih mock/legacy.** Tool rekomendasi lama (`search_destination`, `search_hotels`, `calculate_budget`, `generate_itinerary`) sudah dinonaktifkan dari katalog OpenAI; `MCPService.Execute()` memetakan nama-nama itu ke `search_trips` demi kompatibilitas. Fungsi `mock()` kini hanya menangani `send_whatsapp` (juga disabled) dan fallback `unknown tool`. Integrasi LLM nyata sudah ada (`internal/ai`) dengan fallback lokal bila `AI_API_KEY` kosong.
-3. **Guest chat tanpa auth, session anonymous.** `POST /api/v1/chat` memakai `ChatSession` ber-`UserID=NULL` yang diikat cookie HttpOnly `vero_chat_session` (bukan lagi user bersama `guest@vero.local`). User "Guest Traveler" (`guest@vero.local`) hanya masih dipakai untuk memenuhi kontrak `bookings.user_id NOT NULL` saat order dibuat.
+3. **Guest chat tanpa auth, session anonymous.** `POST /api/v1/chat` memakai `ChatSession` ber-`UserID=NULL` yang diikat cookie HttpOnly `vero_chat_session` (bukan lagi user bersama `guest@vero.local`). Identitas order-limit guest adalah `GuestSession` (cookie `vero_guest_session`, token opaque hash-only); booking guest memakai user guest terisolasi per session (`guest-<uuid>@vero.local`) untuk memenuhi kontrak `bookings.user_id NOT NULL`, plus `bookings.guest_session_id` sebagai otoritas ownership/limit.
 4. **Refresh token sebagai session DB + cookie HttpOnly.** Bukan disimpan di JS. Bisa di-revoke, dirotasi tiap refresh, dengan reuse detection revoke-all.
 5. **Access TTL pendek (15 menit).** Memperkecil dampak XSS; refresh otomatis menangani perpanjangan.
 6. **`WriteTimeout=15s`** global di HTTP server. Karena didukung override dinamis di handler SSE, koneksi zombie dijaga oleh tiga guard di `EventStream` (BUG-4): write-error detection (`ResponseController` + `Flush`), max lifetime 30 menit, cap subscriber 100.

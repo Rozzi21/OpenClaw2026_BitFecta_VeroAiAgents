@@ -8,7 +8,7 @@ Dokumen ini mencakup KEDUA aplikasi Next.js di repo: `frontend/` (customer chat)
 
 ## 1. Customer Frontend (`frontend/`)
 
-Antarmuka chat AI untuk tamu. Tidak ada login, tidak ada auth. Efektif hanya dua panggilan backend: chat AI dan detail paket.
+Antarmuka chat AI untuk tamu, kini dengan auth opsional (login/register) untuk fitur guest order limit. Panggilan backend utama: chat AI, detail paket, order guest, tracking order, dan auth customer.
 
 ### Struktur Halaman & Routing (App Router)
 
@@ -17,6 +17,10 @@ Antarmuka chat AI untuk tamu. Tidak ada login, tidak ada auth. Efektif hanya dua
 | `/` | `frontend/src/app/page.tsx` | Halaman utama, me-render `ChatInterface` |
 | `/trip/[id]` | `frontend/src/app/trip/[id]/page.tsx` | Detail paket trip (memanggil `GET /api/v1/packages/:id`) |
 | layout root | `frontend/src/app/layout.tsx` | Layout global, font, metadata |
+| `/login` | `frontend/src/app/login/page.tsx` | Login customer (access token di localStorage, refresh via cookie) |
+| `/register` | `frontend/src/app/register/page.tsx` | Register customer |
+| `/order/[id]` | `frontend/src/app/order/[id]/page.tsx` | Tracking order guest (cookie) atau milik akun (bearer token) |
+
 
 ### Komponen Kunci
 
@@ -26,6 +30,17 @@ Antarmuka chat AI untuk tamu. Tidak ada login, tidak ada auth. Efektif hanya dua
 | `RecommendationCard` | `frontend/src/components/cards/RecommendationCard.tsx` | Kartu paket rekomendasi inline di chat |
 | `TripPriceBlock` | `frontend/src/components/pricing/TripPriceBlock.tsx` | Blok harga paket (base/discount/child) |
 | `Sidebar` | `frontend/src/components/layout/Sidebar.tsx` | Navigasi kiri (sebagian link masih placeholder `href="#"`) |
+
+### Guest Order Limit UI (18 Agu 2026)
+
+Cookie `vero_guest_session` otomatis terkirim (`credentials: include`); frontend
+TIDAK menyimpan entitlement di localStorage. `lib/api.ts` kini melempar
+`APIError` (status + `error.code`) sehingga halaman trip bereaksi pada
+`GUEST_ORDER_LIMIT_REACHED`: auth gate "Your guest order has already been used"
++ tombol Login/Create Account (Google = placeholder disabled). Order sukses
+menampilkan Continue Tracking/Login/Register. Idempotency-Key dibuat per
+logical checkout (`crypto.randomUUID()`, di-ref hingga sukses). Setelah login,
+order di-claim backend dan tracking beralih ke `/api/v1/bookings/:id`.
 
 ### Mekanisme Rekomendasi
 

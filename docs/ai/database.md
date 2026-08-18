@@ -44,6 +44,20 @@ Akun pengguna. Punya `Role` (`user` | `operator` | `admin`).
 - Email `uniqueIndex`. Password bcrypt (tidak diserialisasi).
 - User "Guest Traveler" (`guest@vero.local`) dibuat via `FirstOrCreateUser` — hanya dipakai untuk memenuhi `bookings.user_id NOT NULL` saat order tamu dibuat. ChatSession tamu ber-`UserID=NULL` (bukan user ini).
 
+### GuestSession ([models.go](../../backend/internal/models/models.go))
+Identitas tamu server-side untuk kebijakan "satu order per guest" (fitur
+GUEST ORDER LIMIT, 18 Agu 2026). `TokenHash` (`uniqueIndex`) menyimpan SHA-256
+dari token opaque random 256-bit yang dikirim ke browser lewat cookie HttpOnly
+`vero_guest_session` (path `/api/v1`, TTL dari `GUEST_IDENTITY_TTL_HOURS`,
+default 720 jam). `UserID` menunjuk user guest terisolasi
+(`guest-<uuid>@vero.local`) yang memenuhi `bookings.user_id NOT NULL` untuk
+order tamu. `OrderCount`/`FirstOrderID` menandai entitlement satu order yang
+dikonsumsi atomik (`LockGuestSession` + conditional `ConsumeGuestOrder`
+`WHERE order_count=0`). `ExpiresAt` membatasi umur identitas. Raw token tidak
+pernah disimpan — hanya hash-nya. Relasi balik: `ChatSession.GuestSessionID`
+(link chat→guest) dan `Booking.GuestSessionID` (ownership + policy). Detail
+lengkap: [GUEST_ORDER_LIMIT.md](../GUEST_ORDER_LIMIT.md).
+
 ### AuthSession ([models.go](../../backend/internal/models/models.go))
 Menyimpan sesi refresh token untuk memungkinkan **revocation**.
 - `TokenJTI` (`uniqueIndex`) = klaim `jti` dari refresh JWT.
@@ -101,7 +115,7 @@ erDiagram
 
 ## Migrasi
 
-`Database.AutoMigrate()` ([database.go](../../backend/internal/database/database.go)) dipanggil di startup (`main.go`). Mendaftarkan 10 model secara berurutan: User, AuthSession, ChatSession, ChatMessage, Trip, Itinerary, Booking, Payment, AILog, ToolCall.
+`Database.AutoMigrate()` ([database.go](../../backend/internal/database/database.go)) dipanggil di startup (`main.go`). Mendaftarkan 11 model secara berurutan: User, AuthSession, GuestSession, ChatSession, ChatMessage, Trip, Itinerary, Booking, Payment, AILog, ToolCall. Kolom baru untuk guest order limit (`bookings.guest_session_id`, `bookings.idempotency_key_hash`, `chat_sessions.guest_session_id`) juga ditambah AutoMigrate; SQL versioned yang setara ada di `backend/migrations/20260818_guest_order_limit.sql` (additive, idempotent — termasuk partial unique index untuk `idempotency_key_hash`).
 
 Setelah AutoMigrate, `MigrateGuestChatSessions()` menormalisasi session lama yang masih menunjuk `guest@vero.local` menjadi `UserID=NULL` dan mengisi expiry legacy dari timestamp aktivitas.
 

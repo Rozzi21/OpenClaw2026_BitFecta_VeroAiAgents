@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/auth"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/dto"
+	"github.com/rozzi/vero-ai-travel-agents/backend/internal/models"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/services"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/utils"
 )
@@ -25,6 +26,11 @@ func (h *Handler) Register(c *gin.Context) {
 		utils.BadRequest(c, "Registration failed", gin.H{})
 		return
 	}
+	if user, ok := result.Response.User.(models.User); ok {
+		if err := h.Services.Guests.ClaimOrder(c.Request.Context(), auth.GetGuestIdentityCookie(c), user.ID); err != nil {
+			log.Printf("[register] guest order claim failed user=%s: %v", user.ID, err)
+		}
+	}
 	respondAuthIssue(c, h.Services.Config, http.StatusCreated, "Registered", result)
 }
 
@@ -37,6 +43,11 @@ func (h *Handler) Login(c *gin.Context) {
 	if err != nil {
 		utils.Unauthorized(c, err.Error())
 		return
+	}
+	if user, ok := result.Response.User.(models.User); ok {
+		if err := h.Services.Guests.ClaimOrder(c.Request.Context(), auth.GetGuestIdentityCookie(c), user.ID); err != nil {
+			log.Printf("[login] guest order claim failed user=%s: %v", user.ID, err)
+		}
 	}
 	respondAuthIssue(c, h.Services.Config, http.StatusOK, "Logged in", result)
 }

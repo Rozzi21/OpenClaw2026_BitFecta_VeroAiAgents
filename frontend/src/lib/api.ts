@@ -80,6 +80,28 @@ type Envelope<T> = {
   error?: unknown;
 };
 
+export class APIError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code?: string,
+    public readonly details?: unknown
+  ) {
+    super(message);
+    this.name = "APIError";
+  }
+}
+
+const CUSTOMER_TOKEN_KEY = "vero_customer_access_token";
+
+export function setCustomerAccessToken(token: string) {
+  if (typeof window !== "undefined") window.localStorage.setItem(CUSTOMER_TOKEN_KEY, token);
+}
+
+export function getCustomerAccessToken() {
+  return typeof window !== "undefined" ? window.localStorage.getItem(CUSTOMER_TOKEN_KEY) : null;
+}
+
 // Abort requests that hang so the UI does not stay in a loading state forever.
 const REQUEST_TIMEOUT_MS = 35_000; // slightly above the max AI workflow timeout
 
@@ -117,6 +139,8 @@ async function parseJsonEnvelope<T>(response: Response): Promise<Envelope<T>> {
 
 export async function apiFetch<T>(path: string, options: RequestInit = {}) {
   const headers = new Headers(options.headers);
+	const accessToken = getCustomerAccessToken();
+	if (accessToken && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${accessToken}`);
   if (!(options.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
@@ -147,7 +171,8 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}) {
 
   const payload = await parseJsonEnvelope<T>(response);
   if (!response.ok || !payload.success) {
-    throw new Error(payload.message || "Request failed");
+    const details = payload.error as { code?: string } | undefined;
+    throw new APIError(payload.message || "Request failed", response.status, details?.code, payload.error);
   }
   return payload.data;
 }

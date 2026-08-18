@@ -102,10 +102,11 @@ VeroAiTravelAgents/
 7. **AI workflow tool-driven**: LLM memilih tool aktif (`search_trips`, `select_package`, `collect_order_detail`, `create_booking`) via function calling; tool rekomendasi legacy (`search_destination`, dll) dinonaktifkan dan dipetakan ke `search_trips`. Integrasi LLM nyata dengan fallback lokal.
 8. **`create_payment` sengaja dinonaktifkan** di workflow chat (lihat `mcp/tools.go` `Enabled: false`).
 9. **Guest chat anonymous**: `ChatSession` ber-`UserID=NULL`, diikat cookie HttpOnly `vero_chat_session` (sliding 7 hari); bukan lagi user bersama `guest@vero.local` (user itu hanya dipakai untuk `bookings.user_id`).
+10. **Guest order limit (18 Agu 2026)**: guest boleh membuat tepat SATU order; identitas = `GuestSession` server-side via cookie HttpOnly `vero_guest_session` (opaque token 256-bit, hash SHA-256 di DB). Enforcement di `BookingService` dalam satu transaction (row lock `FOR UPDATE` + konsumsi entitlement atomik). Detail: `docs/GUEST_ORDER_LIMIT.md`.
 
 ## Fakta Penting (Status Saat Ini)
 
-- **Belum ada automated test** di seluruh repo.
+- **Automated test backend aktif** di `internal/ai`, `internal/mcp`, `internal/middlewares`, `internal/services` (incl. `guest_order_limit_test.go` — guest policy, race, idempotency, ownership, claim), `internal/utils`. Frontend belum punya test.
 - **Tool MCP legacy masih simulasi/mock** (`mcp_service.go` method `mock` — hanya `send_whatsapp` + fallback unknown; tool rekomendasi lama di-unify ke `search_trips`).
 - **Frontend customer**: hanya 2 endpoint aktif (chat + detail paket), tanpa auth.
 - **Backoffice**: auth + CRUD paket + upload media aktif; dashboard/orders/settings masih placeholder.

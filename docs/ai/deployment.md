@@ -42,6 +42,14 @@ Sumber kebenaran: `backend/internal/config/config.go` (fungsi `Load()`), contoh 
 | `JWT_COOKIE_SECURE` | `APP_ENV==production` | Cookie hanya via HTTPS |
 | `JWT_COOKIE_SAME_SITE` | `Strict` | `Lax`/`None`/`Strict`. `None` otomatis memaksa `Secure=true` |
 
+### Guest Identity (Guest Order Limit)
+| Variabel | Default | Keterangan |
+|---|---|---|
+| `GUEST_COOKIE_SECURE` | `APP_ENV==production` | Cookie guest hanya via HTTPS |
+| `GUEST_COOKIE_SAME_SITE` | `Lax` | SameSite cookie `vero_chat_session` dan `vero_guest_session` |
+| `GUEST_SESSION_TTL_HOURS` | `168` | Sliding TTL `ChatSession` tamu (7 hari) |
+| `GUEST_IDENTITY_TTL_HOURS` | `720` | TTL `GuestSession` server-side untuk guest order limit (30 hari) |
+
 ### AI (OpenAI-compatible)
 | Variabel | Default | Keterangan |
 |---|---|---|

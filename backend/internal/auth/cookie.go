@@ -11,6 +11,8 @@ import (
 const refreshCookiePath = "/api/v1/auth"
 const guestSessionCookieName = "vero_chat_session"
 const guestSessionCookiePath = "/api/v1/chat"
+const guestIdentityCookieName = "vero_guest_session"
+const guestIdentityCookiePath = "/api/v1"
 
 func SetRefreshCookie(c *gin.Context, cfg config.Config, token string, maxAgeSeconds int) {
 	sameSite := parseSameSite(cfg.JWTCookieSameSite)
@@ -95,6 +97,31 @@ func ClearGuestSessionCookie(c *gin.Context, cfg config.Config) {
 		secure,
 		true,
 	)
+}
+
+// SetGuestIdentityCookie stores the opaque guest bearer token. It intentionally
+// uses /api/v1 (not the chat-only path) so the same identity protects chat,
+// order creation, order tracking, and an explicit account-claim transition.
+func SetGuestIdentityCookie(c *gin.Context, cfg config.Config, token string, maxAgeSeconds int) {
+	sameSite := parseSameSite(cfg.GuestCookieSameSite)
+	c.SetSameSite(sameSite)
+	secure := cfg.GuestCookieSecure || sameSite == http.SameSiteNoneMode
+	c.SetCookie(guestIdentityCookieName, token, maxAgeSeconds, guestIdentityCookiePath, "", secure, true)
+}
+
+func GetGuestIdentityCookie(c *gin.Context) string {
+	token, err := c.Cookie(guestIdentityCookieName)
+	if err != nil {
+		return ""
+	}
+	return token
+}
+
+func ClearGuestIdentityCookie(c *gin.Context, cfg config.Config) {
+	sameSite := parseSameSite(cfg.GuestCookieSameSite)
+	c.SetSameSite(sameSite)
+	secure := cfg.GuestCookieSecure || sameSite == http.SameSiteNoneMode
+	c.SetCookie(guestIdentityCookieName, "", -1, guestIdentityCookiePath, "", secure, true)
 }
 
 func parseSameSite(value string) http.SameSite {

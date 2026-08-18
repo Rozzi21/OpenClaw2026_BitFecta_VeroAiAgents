@@ -53,6 +53,7 @@ func (d *Database) AutoMigrate() error {
 	if err := d.DB.AutoMigrate(
 		&models.User{},
 		&models.AuthSession{},
+		&models.GuestSession{},
 		&models.ChatSession{},
 		&models.ChatMessage{},
 		&models.Trip{},

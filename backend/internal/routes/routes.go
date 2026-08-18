@@ -30,6 +30,7 @@ func Register(router *gin.Engine, h *handlers.Handler, s *services.Services) {
 		// Customer -> AI chat -> select package -> confirm -> order saved as pending.
 		// This endpoint never creates DOKU payment/session while PAYMENTS_ENABLED=false.
 		api.POST("/orders", middlewares.PublicWriteRateLimit(), middlewares.RequestBodyLimit(64<<10), h.GuestCreateOrder)
+		api.GET("/orders/:id", h.GuestGetOrder)
 
 		authGroup := api.Group("/auth")
 		authGroup.Use(middlewares.AuthRateLimit())

@@ -40,6 +40,7 @@ type Config struct {
 	GuestCookieSecure    bool
 	GuestCookieSameSite  string
 	GuestSessionTTL      time.Duration
+	GuestIdentityTTL     time.Duration
 	AIAPIKey             string
 	AIBaseURL            string
 	AIModel              string
@@ -90,6 +91,7 @@ func Load() Config {
 		GuestCookieSecure:    getBoolEnv("GUEST_COOKIE_SECURE", getEnv("APP_ENV", "development") == "production"),
 		GuestCookieSameSite:  getEnv("GUEST_COOKIE_SAME_SITE", "Lax"),
 		GuestSessionTTL:      time.Duration(getInt("GUEST_SESSION_TTL_HOURS", 168)) * time.Hour,
+		GuestIdentityTTL:     time.Duration(getInt("GUEST_IDENTITY_TTL_HOURS", 720)) * time.Hour,
 		AIAPIKey:             os.Getenv("AI_API_KEY"),
 		AIBaseURL:            getEnv("AI_BASE_URL", "https://api.openai.com/v1"),
 		AIModel:              getEnv("AI_MODEL", "gpt-4o-mini"),
