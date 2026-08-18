@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, Suspense, useState } from "react";
 import { apiFetch, setCustomerAccessToken } from "@/lib/api";
 import { AuthForm } from "@/components/auth/AuthForm";
+import { GoogleButton } from "@/components/auth/GoogleButton";
+import { OAuthReceiver } from "@/components/auth/OAuthReceiver";
 
 type AuthResponse = { access_token: string };
 
@@ -27,12 +29,22 @@ export default function LoginPage() {
   }
 
   return (
-    <AuthForm
-      title="Login"
-      submitLabel="Login"
-      onSubmit={submit}
-      error={error}
-      footer={<Link href="/register">Create Account</Link>}
-    />
+    <>
+      <Suspense fallback={null}>
+        <OAuthReceiver onError={setError} />
+      </Suspense>
+      <AuthForm
+        title="Login"
+        submitLabel="Login"
+        onSubmit={submit}
+        error={error}
+        google={
+          <Suspense fallback={null}>
+            <GoogleButton />
+          </Suspense>
+        }
+        footer={<Link href="/register">Create Account</Link>}
+      />
+    </>
   );
 }

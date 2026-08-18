@@ -53,6 +53,7 @@ func (d *Database) AutoMigrate() error {
 	if err := d.DB.AutoMigrate(
 		&models.User{},
 		&models.AuthSession{},
+		&models.OAuthState{},
 		&models.GuestSession{},
 		&models.ChatSession{},
 		&models.ChatMessage{},
@@ -69,7 +70,22 @@ func (d *Database) AutoMigrate() error {
 	if err := d.migrateLegacySlots(); err != nil {
 		return err
 	}
+	if err := d.migrateGoogleOAuth(); err != nil {
+		return err
+	}
 	return d.migrateTripSearchIndexes()
+}
+
+// migrateGoogleOAuth installs the partial unique index on users.google_sub
+// (Google OAuth, 18 Agu 2026). A plain unique index would reject multiple NULL
+// rows on some setups and GORM struct tags cannot express a partial index, so
+// this is raw idempotent DDL — same pattern as migrateTripSearchIndexes.
+func (d *Database) migrateGoogleOAuth() error {
+	return d.DB.Exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub
+		ON users (google_sub)
+		WHERE google_sub IS NOT NULL
+	`).Error
 }
 
 // MigrateGuestChatSessions removes the legacy shared guest-user ownership from

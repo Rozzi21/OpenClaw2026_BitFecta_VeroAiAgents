@@ -58,6 +58,17 @@ type Config struct {
 	N8NWebhook         string
 	CORSAllowedOrigins []string
 
+	// GoogleOAuth* configure "Continue with Google" (18 Agu 2026). Disabled by
+	// default; enabling requires client id + secret (+ redirect URI registered
+	// in Google Cloud Console). FrontendURL is the origin used for the final
+	// post-login redirect and the return_to allowlist — never taken from the
+	// request (open-redirect guard).
+	GoogleOAuthEnabled     bool
+	GoogleClientID         string
+	GoogleClientSecret     string
+	GoogleRedirectURI      string
+	GoogleOAuthFrontendURL string
+
 	// TrustedProxies is the list of reverse proxies that are trusted when
 	// resolving the real client IP (X-Forwarded-For). Empty disables proxy
 	// trust, which is the safest default for dev. Set to the real reverse proxy
@@ -106,6 +117,12 @@ func Load() Config {
 		N8NWebhook:           os.Getenv("N8N_WEBHOOK"),
 		CORSAllowedOrigins:   parseCSVEnv("CORS_ALLOWED_ORIGINS", []string{"http://localhost:3000", "http://localhost:3001", "http://localhost:5173"}),
 		TrustedProxies:       parseCSVEnv("TRUSTED_PROXIES", nil),
+
+		GoogleOAuthEnabled:     getBoolEnv("GOOGLE_OAUTH_ENABLED", false),
+		GoogleClientID:         strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
+		GoogleClientSecret:     strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
+		GoogleRedirectURI:      getEnv("GOOGLE_REDIRECT_URI", "http://localhost:8080/api/v1/auth/google/callback"),
+		GoogleOAuthFrontendURL: getEnv("GOOGLE_OAUTH_FRONTEND_URL", "http://localhost:3000"),
 	}
 
 	if cfg.DatabaseURL == "" || strings.Contains(cfg.DatabaseURL, "YOUR_PASSWORD") {
@@ -141,6 +158,17 @@ func (c Config) Validate() error {
 		}
 		if c.PaymentsEnabled && c.DOKUSecret == "" {
 			return errors.New("DOKU_SECRET must be set when APP_ENV=production to verify payment webhooks")
+		}
+		// Google OAuth: credentials are mandatory when the feature is enabled in
+		// production; a missing secret would make the token exchange fail at
+		// runtime and a localhost default redirect URL would strand users.
+		if c.GoogleOAuthEnabled {
+			if c.GoogleClientID == "" || c.GoogleClientSecret == "" {
+				return errors.New("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set when GOOGLE_OAUTH_ENABLED=true in production")
+			}
+			if strings.Contains(c.GoogleRedirectURI, "localhost") || strings.Contains(c.GoogleOAuthFrontendURL, "localhost") {
+				return errors.New("GOOGLE_REDIRECT_URI and GOOGLE_OAUTH_FRONTEND_URL must not point to localhost when APP_ENV=production")
+			}
 		}
 	}
 	return nil

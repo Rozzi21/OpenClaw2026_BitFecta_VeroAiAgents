@@ -40,6 +40,9 @@ func Register(router *gin.Engine, h *handlers.Handler, s *services.Services) {
 			authGroup.POST("/refresh", h.Refresh)
 			authGroup.POST("/logout", h.Logout)
 			authGroup.GET("/me", middlewares.Auth(s.JWT), h.Me)
+			// Google OAuth (full-page navigations; redirect-based, not JSON).
+			authGroup.GET("/google/login", h.GoogleLogin)
+			authGroup.GET("/google/callback", h.GoogleCallback)
 		}
 
 		// SEC-18: SSE broadcasts internal workflow/payment events to every

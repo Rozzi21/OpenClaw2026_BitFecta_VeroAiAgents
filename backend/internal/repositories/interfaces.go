@@ -42,6 +42,15 @@ type AuthSessionRepository interface {
 	RevokeSessionByJTIAllowMissing(ctx context.Context, tokenJTI string) error
 }
 
+// OAuthRepository — Google OAuth state + account-link persistence.
+type OAuthRepository interface {
+	CreateOAuthState(ctx context.Context, state *models.OAuthState) error
+	ConsumeOAuthState(ctx context.Context, stateHash string) (models.OAuthState, bool, error)
+	DeleteExpiredOAuthStates(ctx context.Context, before time.Time) (int64, error)
+	FindUserByGoogleSub(ctx context.Context, sub string) (models.User, error)
+	LinkUserGoogleSub(ctx context.Context, userID string, sub string) error
+}
+
 // ChatRepository — chat session + message persistence.
 type ChatRepository interface {
 	CreateChatSession(ctx context.Context, session *models.ChatSession) error
@@ -137,6 +146,7 @@ type AnalyticsRepository interface {
 var (
 	_ UserRepository        = (*Repository)(nil)
 	_ AuthSessionRepository = (*Repository)(nil)
+	_ OAuthRepository       = (*Repository)(nil)
 	_ ChatRepository        = (*Repository)(nil)
 	_ TripRepository        = (*Repository)(nil)
 	_ BookingRepository     = (*Repository)(nil)

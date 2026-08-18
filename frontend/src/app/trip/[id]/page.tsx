@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { ArrowLeft, MapPin, Clock, CheckCircle2, Plane, BedDouble, Ticket, ShieldCheck } from "lucide-react";
 import { APIError, apiFetch, assetURL, BookingOrder, getCustomerAccessToken, TripPackage } from "@/lib/api";
 import { getTripAdultPrice, getTripChildPrice } from "@/lib/format";
 import { TripPriceBlock, TripPriceInline } from "@/components/pricing/TripPriceBlock";
+import { GoogleButton } from "@/components/auth/GoogleButton";
+import { OAuthReceiver } from "@/components/auth/OAuthReceiver";
 
 export default function TripDetailPage({ params }: { params: { id: string } }) {
   const [trip, setTrip] = useState<TripPackage | null>(null);
@@ -68,6 +70,9 @@ export default function TripDetailPage({ params }: { params: { id: string } }) {
 
   return (
     <div className="flex-1 overflow-y-auto h-screen bg-slate-50">
+      <Suspense fallback={null}>
+        <OAuthReceiver />
+      </Suspense>
       <div className="relative w-full h-[65vh] min-h-[400px] overflow-hidden rounded-b-[40px] shadow-lg">
         <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/10 z-10" />
         <div
@@ -202,7 +207,9 @@ export default function TripDetailPage({ params }: { params: { id: string } }) {
 				<div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
 				  <p className="font-bold">Sign in to create another order.</p>
 				  <div className="grid gap-2">
-					<button type="button" disabled className="rounded-lg bg-white px-3 py-2 text-slate-400">Continue with Google</button>
+					<Suspense fallback={null}>
+					  <GoogleButton />
+					</Suspense>
 					<Link href="/login" className="rounded-lg bg-[#df3333] px-3 py-2 text-center font-bold text-white">Login</Link>
 					<Link href="/register" className="rounded-lg border border-amber-700 px-3 py-2 text-center font-bold">Create Account</Link>
 				  </div>

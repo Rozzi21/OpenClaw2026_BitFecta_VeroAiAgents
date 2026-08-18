@@ -127,13 +127,31 @@ func (m *BaseModel) BeforeCreate(_ *gorm.DB) error {
 
 type User struct {
 	BaseModel
-	Name         string        `json:"name" gorm:"size:120;not null"`
-	Email        string        `json:"email" gorm:"size:180;uniqueIndex;not null"`
-	Password     string        `json:"-" gorm:"not null"`
-	Role         Role          `json:"role" gorm:"size:30;not null;default:user"`
+	Name     string `json:"name" gorm:"size:120;not null"`
+	Email    string `json:"email" gorm:"size:180;uniqueIndex;not null"`
+	Password string `json:"-" gorm:"not null"`
+	Role     Role   `json:"role" gorm:"size:30;not null;default:user"`
+	// GoogleSub stores the immutable Google `sub` claim for accounts linked to
+	// "Continue with Google". NULL for pure email/password accounts. Unique via
+	// partial index (WHERE google_sub IS NOT NULL) so multiple NULLs are fine.
+	GoogleSub    *string       `json:"-" gorm:"size:64;index"`
 	ChatSessions []ChatSession `json:"-" gorm:"foreignKey:UserID"`
 	Bookings     []Booking     `json:"-" gorm:"foreignKey:UserID"`
 	AuthSessions []AuthSession `json:"-" gorm:"foreignKey:UserID"`
+}
+
+// OAuthState is a one-time, short-lived record backing the OAuth 2.0 `state`
+// parameter for Google login. The raw state is never stored — StateHash holds
+// its SHA-256 digest — and the row is consumed atomically at callback time
+// (same atomic-UPDATE pattern as AuthSession rotation, BUG-1) so a state can
+// never be replayed. Nonce binds the Google id_token to this flow.
+type OAuthState struct {
+	BaseModel
+	StateHash  string     `json:"-" gorm:"size:64;uniqueIndex;not null"`
+	Nonce      string     `json:"-" gorm:"size:64;not null"`
+	ReturnTo   string     `json:"-" gorm:"size:255;not null;default:/"`
+	ExpiresAt  time.Time  `json:"-" gorm:"index;not null"`
+	ConsumedAt *time.Time `json:"-" gorm:"index"`
 }
 
 type AuthSession struct {

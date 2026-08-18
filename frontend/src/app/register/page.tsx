@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, Suspense, useState } from "react";
 import { apiFetch, setCustomerAccessToken } from "@/lib/api";
 import { AuthForm } from "@/components/auth/AuthForm";
+import { GoogleButton } from "@/components/auth/GoogleButton";
+import { OAuthReceiver } from "@/components/auth/OAuthReceiver";
 
 type AuthResponse = { access_token: string };
 
@@ -23,5 +25,24 @@ export default function RegisterPage() {
       setError(err instanceof Error ? err.message : "Registrasi gagal");
     }
   }
-  return <AuthForm title="Create Account" submitLabel="Register" onSubmit={submit} error={error} includeName footer={<Link href="/login">Already have an account? Login</Link>} />;
+  return (
+    <>
+      <Suspense fallback={null}>
+        <OAuthReceiver onError={setError} />
+      </Suspense>
+      <AuthForm
+        title="Create Account"
+        submitLabel="Register"
+        onSubmit={submit}
+        error={error}
+        includeName
+        google={
+          <Suspense fallback={null}>
+            <GoogleButton label="Sign up with Google" />
+          </Suspense>
+        }
+        footer={<Link href="/login">Already have an account? Login</Link>}
+      />
+    </>
+  );
 }

@@ -14,6 +14,12 @@ const (
 	EventRefreshTokenUsedAsAccess  = "refresh_token_used_as_access"
 	EventAccessTokenUsedOnRefresh  = "access_token_used_on_refresh"
 	EventRefreshTokenReuseDetected = "refresh_token_reuse_detected"
+	// Google OAuth (18 Agu 2026).
+	EventGoogleLoginSuccess      = "google_login_success"
+	EventGoogleLoginFailed       = "google_login_failed"
+	EventGoogleOAuthStateInvalid = "google_oauth_state_invalid"
+	EventGoogleAccountLinked     = "google_account_linked"
+	EventGoogleAccountCreated    = "google_account_created"
 )
 
 func LogSecurity(event string, fields map[string]any) {
