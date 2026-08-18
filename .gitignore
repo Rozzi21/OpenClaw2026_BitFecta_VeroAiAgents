@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 vendor/
+graphify-out/
 
 # Build outputs
 dist/

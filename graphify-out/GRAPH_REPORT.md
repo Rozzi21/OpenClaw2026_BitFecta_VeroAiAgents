@@ -1,16 +1,16 @@
 # Graph Report - BitFecta_VeroAiAgents  (2026-08-18)
 
 ## Corpus Check
-- 163 files · ~98,761 words
+- 164 files · ~99,057 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1123 nodes · 2429 edges · 73 communities (59 shown, 14 thin omitted)
-- Extraction: 90% EXTRACTED · 10% INFERRED · 0% AMBIGUOUS · INFERRED: 243 edges (avg confidence: 0.8)
+- 1160 nodes · 2458 edges · 91 communities (65 shown, 26 thin omitted)
+- Extraction: 90% EXTRACTED · 10% INFERRED · 0% AMBIGUOUS · INFERRED: 236 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `e830d05b`
+- Built from commit: `9fa12d33`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -19,9 +19,9 @@
 - backoffice-frontend/src/lib/api.ts
 - New
 - main
-- Trip
-- ChatSession
+- dto.go
 - ToolResult
+- MCPService
 - compilerOptions
 - ChatInterface.tsx
 - Services
@@ -32,22 +32,22 @@
 - devDependencies
 - form-section.tsx
 - Context
-- Database
+- Backend - Service Layer, Business Logic, dan Integrasi
 - basic-info-section.tsx
 - Vero TravelOS — Backoffice Frontend
-- models.go
+- Context
 - use-package-references.ts
-- toast-notification.tsx
+- ChatSession
 - Booking
 - dependencies
 - trip-form-screen.tsx
-- OpenAITools
+- Trip
 - trip-card.tsx
 - @types/react
 - dependencies
 - TripsListScreen
 - trips-list-screen.tsx
-- Bus
+- AuditPool
 - DB
 - Repository
 - setup-postgres.sh
@@ -57,13 +57,15 @@
 - frontend/src/app/layout.tsx
 - okResponse
 - media-section.tsx
-- use-trips-list.ts
+- PaymentService
 - extends
 - DOKUClient
 - T
-- backoffice-sidebar.tsx
+- cn
 - route.ts
 - .EventStream
+- Payment
+- models.AILog
 - backoffice-frontend/next.config.mjs
 - backoffice-frontend/postcss.config.mjs
 - backoffice-frontend/tailwind.config.ts
@@ -71,13 +73,29 @@
 - frontend/postcss.config.mjs
 - frontend/tailwind.config.ts
 - github.com/rozzi/vero-ai-travel-agents/backend
+- Context
+- User
+- BookingService
+- trip-card-context-menu.tsx
+- HandlerFunc
+- Context
+- UUID
+- Context
+- T
+- ToolCall
+- Limit
+- Limiter
+- Map
+- Mutex
+- Once
+- WaitGroup
 
 ## God Nodes (most connected - your core abstractions)
 1. `Success()` - 35 edges
-2. `New()` - 31 edges
-3. `Trip` - 29 edges
+2. `Trip` - 29 edges
+3. `New()` - 28 edges
 4. `mockMCPRepo` - 24 edges
-5. `ToolResult` - 24 edges
+5. `ToolResult` - 23 edges
 6. `apiFetch()` - 21 edges
 7. `Booking` - 21 edges
 8. `ChatSession` - 21 edges
@@ -91,43 +109,43 @@
   backoffice-frontend/tsconfig.json → frontend/tsconfig.json
 - `include` --extends--> `.next/types/**/*.ts`  [EXTRACTED]
   backoffice-frontend/tsconfig.json → frontend/tsconfig.json
-- `Role()` --calls--> `Forbidden()`  [INFERRED]
-  backend/internal/middlewares/middlewares.go → backend/internal/utils/response.go
-- `Auth()` --calls--> `Unauthorized()`  [INFERRED]
-  backend/internal/middlewares/middlewares.go → backend/internal/utils/response.go
+- `New()` --calls--> `NewAuditPool()`  [INFERRED]
+  backend/internal/services/services.go → backend/internal/services/audit_pool.go
+- `TestMCPService_AuditFallbackSync()` --calls--> `clonePayload()`  [INFERRED]
+  backend/internal/services/audit_pool_test.go → backend/internal/services/mcp_service.go
 
 ## Import Cycles
 - None detected.
 
-## Communities (73 total, 14 thin omitted)
+## Communities (91 total, 26 thin omitted)
 
 ### Community 0 - "Success"
-Cohesion: 0.07
-Nodes (48): ClearGuestSessionCookie(), ClearRefreshCookie(), GetGuestSessionCookie(), GetRefreshCookie(), Context, parseSameSite(), SetGuestSessionCookie(), SetRefreshCookie() (+40 more)
+Cohesion: 0.06
+Nodes (55): ClearGuestSessionCookie(), ClearRefreshCookie(), GetGuestSessionCookie(), GetRefreshCookie(), Context, parseSameSite(), SetGuestSessionCookie(), SetRefreshCookie() (+47 more)
 
 ### Community 1 - "backoffice-frontend/src/lib/api.ts"
-Cohesion: 0.08
-Nodes (42): geistMono, geistSans, metadata, AppShell(), AuthState, isPublicRoute(), publicRoutes, adoptBroadcastToken() (+34 more)
+Cohesion: 0.07
+Nodes (58): geistMono, geistSans, metadata, AppShell(), AuthState, isPublicRoute(), publicRoutes, cacheTrips() (+50 more)
 
 ### Community 2 - "New"
-Cohesion: 0.09
-Nodes (36): Context, UUID, NewAuditPool(), Context, T, ToolCall, TestAuditPool_StopIsIdempotent(), TestAuditPool_SubmitAndDrain() (+28 more)
+Cohesion: 0.13
+Nodes (31): Time, NewBus(), DB, Repository, New(), discountedTrip(), getf(), T (+23 more)
 
 ### Community 3 - "main"
-Cohesion: 0.08
-Nodes (33): main(), startChatSessionCleanup(), NewJWTService(), getBoolEnv(), getEnv(), getFloat(), getInt(), Duration (+25 more)
+Cohesion: 0.07
+Nodes (37): Claims, auth.JWTService, TokenPair, main(), startChatSessionCleanup(), Duration, UUID, IsAudience() (+29 more)
 
-### Community 4 - "Trip"
-Cohesion: 0.09
-Nodes (27): B, Context, Repository, UUID, firstNonEmpty(), slugify(), BenchmarkSlugify(), T (+19 more)
+### Community 4 - "dto.go"
+Cohesion: 0.06
+Nodes (40): B, LogSecurity(), UUID, Context, UUID, firstNonEmpty(), slugify(), BenchmarkSlugify() (+32 more)
 
-### Community 5 - "ChatSession"
-Cohesion: 0.09
-Nodes (35): Message, ToolCall, Context, Handler, ChatMessage, extractRecommendedPackages(), failedSearchTripsAlreadySelected(), formatAILogTrackingCode() (+27 more)
+### Community 5 - "ToolResult"
+Cohesion: 0.10
+Nodes (33): Message, ToolCall, Context, Handler, extractRecommendedPackages(), failedSearchTripsAlreadySelected(), formatAILogTrackingCode(), ChatMessage (+25 more)
 
-### Community 6 - "ToolResult"
+### Community 6 - "MCPService"
 Cohesion: 0.13
-Nodes (26): priceBreakdown(), tripAdultPrice(), tripChildPrice(), firstNonZero(), Time, limitSlice(), limitString(), normalize() (+18 more)
+Nodes (25): priceBreakdown(), tripAdultPrice(), tripChildPrice(), firstNonZero(), Time, limitSlice(), limitString(), normalize() (+17 more)
 
 ### Community 7 - "compilerOptions"
 Cohesion: 0.04
@@ -138,24 +156,24 @@ Cohesion: 0.09
 Nodes (29): TripDetailPage(), RecommendationCard(), RecommendationCardProps, AssistantMessage, AssistantMessageProps, ChatInterface(), ChatMessage, nextMessageId() (+21 more)
 
 ### Community 9 - "Services"
-Cohesion: 0.06
-Nodes (34): Claims, JWTService, TokenPair, LogSecurity(), Duration, UUID, IsAudience(), Context (+26 more)
+Cohesion: 0.08
+Nodes (18): Connect(), Context, DB, Duration, Handler, Time, New(), Context (+10 more)
 
 ### Community 10 - "orders-panel.tsx"
-Cohesion: 0.11
-Nodes (27): CopyableField(), customerEmail(), customerName(), destination(), DetailDrawer(), filters, formatDate(), formatDateTime() (+19 more)
+Cohesion: 0.12
+Nodes (27): customerEmail(), customerName(), destination(), DetailDrawer(), filters, formatDate(), formatDateTime(), formatRelative() (+19 more)
 
 ### Community 11 - "ai_client.go"
-Cohesion: 0.14
-Nodes (26): Client, CompletionRequest, CompletionResponse, FunctionCall, FunctionSpec, ResponseFormat, ToolCall, ToolDef (+18 more)
+Cohesion: 0.10
+Nodes (36): Client, CompletionRequest, CompletionResponse, FunctionCall, FunctionSpec, ResponseFormat, ToolCall, ToolDef (+28 more)
 
 ### Community 12 - "mockMCPRepo"
 Cohesion: 0.12
 Nodes (11): Context, Repository, ToolCall, ChatMessage, Context, Time, ToolCall, UUID (+3 more)
 
 ### Community 13 - "use-trip-form.ts"
-Cohesion: 0.18
-Nodes (20): computeDiscountPercent(), formatDateForInput(), mapTripToForm(), normalizeAmenities(), normalizeCategory(), normalizeItineraries(), normalizeScheduleType(), parseDuration() (+12 more)
+Cohesion: 0.20
+Nodes (18): computeDiscountPercent(), formatDateForInput(), mapTripToForm(), normalizeAmenities(), normalizeCategory(), normalizeItineraries(), normalizeScheduleType(), parseDuration() (+10 more)
 
 ### Community 14 - "devDependencies"
 Cohesion: 0.10
@@ -169,9 +187,9 @@ Nodes (11): AmenitiesSection(), Props, HighlightsSection(), Props, ItinerarySect
 Cohesion: 0.26
 Nodes (5): ChatMessage, Context, Repository, Time, UUID
 
-### Community 17 - "Database"
-Cohesion: 0.20
-Nodes (8): Connect(), Context, DB, Duration, Handler, Time, New(), Database
+### Community 17 - "Backend - Service Layer, Business Logic, dan Integrasi"
+Cohesion: 0.12
+Nodes (16): AIService - Inti Produk, AnalyticsService, AuthService, Backend - Service Layer, Business Logic, dan Integrasi, Background Jobs, Queue, Cache, Scheduler, BookingService & PaymentService, Dependency Inversion (SEC-27, 1 Agu 2026), Integrasi Eksternal (+8 more)
 
 ### Community 18 - "basic-info-section.tsx"
 Cohesion: 0.20
@@ -181,33 +199,33 @@ Nodes (10): BasicInfoSection(), Props, Props, SchedulingSection(), DateRange(), 
 Cohesion: 0.25
 Nodes (7): Auth & Sesi, Fitur Aktif, Form Paket, Konfigurasi & Proxy API, Menjalankan, Vero TravelOS — Backoffice Frontend, Yang Belum Aktif (placeholder / mock)
 
-### Community 20 - "models.go"
-Cohesion: 0.06
-Nodes (32): UUID, DB, Time, UUID, IsPaymentSuccess(), NormalizePaymentStatus(), PaymentSuccessStatuses(), Context (+24 more)
+### Community 20 - "Context"
+Cohesion: 0.26
+Nodes (4): Context, Repository, Time, UUID
 
 ### Community 21 - "use-package-references.ts"
-Cohesion: 0.47
-Nodes (5): fetchPackages(), isTripId(), PackageReference, SearchState, usePackageReferences()
+Cohesion: 0.38
+Nodes (6): fetchPackages(), isTripId(), PackageReference, SearchState, usePackageReferences(), TripPackage
 
-### Community 22 - "toast-notification.tsx"
-Cohesion: 0.50
-Nodes (3): ToastNotification(), ToastNotificationProps, ToastState
+### Community 22 - "ChatSession"
+Cohesion: 0.22
+Nodes (14): ChatMessage, DB, Time, UUID, IsPaymentSuccess(), NormalizePaymentStatus(), DeletedAt, AuthSession (+6 more)
 
 ### Community 23 - "Booking"
-Cohesion: 0.20
-Nodes (9): Context, Repository, UUID, Context, UUID, BookingRepository, UpdateBookingStatusRequest, Booking (+1 more)
+Cohesion: 0.36
+Nodes (4): Context, Repository, UUID, Booking
 
 ### Community 24 - "dependencies"
 Cohesion: 0.15
 Nodes (13): dependencies, clsx, lucide-react, next, react, react-dom, clsx, next (+5 more)
 
 ### Community 25 - "trip-form-screen.tsx"
-Cohesion: 0.18
-Nodes (8): Props, SummarySection(), TripFormFooter(), TripFormFooterProps, TripFormScreen(), applyControlledState(), useTripForm(), fetchTripDetail()
+Cohesion: 0.20
+Nodes (7): Props, SummarySection(), TripFormFooter(), TripFormFooterProps, TripFormScreen(), applyControlledState(), useTripForm()
 
-### Community 26 - "OpenAITools"
-Cohesion: 0.33
-Nodes (10): ActiveCatalog(), Catalog(), OpenAITools(), requiredInputs(), T, TestOpenAITools_OnlyActiveToolsExposed(), TestOpenAITools_ParameterTypesNotForcedToString(), TestOpenAITools_RequiredArrays() (+2 more)
+### Community 26 - "Trip"
+Cohesion: 0.35
+Nodes (5): Context, Repository, UUID, Trip, TripRepositoryFilter
 
 ### Community 27 - "trip-card.tsx"
 Cohesion: 0.32
@@ -222,12 +240,12 @@ Cohesion: 0.20
 Nodes (10): tailwind-merge, dependencies, clsx, next, react, tailwind-merge, clsx, next (+2 more)
 
 ### Community 31 - "trips-list-screen.tsx"
-Cohesion: 0.14
-Nodes (16): ConfirmModal(), ConfirmModalProps, getActionClasses(), getMenuActions(), MenuAction, MenuActionTone, TripCardContextMenu(), TripCardContextMenuProps (+8 more)
+Cohesion: 0.20
+Nodes (8): ToastNotification(), ToastNotificationProps, ToastState, CreateTripCard(), EmptyPackagesState(), OnDevelopmentPanel(), TripsSearchHeader(), TripsSearchHeaderProps
 
-### Community 32 - "Bus"
-Cohesion: 0.10
-Nodes (21): Time, NewBus(), DB, Repository, New(), generateDokuSignature(), setupTestDB(), TestPaymentWebhookIdempotency() (+13 more)
+### Community 32 - "AuditPool"
+Cohesion: 0.09
+Nodes (23): TestIPRateLimiterCapUsesConstantTimeCounter(), TestIPRateLimiterEvictsByLastUseWithoutConsumingToken(), NewAuditPool(), TestAuditPool_StopIsIdempotent(), TestAuditPool_SubmitAndDrain(), TestAuditPool_SubmitNonBlockingWhenFull(), TestAuditPoolSubmitConcurrentWithStop(), TestMCPService_AuditFallbackSync() (+15 more)
 
 ### Community 35 - "setup-postgres.sh"
 Cohesion: 0.56
@@ -257,37 +275,61 @@ Nodes (5): Context, Handler, okResponse(), op(), H
 Cohesion: 0.36
 Nodes (5): MediaSection(), Props, UploadBox(), UploadPreview(), assetURL()
 
-### Community 42 - "use-trips-list.ts"
+### Community 42 - "PaymentService"
 Cohesion: 0.27
-Nodes (16): cacheTrips(), ConfirmAction, ContextMenuState, fetchTripsOnce(), hasFreshTripsCache(), useTripsList(), TripPackage, TripStatus (+8 more)
+Nodes (5): Context, UUID, PaymentRepository, PaymentRepository, PaymentService
 
 ### Community 43 - "extends"
 Cohesion: 0.40
 Nodes (4): extends, extends, next/core-web-vitals, next/typescript
 
-### Community 46 - "backoffice-sidebar.tsx"
-Cohesion: 0.22
-Nodes (9): InfoModal(), ActivePanel, Category, ModalType, ViewMode, BackofficeSidebar(), BackofficeSidebarProps, SidebarItem() (+1 more)
+### Community 46 - "cn"
+Cohesion: 0.15
+Nodes (16): ConfirmModal(), ConfirmModalProps, CopyableField(), StatsCard(), InfoModal(), TripsToolbar(), TripsToolbarProps, ActivePanel (+8 more)
+
+### Community 49 - "Payment"
+Cohesion: 0.44
+Nodes (4): Context, Repository, UUID, Payment
+
+### Community 50 - "models.AILog"
+Cohesion: 0.33
+Nodes (6): context.Context, sync.Mutex, models.AILog, models.ToolCall, mockAuditWriter, stalledWriter
+
+### Community 75 - "Context"
+Cohesion: 0.36
+Nodes (3): PaymentSuccessStatuses(), Context, Repository
+
+### Community 76 - "User"
+Cohesion: 0.46
+Nodes (4): Context, Repository, UUID, User
+
+### Community 77 - "BookingService"
+Cohesion: 0.46
+Nodes (4): Context, UUID, BookingRepository, BookingService
+
+### Community 78 - "trip-card-context-menu.tsx"
+Cohesion: 0.38
+Nodes (6): getActionClasses(), getMenuActions(), MenuAction, MenuActionTone, TripCardContextMenu(), TripCardContextMenuProps
 
 ## Knowledge Gaps
-- **134 isolated node(s):** `Handler`, `APIResponse`, `geistMono`, `geistSans`, `metadata` (+129 more)
+- **146 isolated node(s):** `Lokasi Kode Inti`, `AuthService`, `AIService - Inti Produk`, `MCPService`, `TripService` (+141 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **14 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **26 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `New()` connect `New` to `Bus`, `Success`, `ChatSession`, `Services`, `ai_client.go`, `mockMCPRepo`, `models.go`, `Booking`?**
-  _High betweenness centrality (0.057) - this node is a cross-community bridge._
-- **Why does `Trip` connect `Trip` to `New`, `ChatSession`, `ToolResult`, `mockMCPRepo`, `models.go`, `Booking`?**
-  _High betweenness centrality (0.048) - this node is a cross-community bridge._
-- **Why does `Services` connect `Services` to `Success`, `Bus`, `New`, `main`, `Trip`, `ChatSession`, `ToolResult`, `Database`, `models.go`, `Booking`?**
+- **Why does `Config` connect `Success` to `New`, `main`, `dto.go`, `ToolResult`, `Services`, `PaymentService`?**
   _High betweenness centrality (0.047) - this node is a cross-community bridge._
+- **Why does `New()` connect `New` to `AuditPool`, `Success`, `main`, `dto.go`, `ToolResult`, `Services`, `PaymentService`, `ai_client.go`, `mockMCPRepo`, `BookingService`?**
+  _High betweenness centrality (0.043) - this node is a cross-community bridge._
+- **Why does `Services` connect `Services` to `Success`, `AuditPool`, `New`, `main`, `dto.go`, `ToolResult`, `MCPService`, `PaymentService`, `BookingService`?**
+  _High betweenness centrality (0.038) - this node is a cross-community bridge._
 - **Are the 33 inferred relationships involving `Success()` (e.g. with `respondAuthIssue()` and `TestAPIResponses()`) actually correct?**
   _`Success()` has 33 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 23 inferred relationships involving `New()` (e.g. with `TestAuditPool_SubmitAndDrain()` and `TestAuditPool_SubmitNonBlockingWhenFull()`) actually correct?**
-  _`New()` has 23 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Handler`, `APIResponse`, `geistMono` to the rest of the system?**
-  _134 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Are the 20 inferred relationships involving `New()` (e.g. with `TestCalculateTripPriceAdultChildCombination()` and `TestCalculateTripPriceMatchesBooking()`) actually correct?**
+  _`New()` has 20 INFERRED edges - model-reasoned connections that need verification._
+- **What connects `Lokasi Kode Inti`, `AuthService`, `AIService - Inti Produk` to the rest of the system?**
+  _146 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Success` be split into smaller, more focused modules?**
-  _Cohesion score 0.066167290886392 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.05891016200294551 - nodes in this community are weakly interconnected._
