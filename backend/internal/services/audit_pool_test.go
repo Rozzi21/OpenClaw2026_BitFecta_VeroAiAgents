@@ -11,6 +11,28 @@ import (
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/models"
 )
 
+func TestAuditPoolSubmitConcurrentWithStop(t *testing.T) {
+	pool := NewAuditPool(&mockAuditWriter{})
+	pool.Start()
+
+	var submitters sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		submitters.Add(1)
+		go func() {
+			defer submitters.Done()
+			for j := 0; j < 100; j++ {
+				pool.Submit(auditJob{})
+			}
+		}()
+	}
+	pool.Stop()
+	submitters.Wait()
+
+	if pool.Submit(auditJob{}) {
+		t.Fatal("submit after stop must be rejected")
+	}
+}
+
 // mockAuditWriter records calls to CreateToolCall / CreateAILog for assertions.
 type mockAuditWriter struct {
 	mu        sync.Mutex

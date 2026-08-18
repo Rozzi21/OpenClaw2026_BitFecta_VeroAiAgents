@@ -68,6 +68,8 @@ type AuditPool struct {
 	jobs     chan auditJob
 	wg       sync.WaitGroup
 	stopOnce sync.Once
+	mu       sync.RWMutex
+	stopped  bool
 }
 
 // NewAuditPool constructs an audit pool. Workers are not started until Start is
@@ -137,6 +139,11 @@ func (p *AuditPool) persist(ctx context.Context, job auditJob) {
 // Submit enqueues an audit job. Non-blocking: returns false (and logs) when the
 // buffer is full so the AI response path is never blocked by audit pressure.
 func (p *AuditPool) Submit(job auditJob) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.stopped {
+		return false
+	}
 	select {
 	case p.jobs <- job:
 		return true
@@ -152,16 +159,21 @@ func (p *AuditPool) Submit(job auditJob) bool {
 // process exits.
 func (p *AuditPool) Stop() {
 	p.stopOnce.Do(func() {
+		p.mu.Lock()
+		p.stopped = true
 		close(p.jobs)
+		p.mu.Unlock()
 	})
 	done := make(chan struct{})
 	go func() {
 		p.wg.Wait()
 		close(done)
 	}()
+	timer := time.NewTimer(auditDrainTimeout)
+	defer timer.Stop()
 	select {
 	case <-done:
-	case <-time.After(auditDrainTimeout):
+	case <-timer.C:
 		log.Printf("[audit-pool] drain timeout reached, %d job(s) may be un-persisted", len(p.jobs))
 	}
 }

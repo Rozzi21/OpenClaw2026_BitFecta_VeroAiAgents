@@ -165,6 +165,19 @@ Satu-satunya "asinkron" adalah goroutine di `Bus.Publish` (implisit lewat channe
 
 Catatan: N8N (eksternal) yang berperan sebagai automation/scheduler di luar aplikasi Go ini.
 
+### Production hardening (18 Agu 2026)
+
+- `internal/middlewares/middlewares.go`: rate limiter per-IP memakai counter atomik
+  untuk batas map O(1), metadata `lastUsed` untuk eviction, dan janitor tidak lagi
+  memanggil `AllowN` sehingga proses cleanup tidak mengonsumsi token request. Perilaku
+  quota tetap sama; perubahan mengurangi CPU amplification dari rotating-IP traffic.
+- `internal/services/audit_pool.go`: `Submit` diserialisasi terhadap `Stop` memakai
+  read/write lock. Submit setelah pool berhenti ditolak, sehingga graceful shutdown
+  tidak membuka race `send on closed channel`. Drain timeout memakai `time.Timer`.
+- Regresi dikunci oleh `middlewares_test.go` dan `audit_pool_test.go`; diverifikasi
+  dengan `go test ./...`, `go test -race ./internal/middlewares ./internal/services`,
+  `go vet ./...`, dan `go build ./...`.
+
 ## Integrasi Eksternal
 
 | Integrasi | Lokasi | Fungsi | Fallback |

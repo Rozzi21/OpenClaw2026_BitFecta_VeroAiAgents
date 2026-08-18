@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -83,13 +84,20 @@ const maxRateLimiterEntries = 10_000
 // ipRateLimiter keeps one token-bucket limiter per client IP so a single client
 // cannot exhaust the quota for everyone (SEC-7).
 type ipRateLimiter struct {
-	limiters sync.Map // map[string]*rate.Limiter
-	every    rate.Limit
-	burst    int
+	limiters   sync.Map // map[string]*rate.Limiter
+	every      rate.Limit
+	burst      int
+	entries    atomic.Int64
+	maxEntries int64
+}
+
+type rateLimiterEntry struct {
+	limiter  *rate.Limiter
+	lastUsed atomic.Int64
 }
 
 func newIPRateLimiter(every rate.Limit, burst int) *ipRateLimiter {
-	l := &ipRateLimiter{every: every, burst: burst}
+	l := &ipRateLimiter{every: every, burst: burst, maxEntries: maxRateLimiterEntries}
 	// Janitor: evict idle limiters and enforce a hard cap on map size (SEC-14).
 	go l.janitor()
 	return l
@@ -97,26 +105,38 @@ func newIPRateLimiter(every rate.Limit, burst int) *ipRateLimiter {
 
 func (l *ipRateLimiter) get(ip string) *rate.Limiter {
 	if existing, ok := l.limiters.Load(ip); ok {
-		return existing.(*rate.Limiter)
+		entry := existing.(*rateLimiterEntry)
+		entry.lastUsed.Store(time.Now().UnixNano())
+		return entry.limiter
 	}
-	// Defense-in-depth: don't let a bot with random IPs grow the map without
-	// bound. This check is lossy (race between count and store) but closes the
-	// easy DoS path; the janitor handles true idle cleanup.
-	if l.count() >= maxRateLimiterEntries {
+	// Reserve capacity atomically. The old count() implementation scanned the
+	// entire map for every new IP, allowing rotating-IP traffic to amplify CPU
+	// work to O(n²) as the map approached its cap.
+	if !l.reserveEntry() {
 		return rate.NewLimiter(l.every, l.burst)
 	}
-	limiter := rate.NewLimiter(l.every, l.burst)
-	actual, _ := l.limiters.LoadOrStore(ip, limiter)
-	return actual.(*rate.Limiter)
+	now := time.Now().UnixNano()
+	entry := &rateLimiterEntry{limiter: rate.NewLimiter(l.every, l.burst)}
+	entry.lastUsed.Store(now)
+	actual, loaded := l.limiters.LoadOrStore(ip, entry)
+	if loaded {
+		l.entries.Add(-1)
+		entry = actual.(*rateLimiterEntry)
+		entry.lastUsed.Store(now)
+	}
+	return entry.limiter
 }
 
-func (l *ipRateLimiter) count() int {
-	var n int
-	l.limiters.Range(func(_, _ interface{}) bool {
-		n++
-		return true
-	})
-	return n
+func (l *ipRateLimiter) reserveEntry() bool {
+	for {
+		current := l.entries.Load()
+		if current >= l.maxEntries {
+			return false
+		}
+		if l.entries.CompareAndSwap(current, current+1) {
+			return true
+		}
+	}
 }
 
 // janitor periodically removes limiters that have been idle long enough that
@@ -125,26 +145,25 @@ func (l *ipRateLimiter) count() int {
 func (l *ipRateLimiter) janitor() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	lastUsed := &sync.Map{} // map[string]time.Time, guarded by lazy initialization.
 	for now := range ticker.C {
-		// A limiter is idle if it currently has enough tokens to permit a
-		// request and we have not seen it in the last minute. Use a purely
-		// time-based eviction so we never depend on internal limiter math.
-		l.limiters.Range(func(key, value interface{}) bool {
-			k := key.(string)
-			limiter := value.(*rate.Limiter)
-			if !limiter.AllowN(now, 1) {
-				lastUsed.Store(k, now)
-				return true
-			}
-			if seen, ok := lastUsed.Load(k); ok && now.Sub(seen.(time.Time)) < time.Minute {
-				return true
-			}
-			l.limiters.Delete(key)
-			lastUsed.Delete(k)
-			return true
-		})
+		l.evictIdle(now, time.Minute)
 	}
+}
+
+func (l *ipRateLimiter) evictIdle(now time.Time, idleFor time.Duration) {
+	cutoff := now.Add(-idleFor).UnixNano()
+	l.limiters.Range(func(key, value interface{}) bool {
+		entry := value.(*rateLimiterEntry)
+		if entry.lastUsed.Load() >= cutoff {
+			return true
+		}
+		// CompareAndDelete avoids deleting a replacement inserted for the same
+		// IP between Range and deletion.
+		if l.limiters.CompareAndDelete(key, entry) {
+			l.entries.Add(-1)
+		}
+		return true
+	})
 }
 
 func (l *ipRateLimiter) middleware() gin.HandlerFunc {

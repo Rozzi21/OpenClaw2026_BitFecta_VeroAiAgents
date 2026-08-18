@@ -103,6 +103,28 @@
       "id": "backend_internal_auth_cookie_setrefreshcookie"
     },
     {
+      "label": "NewJWTService()",
+      "file_type": "code",
+      "source_file": "backend/internal/auth/jwt.go",
+      "source_location": "L45",
+      "_origin": "ast",
+      "community": 0,
+      "norm_label": "newjwtservice()",
+      "community_name": "Success",
+      "id": "backend_internal_auth_jwt_newjwtservice"
+    },
+    {
+      "label": "Duration",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "community": 0,
+      "norm_label": "duration",
+      "community_name": "Success",
+      "id": "backend_internal_config_config_go_duration"
+    },
+    {
       "label": "Context",
       "file_type": "code",
       "source_file": "",
@@ -530,17 +552,6 @@
       "norm_label": "unauthorized()",
       "community_name": "Success",
       "id": "backend_internal_utils_response_unauthorized"
-    },
-    {
-      "label": "TestAPIResponses()",
-      "file_type": "code",
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L56",
-      "_origin": "ast",
-      "id": "backend_internal_utils_utils_test_testapiresponses",
-      "community": 0,
-      "community_name": "Success",
-      "norm_label": "testapiresponses()"
     },
     {
       "label": "Config",
@@ -1126,6 +1137,160 @@
       "id": "backoffice_frontend_src_components_app_shell_publicroutes"
     },
     {
+      "label": "trips-sidebar.tsx",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/trips-sidebar.tsx",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "trips-sidebar.tsx",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_list_trips_sidebar"
+    },
+    {
+      "label": "ActivePanel",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/types.ts",
+      "source_location": "L3",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "activepanel",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_list_types_activepanel"
+    },
+    {
+      "label": "use-trips-list.ts",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "use-trips-list.ts",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_list_use_trips_list"
+    },
+    {
+      "label": "cacheTrips()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
+      "source_location": "L37",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "cachetrips()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_list_use_trips_list_cachetrips"
+    },
+    {
+      "label": "ConfirmAction",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
+      "source_location": "L18",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "confirmaction",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_list_use_trips_list_confirmaction"
+    },
+    {
+      "label": "ContextMenuState",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
+      "source_location": "L22",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "contextmenustate",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_list_use_trips_list_contextmenustate"
+    },
+    {
+      "label": "fetchTripsOnce()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
+      "source_location": "L44",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "fetchtripsonce()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_list_use_trips_list_fetchtripsonce"
+    },
+    {
+      "label": "hasFreshTripsCache()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
+      "source_location": "L33",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "hasfreshtripscache()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_list_use_trips_list_hasfreshtripscache"
+    },
+    {
+      "label": "useTripsList()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
+      "source_location": "L67",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "usetripslist()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_list_use_trips_list_usetripslist"
+    },
+    {
+      "label": "backoffice-sidebar.tsx",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/shared/backoffice-sidebar.tsx",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "backoffice-sidebar.tsx",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_shared_backoffice_sidebar"
+    },
+    {
+      "label": "BackofficeSidebar()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/shared/backoffice-sidebar.tsx",
+      "source_location": "L85",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "backofficesidebar()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_shared_backoffice_sidebar_backofficesidebar"
+    },
+    {
+      "label": "BackofficeSidebarProps",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/shared/backoffice-sidebar.tsx",
+      "source_location": "L73",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "backofficesidebarprops",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_shared_backoffice_sidebar_backofficesidebarprops"
+    },
+    {
+      "label": "SidebarItem()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/shared/backoffice-sidebar.tsx",
+      "source_location": "L14",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "sidebaritem()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_shared_backoffice_sidebar_sidebaritem"
+    },
+    {
+      "label": "SidebarLink()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/shared/backoffice-sidebar.tsx",
+      "source_location": "L46",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "sidebarlink()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_components_trips_shared_backoffice_sidebar_sidebarlink"
+    },
+    {
       "label": "backoffice-frontend/src/lib/api.ts",
       "file_type": "code",
       "source_file": "backoffice-frontend/src/lib/api.ts",
@@ -1500,6 +1665,28 @@
       "id": "backoffice_frontend_src_lib_api_stopauthrefreshscheduler"
     },
     {
+      "label": "TripPackage",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/api.ts",
+      "source_location": "L29",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "trippackage",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_lib_api_trippackage"
+    },
+    {
+      "label": "TripStatus",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/api.ts",
+      "source_location": "L63",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "tripstatus",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_lib_api_tripstatus"
+    },
+    {
       "label": "order.ts",
       "file_type": "code",
       "source_file": "backoffice-frontend/src/lib/order.ts",
@@ -1520,17 +1707,6 @@
       "norm_label": "fetchorderdetail()",
       "community_name": "backoffice-frontend/src/lib/api.ts",
       "id": "backoffice_frontend_src_lib_order_fetchorderdetail"
-    },
-    {
-      "label": "fetchOrders()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/order.ts",
-      "source_location": "L10",
-      "_origin": "ast",
-      "community": 1,
-      "norm_label": "fetchorders()",
-      "community_name": "backoffice-frontend/src/lib/api.ts",
-      "id": "backoffice_frontend_src_lib_order_fetchorders"
     },
     {
       "label": "OrderEvent",
@@ -1555,15 +1731,114 @@
       "id": "backoffice_frontend_src_lib_order_subscribeorderevents"
     },
     {
-      "label": "updateOrderStatus()",
+      "label": "trip.ts",
       "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/order.ts",
-      "source_location": "L18",
+      "source_file": "backoffice-frontend/src/lib/trip.ts",
+      "source_location": "L1",
       "_origin": "ast",
       "community": 1,
-      "norm_label": "updateorderstatus()",
+      "norm_label": "trip.ts",
       "community_name": "backoffice-frontend/src/lib/api.ts",
-      "id": "backoffice_frontend_src_lib_order_updateorderstatus"
+      "id": "backoffice_frontend_src_lib_trip"
+    },
+    {
+      "label": "buildTripUpdatePayload()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/trip.ts",
+      "source_location": "L3",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "buildtripupdatepayload()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_lib_trip_buildtripupdatepayload"
+    },
+    {
+      "label": "deleteTripPackage()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/trip.ts",
+      "source_location": "L72",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "deletetrippackage()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_lib_trip_deletetrippackage"
+    },
+    {
+      "label": "fetchTripDetail()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/trip.ts",
+      "source_location": "L56",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "fetchtripdetail()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_lib_trip_fetchtripdetail"
+    },
+    {
+      "label": "formatTripStatus()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/trip.ts",
+      "source_location": "L76",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "formattripstatus()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_lib_trip_formattripstatus"
+    },
+    {
+      "label": "getDeleteErrorMessage()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/trip.ts",
+      "source_location": "L84",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "getdeleteerrormessage()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_lib_trip_getdeleteerrormessage"
+    },
+    {
+      "label": "getDeleteSuccessMessage()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/trip.ts",
+      "source_location": "L80",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "getdeletesuccessmessage()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_lib_trip_getdeletesuccessmessage"
+    },
+    {
+      "label": "getStatusChangeErrorMessage()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/trip.ts",
+      "source_location": "L98",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "getstatuschangeerrormessage()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_lib_trip_getstatuschangeerrormessage"
+    },
+    {
+      "label": "getStatusChangeSuccessMessage()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/trip.ts",
+      "source_location": "L94",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "getstatuschangesuccessmessage()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_lib_trip_getstatuschangesuccessmessage"
+    },
+    {
+      "label": "updateTripStatus()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/trip.ts",
+      "source_location": "L60",
+      "_origin": "ast",
+      "community": 1,
+      "norm_label": "updatetripstatus()",
+      "community_name": "backoffice-frontend/src/lib/api.ts",
+      "id": "backoffice_frontend_src_lib_trip_updatetripstatus"
     },
     {
       "label": "orders-panel.tsx",
@@ -1916,6 +2191,28 @@
       "norm_label": "whatsappurl()",
       "community_name": "orders-panel.tsx",
       "id": "backoffice_frontend_src_components_orders_orders_panel_whatsappurl"
+    },
+    {
+      "label": "fetchOrders()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/order.ts",
+      "source_location": "L10",
+      "_origin": "ast",
+      "community": 10,
+      "norm_label": "fetchorders()",
+      "community_name": "orders-panel.tsx",
+      "id": "backoffice_frontend_src_lib_order_fetchorders"
+    },
+    {
+      "label": "updateOrderStatus()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/lib/order.ts",
+      "source_location": "L18",
+      "_origin": "ast",
+      "community": 10,
+      "norm_label": "updateorderstatus()",
+      "community_name": "orders-panel.tsx",
+      "id": "backoffice_frontend_src_lib_order_updateorderstatus"
     },
     {
       "label": "Client",
@@ -2391,17 +2688,6 @@
       "id": "repositories_repositoryfilter"
     },
     {
-      "label": "mockBookingCreator",
-      "file_type": "code",
-      "source_file": "backend/internal/services/mcp_pricing_tools_test.go",
-      "source_location": "L87",
-      "_origin": "ast",
-      "community": 12,
-      "norm_label": "mockbookingcreator",
-      "community_name": "mockMCPRepo",
-      "id": "services_mockbookingcreator"
-    },
-    {
       "label": ".Create()",
       "file_type": "code",
       "source_file": "backend/internal/services/mcp_pricing_tools_test.go",
@@ -2875,6 +3161,17 @@
       "id": "backoffice_frontend_src_components_trips_form_use_trip_form"
     },
     {
+      "label": "applyControlledState()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/form/use-trip-form.ts",
+      "source_location": "L45",
+      "_origin": "ast",
+      "community": 13,
+      "norm_label": "applycontrolledstate()",
+      "community_name": "use-trip-form.ts",
+      "id": "backoffice_frontend_src_components_trips_form_use_trip_form_applycontrolledstate"
+    },
+    {
       "label": "EMPTY_DEFAULTS",
       "file_type": "code",
       "source_file": "backoffice-frontend/src/components/trips/form/use-trip-form.ts",
@@ -2884,6 +3181,17 @@
       "norm_label": "empty_defaults",
       "community_name": "use-trip-form.ts",
       "id": "backoffice_frontend_src_components_trips_form_use_trip_form_empty_defaults"
+    },
+    {
+      "label": "useTripForm()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/form/use-trip-form.ts",
+      "source_location": "L80",
+      "_origin": "ast",
+      "community": 13,
+      "norm_label": "usetripform()",
+      "community_name": "use-trip-form.ts",
+      "id": "backoffice_frontend_src_components_trips_form_use_trip_form_usetripform"
     },
     {
       "label": "invalidateTripsCache()",
@@ -3179,7 +3487,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "amenities-section.tsx",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_sections_amenities_section"
     },
     {
@@ -3190,7 +3498,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "amenitiessection()",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_sections_amenities_section_amenitiessection"
     },
     {
@@ -3201,7 +3509,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "props",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_sections_amenities_section_props"
     },
     {
@@ -3212,7 +3520,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "highlights-section.tsx",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_sections_highlights_section"
     },
     {
@@ -3223,7 +3531,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "highlightssection()",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_sections_highlights_section_highlightssection"
     },
     {
@@ -3234,7 +3542,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "props",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_sections_highlights_section_props"
     },
     {
@@ -3245,7 +3553,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "itinerary-section.tsx",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_sections_itinerary_section"
     },
     {
@@ -3256,7 +3564,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "itinerarysection()",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_sections_itinerary_section_itinerarysection"
     },
     {
@@ -3267,7 +3575,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "props",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_sections_itinerary_section_props"
     },
     {
@@ -3278,7 +3586,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "reference-section.tsx",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_sections_reference_section"
     },
     {
@@ -3289,7 +3597,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "props",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_sections_reference_section_props"
     },
     {
@@ -3300,8 +3608,52 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "referencesection()",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_sections_reference_section_referencesection"
+    },
+    {
+      "label": "summary-section.tsx",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/form/sections/summary-section.tsx",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 15,
+      "norm_label": "summary-section.tsx",
+      "community_name": "trip-form-screen.tsx",
+      "id": "backoffice_frontend_src_components_trips_form_sections_summary_section"
+    },
+    {
+      "label": "Props",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/form/sections/summary-section.tsx",
+      "source_location": "L4",
+      "_origin": "ast",
+      "community": 15,
+      "norm_label": "props",
+      "community_name": "trip-form-screen.tsx",
+      "id": "backoffice_frontend_src_components_trips_form_sections_summary_section_props"
+    },
+    {
+      "label": "SummarySection()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/form/sections/summary-section.tsx",
+      "source_location": "L8",
+      "_origin": "ast",
+      "community": 15,
+      "norm_label": "summarysection()",
+      "community_name": "trip-form-screen.tsx",
+      "id": "backoffice_frontend_src_components_trips_form_sections_summary_section_summarysection"
+    },
+    {
+      "label": "trip-form-screen.tsx",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/form/trip-form-screen.tsx",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 15,
+      "norm_label": "trip-form-screen.tsx",
+      "community_name": "trip-form-screen.tsx",
+      "id": "backoffice_frontend_src_components_trips_form_trip_form_screen"
     },
     {
       "label": "amenity-column.tsx",
@@ -3311,7 +3663,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "amenity-column.tsx",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_ui_amenity_column"
     },
     {
@@ -3322,7 +3674,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "amenitycolumn()",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_ui_amenity_column_amenitycolumn"
     },
     {
@@ -3333,7 +3685,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "form-section.tsx",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_ui_form_section"
     },
     {
@@ -3344,7 +3696,7 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "formsection()",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_ui_form_section_formsection"
     },
     {
@@ -3355,8 +3707,63 @@
       "_origin": "ast",
       "community": 15,
       "norm_label": "usetripformreturn",
-      "community_name": "form-section.tsx",
+      "community_name": "trip-form-screen.tsx",
       "id": "backoffice_frontend_src_components_trips_form_use_trip_form_usetripformreturn"
+    },
+    {
+      "label": "info-modal.tsx",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/info-modal.tsx",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 15,
+      "norm_label": "info-modal.tsx",
+      "community_name": "trip-form-screen.tsx",
+      "id": "backoffice_frontend_src_components_trips_list_info_modal"
+    },
+    {
+      "label": "InfoModal()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/info-modal.tsx",
+      "source_location": "L4",
+      "_origin": "ast",
+      "community": 15,
+      "norm_label": "infomodal()",
+      "community_name": "trip-form-screen.tsx",
+      "id": "backoffice_frontend_src_components_trips_list_info_modal_infomodal"
+    },
+    {
+      "label": "list/types.ts",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/types.ts",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 15,
+      "norm_label": "list/types.ts",
+      "community_name": "trip-form-screen.tsx",
+      "id": "backoffice_frontend_src_components_trips_list_types"
+    },
+    {
+      "label": "Category",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/types.ts",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 15,
+      "norm_label": "category",
+      "community_name": "trip-form-screen.tsx",
+      "id": "backoffice_frontend_src_components_trips_list_types_category"
+    },
+    {
+      "label": "ModalType",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/types.ts",
+      "source_location": "L4",
+      "_origin": "ast",
+      "community": 15,
+      "norm_label": "modaltype",
+      "community_name": "trip-form-screen.tsx",
+      "id": "backoffice_frontend_src_components_trips_list_types_modaltype"
     },
     {
       "label": "ChatMessage",
@@ -3947,10 +4354,10 @@
       "source_file": "backoffice-frontend/README.md",
       "source_location": "L1",
       "_origin": "ast",
+      "id": "backoffice_frontend_readme",
       "community": 19,
       "community_name": "Vero TravelOS \u2014 Backoffice Frontend",
-      "norm_label": "readme.md",
-      "id": "backoffice_frontend_readme"
+      "norm_label": "readme.md"
     },
     {
       "label": "Auth & Sesi",
@@ -3958,10 +4365,10 @@
       "source_file": "backoffice-frontend/README.md",
       "source_location": "L26",
       "_origin": "ast",
+      "id": "backoffice_frontend_readme_auth_sesi",
       "community": 19,
       "community_name": "Vero TravelOS \u2014 Backoffice Frontend",
-      "norm_label": "auth & sesi",
-      "id": "backoffice_frontend_readme_auth_sesi"
+      "norm_label": "auth & sesi"
     },
     {
       "label": "Fitur Aktif",
@@ -3969,10 +4376,10 @@
       "source_file": "backoffice-frontend/README.md",
       "source_location": "L9",
       "_origin": "ast",
+      "id": "backoffice_frontend_readme_fitur_aktif",
       "community": 19,
       "community_name": "Vero TravelOS \u2014 Backoffice Frontend",
-      "norm_label": "fitur aktif",
-      "id": "backoffice_frontend_readme_fitur_aktif"
+      "norm_label": "fitur aktif"
     },
     {
       "label": "Form Paket",
@@ -3980,10 +4387,10 @@
       "source_file": "backoffice-frontend/README.md",
       "source_location": "L32",
       "_origin": "ast",
+      "id": "backoffice_frontend_readme_form_paket",
       "community": 19,
       "community_name": "Vero TravelOS \u2014 Backoffice Frontend",
-      "norm_label": "form paket",
-      "id": "backoffice_frontend_readme_form_paket"
+      "norm_label": "form paket"
     },
     {
       "label": "Konfigurasi & Proxy API",
@@ -3991,10 +4398,10 @@
       "source_file": "backoffice-frontend/README.md",
       "source_location": "L46",
       "_origin": "ast",
+      "id": "backoffice_frontend_readme_konfigurasi_proxy_api",
       "community": 19,
       "community_name": "Vero TravelOS \u2014 Backoffice Frontend",
-      "norm_label": "konfigurasi & proxy api",
-      "id": "backoffice_frontend_readme_konfigurasi_proxy_api"
+      "norm_label": "konfigurasi & proxy api"
     },
     {
       "label": "Menjalankan",
@@ -4002,10 +4409,10 @@
       "source_file": "backoffice-frontend/README.md",
       "source_location": "L53",
       "_origin": "ast",
+      "id": "backoffice_frontend_readme_menjalankan",
       "community": 19,
       "community_name": "Vero TravelOS \u2014 Backoffice Frontend",
-      "norm_label": "menjalankan",
-      "id": "backoffice_frontend_readme_menjalankan"
+      "norm_label": "menjalankan"
     },
     {
       "label": "Vero TravelOS \u2014 Backoffice Frontend",
@@ -4013,10 +4420,10 @@
       "source_file": "backoffice-frontend/README.md",
       "source_location": "L1",
       "_origin": "ast",
+      "id": "backoffice_frontend_readme_vero_travelos_backoffice_frontend",
       "community": 19,
       "community_name": "Vero TravelOS \u2014 Backoffice Frontend",
-      "norm_label": "vero travelos \u2014 backoffice frontend",
-      "id": "backoffice_frontend_readme_vero_travelos_backoffice_frontend"
+      "norm_label": "vero travelos \u2014 backoffice frontend"
     },
     {
       "label": "Yang Belum Aktif (placeholder / mock)",
@@ -4024,10 +4431,87 @@
       "source_file": "backoffice-frontend/README.md",
       "source_location": "L36",
       "_origin": "ast",
+      "id": "backoffice_frontend_readme_yang_belum_aktif_placeholder_mock",
       "community": 19,
       "community_name": "Vero TravelOS \u2014 Backoffice Frontend",
-      "norm_label": "yang belum aktif (placeholder / mock)",
-      "id": "backoffice_frontend_readme_yang_belum_aktif_placeholder_mock"
+      "norm_label": "yang belum aktif (placeholder / mock)"
+    },
+    {
+      "label": "bus.go",
+      "file_type": "code",
+      "source_file": "backend/internal/events/bus.go",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": "bus.go",
+      "community_name": "New",
+      "id": "backend_internal_events_bus"
+    },
+    {
+      "label": "Time",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": "time",
+      "community_name": "New",
+      "id": "backend_internal_events_bus_go_time"
+    },
+    {
+      "label": "NewBus()",
+      "file_type": "code",
+      "source_file": "backend/internal/events/bus.go",
+      "source_location": "L29",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": "newbus()",
+      "community_name": "New",
+      "id": "backend_internal_events_bus_newbus"
+    },
+    {
+      "label": "repositories.go",
+      "file_type": "code",
+      "source_file": "backend/internal/repositories/repositories.go",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": "repositories.go",
+      "community_name": "New",
+      "id": "backend_internal_repositories_repositories"
+    },
+    {
+      "label": "DB",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": "db",
+      "community_name": "New",
+      "id": "backend_internal_repositories_repositories_go_db"
+    },
+    {
+      "label": "Repository",
+      "file_type": "code",
+      "source_file": "backend/internal/repositories/repositories.go",
+      "source_location": "L36",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": "repository",
+      "community_name": "New",
+      "id": "backend_internal_repositories_repositories_go_repositories_repository"
+    },
+    {
+      "label": "New()",
+      "file_type": "code",
+      "source_file": "backend/internal/repositories/repositories.go",
+      "source_location": "L40",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": "new()",
+      "community_name": "New",
+      "id": "backend_internal_repositories_repositories_new"
     },
     {
       "label": "audit_pool.go",
@@ -4085,17 +4569,6 @@
       "id": "backend_internal_services_audit_pool_test"
     },
     {
-      "label": "Context",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "community": 2,
-      "norm_label": "context",
-      "community_name": "New",
-      "id": "backend_internal_services_audit_pool_test_go_context"
-    },
-    {
       "label": "T",
       "file_type": "code",
       "source_file": "",
@@ -4105,17 +4578,6 @@
       "norm_label": "t",
       "community_name": "New",
       "id": "backend_internal_services_audit_pool_test_go_t"
-    },
-    {
-      "label": "ToolCall",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "community": 2,
-      "norm_label": "toolcall",
-      "community_name": "New",
-      "id": "backend_internal_services_audit_pool_test_go_toolcall"
     },
     {
       "label": "TestAuditPool_StopIsIdempotent()",
@@ -4349,6 +4811,61 @@
       "id": "backend_internal_services_mcp_pricing_tools_test_testtoolstripnotfound"
     },
     {
+      "label": "payment_service_test.go",
+      "file_type": "code",
+      "source_file": "backend/internal/services/payment_service_test.go",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "backend_internal_services_payment_service_test",
+      "community": 2,
+      "community_name": "New",
+      "norm_label": "payment_service_test.go"
+    },
+    {
+      "label": "generateDokuSignature()",
+      "file_type": "code",
+      "source_file": "backend/internal/services/payment_service_test.go",
+      "source_location": "L43",
+      "_origin": "ast",
+      "id": "backend_internal_services_payment_service_test_generatedokusignature",
+      "community": 2,
+      "community_name": "New",
+      "norm_label": "generatedokusignature()"
+    },
+    {
+      "label": "setupTestDB()",
+      "file_type": "code",
+      "source_file": "backend/internal/services/payment_service_test.go",
+      "source_location": "L23",
+      "_origin": "ast",
+      "id": "backend_internal_services_payment_service_test_setuptestdb",
+      "community": 2,
+      "community_name": "New",
+      "norm_label": "setuptestdb()"
+    },
+    {
+      "label": "TestPaymentWebhookIdempotency()",
+      "file_type": "code",
+      "source_file": "backend/internal/services/payment_service_test.go",
+      "source_location": "L131",
+      "_origin": "ast",
+      "id": "backend_internal_services_payment_service_test_testpaymentwebhookidempotency",
+      "community": 2,
+      "community_name": "New",
+      "norm_label": "testpaymentwebhookidempotency()"
+    },
+    {
+      "label": "TestPaymentWebhookReplay()",
+      "file_type": "code",
+      "source_file": "backend/internal/services/payment_service_test.go",
+      "source_location": "L50",
+      "_origin": "ast",
+      "id": "backend_internal_services_payment_service_test_testpaymentwebhookreplay",
+      "community": 2,
+      "community_name": "New",
+      "norm_label": "testpaymentwebhookreplay()"
+    },
+    {
       "label": "New()",
       "file_type": "code",
       "source_file": "backend/internal/services/services.go",
@@ -4360,15 +4877,92 @@
       "id": "backend_internal_services_services_new"
     },
     {
-      "label": "Mutex",
+      "label": "Bus",
+      "file_type": "code",
+      "source_file": "backend/internal/events/bus.go",
+      "source_location": "L17",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": "bus",
+      "community_name": "New",
+      "id": "events_bus"
+    },
+    {
+      "label": ".Publish()",
+      "file_type": "code",
+      "source_file": "backend/internal/events/bus.go",
+      "source_location": "L66",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": ".publish()",
+      "community_name": "New",
+      "id": "events_bus_publish"
+    },
+    {
+      "label": ".Subscribe()",
+      "file_type": "code",
+      "source_file": "backend/internal/events/bus.go",
+      "source_location": "L37",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": ".subscribe()",
+      "community_name": "New",
+      "id": "events_bus_subscribe"
+    },
+    {
+      "label": ".SubscriberCount()",
+      "file_type": "code",
+      "source_file": "backend/internal/events/bus.go",
+      "source_location": "L49",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": ".subscribercount()",
+      "community_name": "New",
+      "id": "events_bus_subscribercount"
+    },
+    {
+      "label": ".Unsubscribe()",
+      "file_type": "code",
+      "source_file": "backend/internal/events/bus.go",
+      "source_location": "L60",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": ".unsubscribe()",
+      "community_name": "New",
+      "id": "events_bus_unsubscribe"
+    },
+    {
+      "label": "Event",
+      "file_type": "code",
+      "source_file": "backend/internal/events/bus.go",
+      "source_location": "L10",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": "event",
+      "community_name": "New",
+      "id": "events_event"
+    },
+    {
+      "label": "gorm.io/gorm.DB",
       "file_type": "code",
       "source_file": "",
       "source_location": "",
       "_origin": "ast",
+      "id": "go_type_gorm_io_gorm_db",
       "community": 2,
-      "norm_label": "mutex",
       "community_name": "New",
-      "id": "mutex"
+      "norm_label": "gorm.io/gorm.db"
+    },
+    {
+      "label": "testing.T",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "id": "go_type_testing_t",
+      "community": 2,
+      "community_name": "New",
+      "norm_label": "testing.t"
     },
     {
       "label": "Once",
@@ -4380,6 +4974,28 @@
       "norm_label": "once",
       "community_name": "New",
       "id": "once"
+    },
+    {
+      "label": "TripRepositoryFilter",
+      "file_type": "code",
+      "source_file": "backend/internal/repositories/repositories.go",
+      "source_location": "L27",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": "triprepositoryfilter",
+      "community_name": "New",
+      "id": "repositories_triprepositoryfilter"
+    },
+    {
+      "label": "RWMutex",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "community": 2,
+      "norm_label": "rwmutex",
+      "community_name": "New",
+      "id": "rwmutex"
     },
     {
       "label": "auditJob",
@@ -4470,48 +5086,15 @@
       "id": "services_auditwriter"
     },
     {
-      "label": "mockAuditWriter",
+      "label": "mockBookingCreator",
       "file_type": "code",
-      "source_file": "backend/internal/services/audit_pool_test.go",
-      "source_location": "L15",
+      "source_file": "backend/internal/services/mcp_pricing_tools_test.go",
+      "source_location": "L87",
       "_origin": "ast",
       "community": 2,
-      "norm_label": "mockauditwriter",
+      "norm_label": "mockbookingcreator",
       "community_name": "New",
-      "id": "services_mockauditwriter"
-    },
-    {
-      "label": ".counts()",
-      "file_type": "code",
-      "source_file": "backend/internal/services/audit_pool_test.go",
-      "source_location": "L35",
-      "_origin": "ast",
-      "community": 2,
-      "norm_label": ".counts()",
-      "community_name": "New",
-      "id": "services_mockauditwriter_counts"
-    },
-    {
-      "label": ".CreateAILog()",
-      "file_type": "code",
-      "source_file": "backend/internal/services/audit_pool_test.go",
-      "source_location": "L28",
-      "_origin": "ast",
-      "community": 2,
-      "norm_label": ".createailog()",
-      "community_name": "New",
-      "id": "services_mockauditwriter_createailog"
-    },
-    {
-      "label": ".CreateToolCall()",
-      "file_type": "code",
-      "source_file": "backend/internal/services/audit_pool_test.go",
-      "source_location": "L21",
-      "_origin": "ast",
-      "community": 2,
-      "norm_label": ".createtoolcall()",
-      "community_name": "New",
-      "id": "services_mockauditwriter_createtoolcall"
+      "id": "services_mockbookingcreator"
     },
     {
       "label": "mockGuestUser",
@@ -4536,39 +5119,6 @@
       "id": "services_mockguestuser_guestuser"
     },
     {
-      "label": "stalledWriter",
-      "file_type": "code",
-      "source_file": "backend/internal/services/audit_pool_test.go",
-      "source_location": "L115",
-      "_origin": "ast",
-      "community": 2,
-      "norm_label": "stalledwriter",
-      "community_name": "New",
-      "id": "services_stalledwriter"
-    },
-    {
-      "label": ".CreateAILog()",
-      "file_type": "code",
-      "source_file": "backend/internal/services/audit_pool_test.go",
-      "source_location": "L121",
-      "_origin": "ast",
-      "community": 2,
-      "norm_label": ".createailog()",
-      "community_name": "New",
-      "id": "services_stalledwriter_createailog"
-    },
-    {
-      "label": ".CreateToolCall()",
-      "file_type": "code",
-      "source_file": "backend/internal/services/audit_pool_test.go",
-      "source_location": "L117",
-      "_origin": "ast",
-      "community": 2,
-      "norm_label": ".createtoolcall()",
-      "community_name": "New",
-      "id": "services_stalledwriter_createtoolcall"
-    },
-    {
       "label": "WaitGroup",
       "file_type": "code",
       "source_file": "",
@@ -4578,17 +5128,6 @@
       "norm_label": "waitgroup",
       "community_name": "New",
       "id": "waitgroup"
-    },
-    {
-      "label": "UUID",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "community": 20,
-      "norm_label": "uuid",
-      "community_name": "models.go",
-      "id": "backend_internal_dto_dto_go_uuid"
     },
     {
       "label": "models.go",
@@ -4655,39 +5194,6 @@
       "norm_label": "normalizepaymentstatus()",
       "community_name": "models.go",
       "id": "backend_internal_models_models_normalizepaymentstatus"
-    },
-    {
-      "label": "PaymentSuccessStatuses()",
-      "file_type": "code",
-      "source_file": "backend/internal/models/models.go",
-      "source_location": "L50",
-      "_origin": "ast",
-      "community": 20,
-      "norm_label": "paymentsuccessstatuses()",
-      "community_name": "models.go",
-      "id": "backend_internal_models_models_paymentsuccessstatuses"
-    },
-    {
-      "label": "Context",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "community": 20,
-      "norm_label": "context",
-      "community_name": "models.go",
-      "id": "backend_internal_repositories_analytics_repository_go_context"
-    },
-    {
-      "label": "Repository",
-      "file_type": "code",
-      "source_file": "backend/internal/repositories/analytics_repository.go",
-      "source_location": "L15",
-      "_origin": "ast",
-      "community": 20,
-      "norm_label": "repository",
-      "community_name": "models.go",
-      "id": "backend_internal_repositories_analytics_repository_go_repositories_repository"
     },
     {
       "label": "Context",
@@ -4767,6 +5273,28 @@
       "id": "backend_internal_repositories_payment_repository_go_uuid"
     },
     {
+      "label": "Context",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "community": 20,
+      "norm_label": "context",
+      "community_name": "models.go",
+      "id": "backend_internal_services_audit_pool_test_go_context"
+    },
+    {
+      "label": "ToolCall",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "community": 20,
+      "norm_label": "toolcall",
+      "community_name": "models.go",
+      "id": "backend_internal_services_audit_pool_test_go_toolcall"
+    },
+    {
       "label": "payment_service.go",
       "file_type": "code",
       "source_file": "backend/internal/services/payment_service.go",
@@ -4809,17 +5337,6 @@
       "norm_label": "deletedat",
       "community_name": "models.go",
       "id": "deletedat"
-    },
-    {
-      "label": "BookingRequest",
-      "file_type": "code",
-      "source_file": "backend/internal/dto/dto.go",
-      "source_location": "L145",
-      "_origin": "ast",
-      "community": 20,
-      "norm_label": "bookingrequest",
-      "community_name": "models.go",
-      "id": "dto_bookingrequest"
     },
     {
       "label": "PaymentCreateRequest",
@@ -4932,6 +5449,17 @@
       "id": "models_toolcall"
     },
     {
+      "label": "Mutex",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "community": 20,
+      "norm_label": "mutex",
+      "community_name": "models.go",
+      "id": "mutex"
+    },
+    {
       "label": "PaymentRepository",
       "file_type": "code",
       "source_file": "",
@@ -4952,61 +5480,6 @@
       "norm_label": ".countactivesessionsbyjti()",
       "community_name": "models.go",
       "id": "repositories_repository_countactivesessionsbyjti"
-    },
-    {
-      "label": ".CountAILogs()",
-      "file_type": "code",
-      "source_file": "backend/internal/repositories/analytics_repository.go",
-      "source_location": "L34",
-      "_origin": "ast",
-      "community": 20,
-      "norm_label": ".countailogs()",
-      "community_name": "models.go",
-      "id": "repositories_repository_countailogs"
-    },
-    {
-      "label": ".CountBookings()",
-      "file_type": "code",
-      "source_file": "backend/internal/repositories/analytics_repository.go",
-      "source_location": "L15",
-      "_origin": "ast",
-      "community": 20,
-      "norm_label": ".countbookings()",
-      "community_name": "models.go",
-      "id": "repositories_repository_countbookings"
-    },
-    {
-      "label": ".CountPayments()",
-      "file_type": "code",
-      "source_file": "backend/internal/repositories/analytics_repository.go",
-      "source_location": "L40",
-      "_origin": "ast",
-      "community": 20,
-      "norm_label": ".countpayments()",
-      "community_name": "models.go",
-      "id": "repositories_repository_countpayments"
-    },
-    {
-      "label": ".CountSuccessfulPayments()",
-      "file_type": "code",
-      "source_file": "backend/internal/repositories/analytics_repository.go",
-      "source_location": "L48",
-      "_origin": "ast",
-      "community": 20,
-      "norm_label": ".countsuccessfulpayments()",
-      "community_name": "models.go",
-      "id": "repositories_repository_countsuccessfulpayments"
-    },
-    {
-      "label": ".CountTrips()",
-      "file_type": "code",
-      "source_file": "backend/internal/repositories/analytics_repository.go",
-      "source_location": "L28",
-      "_origin": "ast",
-      "community": 20,
-      "norm_label": ".counttrips()",
-      "community_name": "models.go",
-      "id": "repositories_repository_counttrips"
     },
     {
       "label": ".CreateAuthSession()",
@@ -5152,17 +5625,6 @@
       "id": "repositories_repository_rotatesession"
     },
     {
-      "label": ".SumBookingRevenue()",
-      "file_type": "code",
-      "source_file": "backend/internal/repositories/analytics_repository.go",
-      "source_location": "L21",
-      "_origin": "ast",
-      "community": 20,
-      "norm_label": ".sumbookingrevenue()",
-      "community_name": "models.go",
-      "id": "repositories_repository_sumbookingrevenue"
-    },
-    {
       "label": ".UpdatePayment()",
       "file_type": "code",
       "source_file": "backend/internal/repositories/payment_repository.go",
@@ -5183,6 +5645,50 @@
       "norm_label": ".updatepaymentstatusatomic()",
       "community_name": "models.go",
       "id": "repositories_repository_updatepaymentstatusatomic"
+    },
+    {
+      "label": "mockAuditWriter",
+      "file_type": "code",
+      "source_file": "backend/internal/services/audit_pool_test.go",
+      "source_location": "L15",
+      "_origin": "ast",
+      "community": 20,
+      "norm_label": "mockauditwriter",
+      "community_name": "models.go",
+      "id": "services_mockauditwriter"
+    },
+    {
+      "label": ".counts()",
+      "file_type": "code",
+      "source_file": "backend/internal/services/audit_pool_test.go",
+      "source_location": "L35",
+      "_origin": "ast",
+      "community": 20,
+      "norm_label": ".counts()",
+      "community_name": "models.go",
+      "id": "services_mockauditwriter_counts"
+    },
+    {
+      "label": ".CreateAILog()",
+      "file_type": "code",
+      "source_file": "backend/internal/services/audit_pool_test.go",
+      "source_location": "L28",
+      "_origin": "ast",
+      "community": 20,
+      "norm_label": ".createailog()",
+      "community_name": "models.go",
+      "id": "services_mockauditwriter_createailog"
+    },
+    {
+      "label": ".CreateToolCall()",
+      "file_type": "code",
+      "source_file": "backend/internal/services/audit_pool_test.go",
+      "source_location": "L21",
+      "_origin": "ast",
+      "community": 20,
+      "norm_label": ".createtoolcall()",
+      "community_name": "models.go",
+      "id": "services_mockauditwriter_createtoolcall"
     },
     {
       "label": "PaymentRepository",
@@ -5260,6 +5766,39 @@
       "norm_label": ".webhook()",
       "community_name": "models.go",
       "id": "services_paymentservice_webhook"
+    },
+    {
+      "label": "stalledWriter",
+      "file_type": "code",
+      "source_file": "backend/internal/services/audit_pool_test.go",
+      "source_location": "L115",
+      "_origin": "ast",
+      "community": 20,
+      "norm_label": "stalledwriter",
+      "community_name": "models.go",
+      "id": "services_stalledwriter"
+    },
+    {
+      "label": ".CreateAILog()",
+      "file_type": "code",
+      "source_file": "backend/internal/services/audit_pool_test.go",
+      "source_location": "L121",
+      "_origin": "ast",
+      "community": 20,
+      "norm_label": ".createailog()",
+      "community_name": "models.go",
+      "id": "services_stalledwriter_createailog"
+    },
+    {
+      "label": ".CreateToolCall()",
+      "file_type": "code",
+      "source_file": "backend/internal/services/audit_pool_test.go",
+      "source_location": "L117",
+      "_origin": "ast",
+      "community": 20,
+      "norm_label": ".createtoolcall()",
+      "community_name": "models.go",
+      "id": "services_stalledwriter_createtoolcall"
     },
     {
       "label": "use-package-references.ts",
@@ -5372,6 +5911,17 @@
       "id": "backoffice_frontend_src_components_toast_notification_toaststate"
     },
     {
+      "label": "UUID",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "community": 23,
+      "norm_label": "uuid",
+      "community_name": "Booking",
+      "id": "backend_internal_dto_dto_go_uuid"
+    },
+    {
       "label": "Context",
       "file_type": "code",
       "source_file": "",
@@ -5438,15 +5988,15 @@
       "id": "bookingrepository"
     },
     {
-      "label": "UpdateBookingStatusRequest",
+      "label": "BookingRequest",
       "file_type": "code",
       "source_file": "backend/internal/dto/dto.go",
-      "source_location": "L170",
+      "source_location": "L145",
       "_origin": "ast",
       "community": 23,
-      "norm_label": "updatebookingstatusrequest",
+      "norm_label": "bookingrequest",
       "community_name": "Booking",
-      "id": "dto_updatebookingstatusrequest"
+      "id": "dto_bookingrequest"
     },
     {
       "label": "Booking",
@@ -5764,7 +6314,7 @@
       "_origin": "ast",
       "community": 25,
       "norm_label": "trips/page.tsx",
-      "community_name": "trip-form-screen.tsx",
+      "community_name": "trips/page.tsx",
       "id": "backoffice_frontend_src_app_trips_page"
     },
     {
@@ -5775,7 +6325,7 @@
       "_origin": "ast",
       "community": 25,
       "norm_label": "tripformloading()",
-      "community_name": "trip-form-screen.tsx",
+      "community_name": "trips/page.tsx",
       "id": "backoffice_frontend_src_app_trips_page_tripformloading"
     },
     {
@@ -5786,7 +6336,7 @@
       "_origin": "ast",
       "community": 25,
       "norm_label": "tripspage()",
-      "community_name": "trip-form-screen.tsx",
+      "community_name": "trips/page.tsx",
       "id": "backoffice_frontend_src_app_trips_page_tripspage"
     },
     {
@@ -5797,85 +6347,8 @@
       "_origin": "ast",
       "community": 25,
       "norm_label": "empty-trip-screen.tsx",
-      "community_name": "trip-form-screen.tsx",
+      "community_name": "trips/page.tsx",
       "id": "backoffice_frontend_src_components_empty_trip_screen"
-    },
-    {
-      "label": "summary-section.tsx",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/form/sections/summary-section.tsx",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 25,
-      "norm_label": "summary-section.tsx",
-      "community_name": "trip-form-screen.tsx",
-      "id": "backoffice_frontend_src_components_trips_form_sections_summary_section"
-    },
-    {
-      "label": "Props",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/form/sections/summary-section.tsx",
-      "source_location": "L4",
-      "_origin": "ast",
-      "community": 25,
-      "norm_label": "props",
-      "community_name": "trip-form-screen.tsx",
-      "id": "backoffice_frontend_src_components_trips_form_sections_summary_section_props"
-    },
-    {
-      "label": "SummarySection()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/form/sections/summary-section.tsx",
-      "source_location": "L8",
-      "_origin": "ast",
-      "community": 25,
-      "norm_label": "summarysection()",
-      "community_name": "trip-form-screen.tsx",
-      "id": "backoffice_frontend_src_components_trips_form_sections_summary_section_summarysection"
-    },
-    {
-      "label": "trip-form-footer.tsx",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/form/trip-form-footer.tsx",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 25,
-      "norm_label": "trip-form-footer.tsx",
-      "community_name": "trip-form-screen.tsx",
-      "id": "backoffice_frontend_src_components_trips_form_trip_form_footer"
-    },
-    {
-      "label": "TripFormFooter()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/form/trip-form-footer.tsx",
-      "source_location": "L13",
-      "_origin": "ast",
-      "community": 25,
-      "norm_label": "tripformfooter()",
-      "community_name": "trip-form-screen.tsx",
-      "id": "backoffice_frontend_src_components_trips_form_trip_form_footer_tripformfooter"
-    },
-    {
-      "label": "TripFormFooterProps",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/form/trip-form-footer.tsx",
-      "source_location": "L5",
-      "_origin": "ast",
-      "community": 25,
-      "norm_label": "tripformfooterprops",
-      "community_name": "trip-form-screen.tsx",
-      "id": "backoffice_frontend_src_components_trips_form_trip_form_footer_tripformfooterprops"
-    },
-    {
-      "label": "trip-form-screen.tsx",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/form/trip-form-screen.tsx",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 25,
-      "norm_label": "trip-form-screen.tsx",
-      "community_name": "trip-form-screen.tsx",
-      "id": "backoffice_frontend_src_components_trips_form_trip_form_screen"
     },
     {
       "label": "TripFormScreen()",
@@ -5885,41 +6358,8 @@
       "_origin": "ast",
       "community": 25,
       "norm_label": "tripformscreen()",
-      "community_name": "trip-form-screen.tsx",
+      "community_name": "trips/page.tsx",
       "id": "backoffice_frontend_src_components_trips_form_trip_form_screen_tripformscreen"
-    },
-    {
-      "label": "applyControlledState()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/form/use-trip-form.ts",
-      "source_location": "L45",
-      "_origin": "ast",
-      "community": 25,
-      "norm_label": "applycontrolledstate()",
-      "community_name": "trip-form-screen.tsx",
-      "id": "backoffice_frontend_src_components_trips_form_use_trip_form_applycontrolledstate"
-    },
-    {
-      "label": "useTripForm()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/form/use-trip-form.ts",
-      "source_location": "L80",
-      "_origin": "ast",
-      "community": 25,
-      "norm_label": "usetripform()",
-      "community_name": "trip-form-screen.tsx",
-      "id": "backoffice_frontend_src_components_trips_form_use_trip_form_usetripform"
-    },
-    {
-      "label": "fetchTripDetail()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/trip.ts",
-      "source_location": "L56",
-      "_origin": "ast",
-      "community": 25,
-      "norm_label": "fetchtripdetail()",
-      "community_name": "trip-form-screen.tsx",
-      "id": "backoffice_frontend_src_lib_trip_fetchtripdetail"
     },
     {
       "label": "tools.go",
@@ -6085,6 +6525,17 @@
       "norm_label": "tripcardprops",
       "community_name": "trip-card.tsx",
       "id": "backoffice_frontend_src_components_trips_list_trip_card_tripcardprops"
+    },
+    {
+      "label": "ViewMode",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/list/types.ts",
+      "source_location": "L2",
+      "_origin": "ast",
+      "community": 27,
+      "norm_label": "viewmode",
+      "community_name": "trip-card.tsx",
+      "id": "backoffice_frontend_src_components_trips_list_types_viewmode"
     },
     {
       "label": "format-date-range.ts",
@@ -6362,17 +6813,6 @@
       "id": "backend_cmd_server_main_startchatsessioncleanup"
     },
     {
-      "label": "NewJWTService()",
-      "file_type": "code",
-      "source_file": "backend/internal/auth/jwt.go",
-      "source_location": "L45",
-      "_origin": "ast",
-      "community": 3,
-      "norm_label": "newjwtservice()",
-      "community_name": "main",
-      "id": "backend_internal_auth_jwt_newjwtservice"
-    },
-    {
       "label": "config.go",
       "file_type": "code",
       "source_file": "backend/internal/config/config.go",
@@ -6426,17 +6866,6 @@
       "norm_label": "getint()",
       "community_name": "main",
       "id": "backend_internal_config_config_getint"
-    },
-    {
-      "label": "Duration",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "community": 3,
-      "norm_label": "duration",
-      "community_name": "main",
-      "id": "backend_internal_config_config_go_duration"
     },
     {
       "label": "Load()",
@@ -6714,6 +7143,50 @@
       "id": "backend_internal_routes_routes_register"
     },
     {
+      "label": "logger.go",
+      "file_type": "code",
+      "source_file": "backend/internal/utils/logger.go",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 3,
+      "norm_label": "logger.go",
+      "community_name": "main",
+      "id": "backend_internal_utils_logger"
+    },
+    {
+      "label": "Context",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "community": 3,
+      "norm_label": "context",
+      "community_name": "main",
+      "id": "backend_internal_utils_logger_go_context"
+    },
+    {
+      "label": "Handler",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "community": 3,
+      "norm_label": "handler",
+      "community_name": "main",
+      "id": "backend_internal_utils_logger_go_handler"
+    },
+    {
+      "label": "NewContextHandler()",
+      "file_type": "code",
+      "source_file": "backend/internal/utils/logger.go",
+      "source_location": "L12",
+      "_origin": "ast",
+      "community": 3,
+      "norm_label": "newcontexthandler()",
+      "community_name": "main",
+      "id": "backend_internal_utils_logger_newcontexthandler"
+    },
+    {
       "label": "Engine",
       "file_type": "code",
       "source_file": "",
@@ -6811,6 +7284,39 @@
       "norm_label": ".middleware()",
       "community_name": "main",
       "id": "middlewares_ipratelimiter_middleware"
+    },
+    {
+      "label": "Record",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "community": 3,
+      "norm_label": "record",
+      "community_name": "main",
+      "id": "record"
+    },
+    {
+      "label": "ContextHandler",
+      "file_type": "code",
+      "source_file": "backend/internal/utils/logger.go",
+      "source_location": "L8",
+      "_origin": "ast",
+      "community": 3,
+      "norm_label": "contexthandler",
+      "community_name": "main",
+      "id": "utils_contexthandler"
+    },
+    {
+      "label": ".Handle()",
+      "file_type": "code",
+      "source_file": "backend/internal/utils/logger.go",
+      "source_location": "L16",
+      "_origin": "ast",
+      "community": 3,
+      "norm_label": ".handle()",
+      "community_name": "main",
+      "id": "utils_contexthandler_handle"
     },
     {
       "label": "orders/page.tsx",
@@ -6954,83 +7460,6 @@
       "norm_label": "confirmmodalprops",
       "community_name": "trips-list-screen.tsx",
       "id": "backoffice_frontend_src_components_confirm_modal_confirmmodalprops"
-    },
-    {
-      "label": "trip-card-context-menu.tsx",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 31,
-      "norm_label": "trip-card-context-menu.tsx",
-      "community_name": "trips-list-screen.tsx",
-      "id": "backoffice_frontend_src_components_trip_card_context_menu"
-    },
-    {
-      "label": "getActionClasses()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
-      "source_location": "L18",
-      "_origin": "ast",
-      "community": 31,
-      "norm_label": "getactionclasses()",
-      "community_name": "trips-list-screen.tsx",
-      "id": "backoffice_frontend_src_components_trip_card_context_menu_getactionclasses"
-    },
-    {
-      "label": "getMenuActions()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
-      "source_location": "L45",
-      "_origin": "ast",
-      "community": 31,
-      "norm_label": "getmenuactions()",
-      "community_name": "trips-list-screen.tsx",
-      "id": "backoffice_frontend_src_components_trip_card_context_menu_getmenuactions"
-    },
-    {
-      "label": "MenuAction",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
-      "source_location": "L10",
-      "_origin": "ast",
-      "community": 31,
-      "norm_label": "menuaction",
-      "community_name": "trips-list-screen.tsx",
-      "id": "backoffice_frontend_src_components_trip_card_context_menu_menuaction"
-    },
-    {
-      "label": "MenuActionTone",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
-      "source_location": "L8",
-      "_origin": "ast",
-      "community": 31,
-      "norm_label": "menuactiontone",
-      "community_name": "trips-list-screen.tsx",
-      "id": "backoffice_frontend_src_components_trip_card_context_menu_menuactiontone"
-    },
-    {
-      "label": "TripCardContextMenu()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
-      "source_location": "L93",
-      "_origin": "ast",
-      "community": 31,
-      "norm_label": "tripcardcontextmenu()",
-      "community_name": "trips-list-screen.tsx",
-      "id": "backoffice_frontend_src_components_trip_card_context_menu_tripcardcontextmenu"
-    },
-    {
-      "label": "TripCardContextMenuProps",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
-      "source_location": "L36",
-      "_origin": "ast",
-      "community": 31,
-      "norm_label": "tripcardcontextmenuprops",
-      "community_name": "trips-list-screen.tsx",
-      "id": "backoffice_frontend_src_components_trip_card_context_menu_tripcardcontextmenuprops"
     },
     {
       "label": "create-trip-card.tsx",
@@ -7198,147 +7627,15 @@
       "id": "backoffice_frontend_src_lib_utils_cn"
     },
     {
-      "label": "bus.go",
+      "label": "PaymentSuccessStatuses()",
       "file_type": "code",
-      "source_file": "backend/internal/events/bus.go",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "bus.go",
-      "community_name": "Bus",
-      "id": "backend_internal_events_bus"
-    },
-    {
-      "label": "Time",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "time",
-      "community_name": "Bus",
-      "id": "backend_internal_events_bus_go_time"
-    },
-    {
-      "label": "NewBus()",
-      "file_type": "code",
-      "source_file": "backend/internal/events/bus.go",
-      "source_location": "L29",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "newbus()",
-      "community_name": "Bus",
-      "id": "backend_internal_events_bus_newbus"
-    },
-    {
-      "label": "repositories.go",
-      "file_type": "code",
-      "source_file": "backend/internal/repositories/repositories.go",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "repositories.go",
-      "community_name": "Bus",
-      "id": "backend_internal_repositories_repositories"
-    },
-    {
-      "label": "DB",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "db",
-      "community_name": "Bus",
-      "id": "backend_internal_repositories_repositories_go_db"
-    },
-    {
-      "label": "Repository",
-      "file_type": "code",
-      "source_file": "backend/internal/repositories/repositories.go",
-      "source_location": "L36",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "repository",
-      "community_name": "Bus",
-      "id": "backend_internal_repositories_repositories_go_repositories_repository"
-    },
-    {
-      "label": "New()",
-      "file_type": "code",
-      "source_file": "backend/internal/repositories/repositories.go",
-      "source_location": "L40",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "new()",
-      "community_name": "Bus",
-      "id": "backend_internal_repositories_repositories_new"
-    },
-    {
-      "label": "payment_service_test.go",
-      "file_type": "code",
-      "source_file": "backend/internal/services/payment_service_test.go",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 32,
-      "community_name": "Bus",
-      "norm_label": "payment_service_test.go",
-      "id": "backend_internal_services_payment_service_test"
-    },
-    {
-      "label": "generateDokuSignature()",
-      "file_type": "code",
-      "source_file": "backend/internal/services/payment_service_test.go",
-      "source_location": "L43",
-      "_origin": "ast",
-      "community": 32,
-      "community_name": "Bus",
-      "norm_label": "generatedokusignature()",
-      "id": "backend_internal_services_payment_service_test_generatedokusignature"
-    },
-    {
-      "label": "setupTestDB()",
-      "file_type": "code",
-      "source_file": "backend/internal/services/payment_service_test.go",
-      "source_location": "L23",
-      "_origin": "ast",
-      "community": 32,
-      "community_name": "Bus",
-      "norm_label": "setuptestdb()",
-      "id": "backend_internal_services_payment_service_test_setuptestdb"
-    },
-    {
-      "label": "TestPaymentWebhookIdempotency()",
-      "file_type": "code",
-      "source_file": "backend/internal/services/payment_service_test.go",
-      "source_location": "L131",
-      "_origin": "ast",
-      "community": 32,
-      "community_name": "Bus",
-      "norm_label": "testpaymentwebhookidempotency()",
-      "id": "backend_internal_services_payment_service_test_testpaymentwebhookidempotency"
-    },
-    {
-      "label": "TestPaymentWebhookReplay()",
-      "file_type": "code",
-      "source_file": "backend/internal/services/payment_service_test.go",
+      "source_file": "backend/internal/models/models.go",
       "source_location": "L50",
       "_origin": "ast",
       "community": 32,
-      "community_name": "Bus",
-      "norm_label": "testpaymentwebhookreplay()",
-      "id": "backend_internal_services_payment_service_test_testpaymentwebhookreplay"
-    },
-    {
-      "label": "logger.go",
-      "file_type": "code",
-      "source_file": "backend/internal/utils/logger.go",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "logger.go",
-      "community_name": "Bus",
-      "id": "backend_internal_utils_logger"
+      "norm_label": "paymentsuccessstatuses()",
+      "community_name": "Context",
+      "id": "backend_internal_models_models_paymentsuccessstatuses"
     },
     {
       "label": "Context",
@@ -7348,195 +7645,85 @@
       "_origin": "ast",
       "community": 32,
       "norm_label": "context",
-      "community_name": "Bus",
-      "id": "backend_internal_utils_logger_go_context"
+      "community_name": "Context",
+      "id": "backend_internal_repositories_analytics_repository_go_context"
     },
     {
-      "label": "Handler",
+      "label": "Repository",
       "file_type": "code",
-      "source_file": "",
-      "source_location": "",
+      "source_file": "backend/internal/repositories/analytics_repository.go",
+      "source_location": "L15",
       "_origin": "ast",
       "community": 32,
-      "norm_label": "handler",
-      "community_name": "Bus",
-      "id": "backend_internal_utils_logger_go_handler"
+      "norm_label": "repository",
+      "community_name": "Context",
+      "id": "backend_internal_repositories_analytics_repository_go_repositories_repository"
     },
     {
-      "label": "NewContextHandler()",
+      "label": ".CountAILogs()",
       "file_type": "code",
-      "source_file": "backend/internal/utils/logger.go",
-      "source_location": "L12",
+      "source_file": "backend/internal/repositories/analytics_repository.go",
+      "source_location": "L34",
       "_origin": "ast",
       "community": 32,
-      "norm_label": "newcontexthandler()",
-      "community_name": "Bus",
-      "id": "backend_internal_utils_logger_newcontexthandler"
+      "norm_label": ".countailogs()",
+      "community_name": "Context",
+      "id": "repositories_repository_countailogs"
     },
     {
-      "label": "utils_test.go",
+      "label": ".CountBookings()",
       "file_type": "code",
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L1",
+      "source_file": "backend/internal/repositories/analytics_repository.go",
+      "source_location": "L15",
       "_origin": "ast",
-      "id": "backend_internal_utils_utils_test",
       "community": 32,
-      "community_name": "Bus",
-      "norm_label": "utils_test.go"
+      "norm_label": ".countbookings()",
+      "community_name": "Context",
+      "id": "repositories_repository_countbookings"
     },
     {
-      "label": "TestContextHandler_Handle()",
+      "label": ".CountPayments()",
       "file_type": "code",
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L16",
+      "source_file": "backend/internal/repositories/analytics_repository.go",
+      "source_location": "L40",
       "_origin": "ast",
-      "id": "backend_internal_utils_utils_test_testcontexthandler_handle",
       "community": 32,
-      "community_name": "Bus",
-      "norm_label": "testcontexthandler_handle()"
+      "norm_label": ".countpayments()",
+      "community_name": "Context",
+      "id": "repositories_repository_countpayments"
     },
     {
-      "label": "Bus",
+      "label": ".CountSuccessfulPayments()",
       "file_type": "code",
-      "source_file": "backend/internal/events/bus.go",
-      "source_location": "L17",
+      "source_file": "backend/internal/repositories/analytics_repository.go",
+      "source_location": "L48",
       "_origin": "ast",
       "community": 32,
-      "norm_label": "bus",
-      "community_name": "Bus",
-      "id": "events_bus"
+      "norm_label": ".countsuccessfulpayments()",
+      "community_name": "Context",
+      "id": "repositories_repository_countsuccessfulpayments"
     },
     {
-      "label": ".Publish()",
+      "label": ".CountTrips()",
       "file_type": "code",
-      "source_file": "backend/internal/events/bus.go",
-      "source_location": "L66",
+      "source_file": "backend/internal/repositories/analytics_repository.go",
+      "source_location": "L28",
       "_origin": "ast",
       "community": 32,
-      "norm_label": ".publish()",
-      "community_name": "Bus",
-      "id": "events_bus_publish"
+      "norm_label": ".counttrips()",
+      "community_name": "Context",
+      "id": "repositories_repository_counttrips"
     },
     {
-      "label": ".Subscribe()",
+      "label": ".SumBookingRevenue()",
       "file_type": "code",
-      "source_file": "backend/internal/events/bus.go",
-      "source_location": "L37",
+      "source_file": "backend/internal/repositories/analytics_repository.go",
+      "source_location": "L21",
       "_origin": "ast",
       "community": 32,
-      "norm_label": ".subscribe()",
-      "community_name": "Bus",
-      "id": "events_bus_subscribe"
-    },
-    {
-      "label": ".SubscriberCount()",
-      "file_type": "code",
-      "source_file": "backend/internal/events/bus.go",
-      "source_location": "L49",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": ".subscribercount()",
-      "community_name": "Bus",
-      "id": "events_bus_subscribercount"
-    },
-    {
-      "label": ".Unsubscribe()",
-      "file_type": "code",
-      "source_file": "backend/internal/events/bus.go",
-      "source_location": "L60",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": ".unsubscribe()",
-      "community_name": "Bus",
-      "id": "events_bus_unsubscribe"
-    },
-    {
-      "label": "Event",
-      "file_type": "code",
-      "source_file": "backend/internal/events/bus.go",
-      "source_location": "L10",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "event",
-      "community_name": "Bus",
-      "id": "events_event"
-    },
-    {
-      "label": "gorm.io/gorm.DB",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "community": 32,
-      "community_name": "Bus",
-      "norm_label": "gorm.io/gorm.db",
-      "id": "go_type_gorm_io_gorm_db"
-    },
-    {
-      "label": "testing.T",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "id": "go_type_testing_t",
-      "community": 32,
-      "community_name": "Bus",
-      "norm_label": "testing.t"
-    },
-    {
-      "label": "Record",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "record",
-      "community_name": "Bus",
-      "id": "record"
-    },
-    {
-      "label": "TripRepositoryFilter",
-      "file_type": "code",
-      "source_file": "backend/internal/repositories/repositories.go",
-      "source_location": "L27",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "triprepositoryfilter",
-      "community_name": "Bus",
-      "id": "repositories_triprepositoryfilter"
-    },
-    {
-      "label": "RWMutex",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "rwmutex",
-      "community_name": "Bus",
-      "id": "rwmutex"
-    },
-    {
-      "label": "ContextHandler",
-      "file_type": "code",
-      "source_file": "backend/internal/utils/logger.go",
-      "source_location": "L8",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": "contexthandler",
-      "community_name": "Bus",
-      "id": "utils_contexthandler"
-    },
-    {
-      "label": ".Handle()",
-      "file_type": "code",
-      "source_file": "backend/internal/utils/logger.go",
-      "source_location": "L16",
-      "_origin": "ast",
-      "community": 32,
-      "norm_label": ".handle()",
-      "community_name": "Bus",
-      "id": "utils_contexthandler_handle"
+      "norm_label": ".sumbookingrevenue()",
+      "community_name": "Context",
+      "id": "repositories_repository_sumbookingrevenue"
     },
     {
       "label": "DB",
@@ -8378,6 +8565,17 @@
       "id": "dto_triprequest"
     },
     {
+      "label": "UpdateBookingStatusRequest",
+      "file_type": "code",
+      "source_file": "backend/internal/dto/dto.go",
+      "source_location": "L170",
+      "_origin": "ast",
+      "community": 4,
+      "norm_label": "updatebookingstatusrequest",
+      "community_name": "Trip",
+      "id": "dto_updatebookingstatusrequest"
+    },
+    {
       "label": "UploadResponse",
       "file_type": "code",
       "source_file": "backend/internal/dto/dto.go",
@@ -8741,202 +8939,81 @@
       "id": "backoffice_frontend_src_lib_api_asseturl"
     },
     {
-      "label": "use-trips-list.ts",
+      "label": "trip-card-context-menu.tsx",
       "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
+      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
       "source_location": "L1",
       "_origin": "ast",
       "community": 42,
-      "norm_label": "use-trips-list.ts",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_components_trips_list_use_trips_list"
+      "norm_label": "trip-card-context-menu.tsx",
+      "community_name": "trip-card-context-menu.tsx",
+      "id": "backoffice_frontend_src_components_trip_card_context_menu"
     },
     {
-      "label": "cacheTrips()",
+      "label": "getActionClasses()",
       "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
-      "source_location": "L37",
-      "_origin": "ast",
-      "community": 42,
-      "norm_label": "cachetrips()",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_components_trips_list_use_trips_list_cachetrips"
-    },
-    {
-      "label": "ConfirmAction",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
+      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
       "source_location": "L18",
       "_origin": "ast",
       "community": 42,
-      "norm_label": "confirmaction",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_components_trips_list_use_trips_list_confirmaction"
+      "norm_label": "getactionclasses()",
+      "community_name": "trip-card-context-menu.tsx",
+      "id": "backoffice_frontend_src_components_trip_card_context_menu_getactionclasses"
     },
     {
-      "label": "ContextMenuState",
+      "label": "getMenuActions()",
       "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
-      "source_location": "L22",
+      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
+      "source_location": "L45",
       "_origin": "ast",
       "community": 42,
-      "norm_label": "contextmenustate",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_components_trips_list_use_trips_list_contextmenustate"
+      "norm_label": "getmenuactions()",
+      "community_name": "trip-card-context-menu.tsx",
+      "id": "backoffice_frontend_src_components_trip_card_context_menu_getmenuactions"
     },
     {
-      "label": "fetchTripsOnce()",
+      "label": "MenuAction",
       "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
-      "source_location": "L44",
+      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
+      "source_location": "L10",
       "_origin": "ast",
       "community": 42,
-      "norm_label": "fetchtripsonce()",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_components_trips_list_use_trips_list_fetchtripsonce"
+      "norm_label": "menuaction",
+      "community_name": "trip-card-context-menu.tsx",
+      "id": "backoffice_frontend_src_components_trip_card_context_menu_menuaction"
     },
     {
-      "label": "hasFreshTripsCache()",
+      "label": "MenuActionTone",
       "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
-      "source_location": "L33",
+      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
+      "source_location": "L8",
       "_origin": "ast",
       "community": 42,
-      "norm_label": "hasfreshtripscache()",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_components_trips_list_use_trips_list_hasfreshtripscache"
+      "norm_label": "menuactiontone",
+      "community_name": "trip-card-context-menu.tsx",
+      "id": "backoffice_frontend_src_components_trip_card_context_menu_menuactiontone"
     },
     {
-      "label": "useTripsList()",
+      "label": "TripCardContextMenu()",
       "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/use-trips-list.ts",
-      "source_location": "L67",
+      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
+      "source_location": "L93",
       "_origin": "ast",
       "community": 42,
-      "norm_label": "usetripslist()",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_components_trips_list_use_trips_list_usetripslist"
+      "norm_label": "tripcardcontextmenu()",
+      "community_name": "trip-card-context-menu.tsx",
+      "id": "backoffice_frontend_src_components_trip_card_context_menu_tripcardcontextmenu"
     },
     {
-      "label": "TripPackage",
+      "label": "TripCardContextMenuProps",
       "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/api.ts",
-      "source_location": "L29",
+      "source_file": "backoffice-frontend/src/components/trip-card-context-menu.tsx",
+      "source_location": "L36",
       "_origin": "ast",
       "community": 42,
-      "norm_label": "trippackage",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_lib_api_trippackage"
-    },
-    {
-      "label": "TripStatus",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/api.ts",
-      "source_location": "L63",
-      "_origin": "ast",
-      "community": 42,
-      "norm_label": "tripstatus",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_lib_api_tripstatus"
-    },
-    {
-      "label": "trip.ts",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/trip.ts",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 42,
-      "norm_label": "trip.ts",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_lib_trip"
-    },
-    {
-      "label": "buildTripUpdatePayload()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/trip.ts",
-      "source_location": "L3",
-      "_origin": "ast",
-      "community": 42,
-      "norm_label": "buildtripupdatepayload()",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_lib_trip_buildtripupdatepayload"
-    },
-    {
-      "label": "deleteTripPackage()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/trip.ts",
-      "source_location": "L72",
-      "_origin": "ast",
-      "community": 42,
-      "norm_label": "deletetrippackage()",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_lib_trip_deletetrippackage"
-    },
-    {
-      "label": "formatTripStatus()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/trip.ts",
-      "source_location": "L76",
-      "_origin": "ast",
-      "community": 42,
-      "norm_label": "formattripstatus()",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_lib_trip_formattripstatus"
-    },
-    {
-      "label": "getDeleteErrorMessage()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/trip.ts",
-      "source_location": "L84",
-      "_origin": "ast",
-      "community": 42,
-      "norm_label": "getdeleteerrormessage()",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_lib_trip_getdeleteerrormessage"
-    },
-    {
-      "label": "getDeleteSuccessMessage()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/trip.ts",
-      "source_location": "L80",
-      "_origin": "ast",
-      "community": 42,
-      "norm_label": "getdeletesuccessmessage()",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_lib_trip_getdeletesuccessmessage"
-    },
-    {
-      "label": "getStatusChangeErrorMessage()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/trip.ts",
-      "source_location": "L98",
-      "_origin": "ast",
-      "community": 42,
-      "norm_label": "getstatuschangeerrormessage()",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_lib_trip_getstatuschangeerrormessage"
-    },
-    {
-      "label": "getStatusChangeSuccessMessage()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/trip.ts",
-      "source_location": "L94",
-      "_origin": "ast",
-      "community": 42,
-      "norm_label": "getstatuschangesuccessmessage()",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_lib_trip_getstatuschangesuccessmessage"
-    },
-    {
-      "label": "updateTripStatus()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/lib/trip.ts",
-      "source_location": "L60",
-      "_origin": "ast",
-      "community": 42,
-      "norm_label": "updatetripstatus()",
-      "community_name": "use-trips-list.ts",
-      "id": "backoffice_frontend_src_lib_trip_updatetripstatus"
+      "norm_label": "tripcardcontextmenuprops",
+      "community_name": "trip-card-context-menu.tsx",
+      "id": "backoffice_frontend_src_components_trip_card_context_menu_tripcardcontextmenuprops"
     },
     {
       "label": "backoffice-frontend/.eslintrc.json",
@@ -9069,149 +9146,6 @@
       "norm_label": "t",
       "community_name": "T",
       "id": "backend_internal_services_payment_service_test_go_t"
-    },
-    {
-      "label": "info-modal.tsx",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/info-modal.tsx",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "info-modal.tsx",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_list_info_modal"
-    },
-    {
-      "label": "InfoModal()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/info-modal.tsx",
-      "source_location": "L4",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "infomodal()",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_list_info_modal_infomodal"
-    },
-    {
-      "label": "trips-sidebar.tsx",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/trips-sidebar.tsx",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "trips-sidebar.tsx",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_list_trips_sidebar"
-    },
-    {
-      "label": "list/types.ts",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/types.ts",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "list/types.ts",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_list_types"
-    },
-    {
-      "label": "ActivePanel",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/types.ts",
-      "source_location": "L3",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "activepanel",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_list_types_activepanel"
-    },
-    {
-      "label": "Category",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/types.ts",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "category",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_list_types_category"
-    },
-    {
-      "label": "ModalType",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/types.ts",
-      "source_location": "L4",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "modaltype",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_list_types_modaltype"
-    },
-    {
-      "label": "ViewMode",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/list/types.ts",
-      "source_location": "L2",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "viewmode",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_list_types_viewmode"
-    },
-    {
-      "label": "backoffice-sidebar.tsx",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/shared/backoffice-sidebar.tsx",
-      "source_location": "L1",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "backoffice-sidebar.tsx",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_shared_backoffice_sidebar"
-    },
-    {
-      "label": "BackofficeSidebar()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/shared/backoffice-sidebar.tsx",
-      "source_location": "L85",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "backofficesidebar()",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_shared_backoffice_sidebar_backofficesidebar"
-    },
-    {
-      "label": "BackofficeSidebarProps",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/shared/backoffice-sidebar.tsx",
-      "source_location": "L73",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "backofficesidebarprops",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_shared_backoffice_sidebar_backofficesidebarprops"
-    },
-    {
-      "label": "SidebarItem()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/shared/backoffice-sidebar.tsx",
-      "source_location": "L14",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "sidebaritem()",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_shared_backoffice_sidebar_sidebaritem"
-    },
-    {
-      "label": "SidebarLink()",
-      "file_type": "code",
-      "source_file": "backoffice-frontend/src/components/trips/shared/backoffice-sidebar.tsx",
-      "source_location": "L46",
-      "_origin": "ast",
-      "community": 46,
-      "norm_label": "sidebarlink()",
-      "community_name": "backoffice-sidebar.tsx",
-      "id": "backoffice_frontend_src_components_trips_shared_backoffice_sidebar_sidebarlink"
     },
     {
       "label": "route.ts",
@@ -9357,17 +9291,6 @@
       "id": "backend_internal_services_ai_service"
     },
     {
-      "label": "extractRecommendedPackages()",
-      "file_type": "code",
-      "source_file": "backend/internal/services/ai_service.go",
-      "source_location": "L374",
-      "_origin": "ast",
-      "community": 5,
-      "norm_label": "extractrecommendedpackages()",
-      "community_name": "ChatSession",
-      "id": "backend_internal_services_ai_service_extractrecommendedpackages"
-    },
-    {
       "label": "failedSearchTripsAlreadySelected()",
       "file_type": "code",
       "source_file": "backend/internal/services/ai_service.go",
@@ -9443,17 +9366,6 @@
       "norm_label": "uuid",
       "community_name": "ChatSession",
       "id": "backend_internal_services_ai_service_go_uuid"
-    },
-    {
-      "label": "hasSearchTripsAlternative()",
-      "file_type": "code",
-      "source_file": "backend/internal/services/ai_service.go",
-      "source_location": "L449",
-      "_origin": "ast",
-      "community": 5,
-      "norm_label": "hassearchtripsalternative()",
-      "community_name": "ChatSession",
-      "id": "backend_internal_services_ai_service_hassearchtripsalternative"
     },
     {
       "label": "hasSuccessfulCreateBooking()",
@@ -9641,17 +9553,6 @@
       "norm_label": "chatsession",
       "community_name": "ChatSession",
       "id": "models_chatsession"
-    },
-    {
-      "label": "ChatRepository",
-      "file_type": "code",
-      "source_file": "backend/internal/repositories/interfaces.go",
-      "source_location": "L46",
-      "_origin": "ast",
-      "community": 5,
-      "norm_label": "chatrepository",
-      "community_name": "ChatSession",
-      "id": "repositories_chatrepository"
     },
     {
       "label": "AIRepository",
@@ -9863,6 +9764,39 @@
       "id": "services_mcptoolexecutor"
     },
     {
+      "label": "trip-form-footer.tsx",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/form/trip-form-footer.tsx",
+      "source_location": "L1",
+      "_origin": "ast",
+      "community": 50,
+      "norm_label": "trip-form-footer.tsx",
+      "community_name": "trip-form-footer.tsx",
+      "id": "backoffice_frontend_src_components_trips_form_trip_form_footer"
+    },
+    {
+      "label": "TripFormFooter()",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/form/trip-form-footer.tsx",
+      "source_location": "L13",
+      "_origin": "ast",
+      "community": 50,
+      "norm_label": "tripformfooter()",
+      "community_name": "trip-form-footer.tsx",
+      "id": "backoffice_frontend_src_components_trips_form_trip_form_footer_tripformfooter"
+    },
+    {
+      "label": "TripFormFooterProps",
+      "file_type": "code",
+      "source_file": "backoffice-frontend/src/components/trips/form/trip-form-footer.tsx",
+      "source_location": "L5",
+      "_origin": "ast",
+      "community": 50,
+      "norm_label": "tripformfooterprops",
+      "community_name": "trip-form-footer.tsx",
+      "id": "backoffice_frontend_src_components_trips_form_trip_form_footer_tripformfooterprops"
+    },
+    {
       "label": "backoffice-frontend/next.config.mjs",
       "file_type": "code",
       "source_file": "backoffice-frontend/next.config.mjs",
@@ -10048,6 +9982,28 @@
       "norm_label": ".parse()",
       "community_name": "ToolResult",
       "id": "auth_jwtservice_parse"
+    },
+    {
+      "label": "extractRecommendedPackages()",
+      "file_type": "code",
+      "source_file": "backend/internal/services/ai_service.go",
+      "source_location": "L374",
+      "_origin": "ast",
+      "community": 6,
+      "norm_label": "extractrecommendedpackages()",
+      "community_name": "ToolResult",
+      "id": "backend_internal_services_ai_service_extractrecommendedpackages"
+    },
+    {
+      "label": "hasSearchTripsAlternative()",
+      "file_type": "code",
+      "source_file": "backend/internal/services/ai_service.go",
+      "source_location": "L449",
+      "_origin": "ast",
+      "community": 6,
+      "norm_label": "hassearchtripsalternative()",
+      "community_name": "ToolResult",
+      "id": "backend_internal_services_ai_service_hassearchtripsalternative"
     },
     {
       "label": "booking_service.go",
@@ -12087,6 +12043,17 @@
       "id": "repositories_bookingrepository"
     },
     {
+      "label": "ChatRepository",
+      "file_type": "code",
+      "source_file": "backend/internal/repositories/interfaces.go",
+      "source_location": "L46",
+      "_origin": "ast",
+      "community": 9,
+      "norm_label": "chatrepository",
+      "community_name": "Services",
+      "id": "repositories_chatrepository"
+    },
+    {
       "label": "LogRepository",
       "file_type": "code",
       "source_file": "backend/internal/repositories/interfaces.go",
@@ -13160,9 +13127,9 @@
       "source_location": "L132",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test_testpaymentwebhookidempotency",
-      "target": "backend_internal_services_payment_service_test_setuptestdb"
+      "target": "backend_internal_services_payment_service_test_setuptestdb",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -13196,9 +13163,9 @@
       "source_location": "L152",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test_testpaymentwebhookidempotency",
-      "target": "backend_internal_services_payment_service_test_generatedokusignature"
+      "target": "backend_internal_services_payment_service_test_generatedokusignature",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -13208,9 +13175,9 @@
       "source_location": "L51",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test_testpaymentwebhookreplay",
-      "target": "backend_internal_services_payment_service_test_setuptestdb"
+      "target": "backend_internal_services_payment_service_test_setuptestdb",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -13244,9 +13211,9 @@
       "source_location": "L79",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test_testpaymentwebhookreplay",
-      "target": "backend_internal_services_payment_service_test_generatedokusignature"
+      "target": "backend_internal_services_payment_service_test_generatedokusignature",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -23036,9 +23003,9 @@
       "weight": 1.0,
       "context": "parameter_type",
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test_setuptestdb",
-      "target": "go_type_testing_t"
+      "target": "go_type_testing_t",
+      "confidence_score": 1.0
     },
     {
       "relation": "references",
@@ -23048,9 +23015,9 @@
       "weight": 1.0,
       "context": "parameter_type",
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test_testpaymentwebhookidempotency",
-      "target": "go_type_testing_t"
+      "target": "go_type_testing_t",
+      "confidence_score": 1.0
     },
     {
       "relation": "references",
@@ -23060,9 +23027,9 @@
       "weight": 1.0,
       "context": "parameter_type",
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test_testpaymentwebhookreplay",
-      "target": "go_type_testing_t"
+      "target": "go_type_testing_t",
+      "confidence_score": 1.0
     },
     {
       "relation": "references",
@@ -23231,30 +23198,6 @@
       "confidence_score": 1.0,
       "source": "backend_internal_utils_response_unauthorized",
       "target": "backend_internal_utils_response_go_context"
-    },
-    {
-      "relation": "references",
-      "confidence": "EXTRACTED",
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L56",
-      "weight": 1.0,
-      "context": "parameter_type",
-      "_origin": "ast",
-      "source": "backend_internal_utils_utils_test_testapiresponses",
-      "target": "go_type_testing_t",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "references",
-      "confidence": "EXTRACTED",
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L16",
-      "weight": 1.0,
-      "context": "parameter_type",
-      "_origin": "ast",
-      "source": "backend_internal_utils_utils_test_testcontexthandler_handle",
-      "target": "go_type_testing_t",
-      "confidence_score": 1.0
     },
     {
       "relation": "references",
@@ -27620,9 +27563,9 @@
       "weight": 1.0,
       "context": "return_type",
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test_setuptestdb",
-      "target": "backend_internal_repositories_repositories_go_repositories_repository"
+      "target": "backend_internal_repositories_repositories_go_repositories_repository",
+      "confidence_score": 1.0
     },
     {
       "relation": "references",
@@ -27632,9 +27575,9 @@
       "weight": 1.0,
       "context": "return_type",
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test_setuptestdb",
-      "target": "go_type_gorm_io_gorm_db"
+      "target": "go_type_gorm_io_gorm_db",
+      "confidence_score": 1.0
     },
     {
       "relation": "references",
@@ -31087,9 +31030,9 @@
       "source_location": "L131",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test",
-      "target": "backend_internal_services_payment_service_test_testpaymentwebhookidempotency"
+      "target": "backend_internal_services_payment_service_test_testpaymentwebhookidempotency",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -31098,9 +31041,9 @@
       "source_location": "L23",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test",
-      "target": "backend_internal_services_payment_service_test_setuptestdb"
+      "target": "backend_internal_services_payment_service_test_setuptestdb",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -31109,9 +31052,9 @@
       "source_location": "L43",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test",
-      "target": "backend_internal_services_payment_service_test_generatedokusignature"
+      "target": "backend_internal_services_payment_service_test_generatedokusignature",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -31120,9 +31063,9 @@
       "source_location": "L50",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backend_internal_services_payment_service_test",
-      "target": "backend_internal_services_payment_service_test_testpaymentwebhookreplay"
+      "target": "backend_internal_services_payment_service_test_testpaymentwebhookreplay",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -31321,28 +31264,6 @@
       "confidence_score": 1.0,
       "source": "backend_internal_utils_response",
       "target": "backend_internal_utils_response_servererror"
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L16",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "backend_internal_utils_utils_test",
-      "target": "backend_internal_utils_utils_test_testcontexthandler_handle",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "contains",
-      "confidence": "EXTRACTED",
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L56",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "backend_internal_utils_utils_test",
-      "target": "backend_internal_utils_utils_test_testapiresponses",
-      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -31659,9 +31580,9 @@
       "source_location": "L1",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backoffice_frontend_readme",
-      "target": "backoffice_frontend_readme_vero_travelos_backoffice_frontend"
+      "target": "backoffice_frontend_readme_vero_travelos_backoffice_frontend",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -31670,9 +31591,9 @@
       "source_location": "L26",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backoffice_frontend_readme_fitur_aktif",
-      "target": "backoffice_frontend_readme_auth_sesi"
+      "target": "backoffice_frontend_readme_auth_sesi",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -31681,9 +31602,9 @@
       "source_location": "L32",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backoffice_frontend_readme_fitur_aktif",
-      "target": "backoffice_frontend_readme_form_paket"
+      "target": "backoffice_frontend_readme_form_paket",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -31692,9 +31613,9 @@
       "source_location": "L36",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backoffice_frontend_readme_vero_travelos_backoffice_frontend",
-      "target": "backoffice_frontend_readme_yang_belum_aktif_placeholder_mock"
+      "target": "backoffice_frontend_readme_yang_belum_aktif_placeholder_mock",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -31703,9 +31624,9 @@
       "source_location": "L46",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backoffice_frontend_readme_vero_travelos_backoffice_frontend",
-      "target": "backoffice_frontend_readme_konfigurasi_proxy_api"
+      "target": "backoffice_frontend_readme_konfigurasi_proxy_api",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -31714,9 +31635,9 @@
       "source_location": "L53",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backoffice_frontend_readme_vero_travelos_backoffice_frontend",
-      "target": "backoffice_frontend_readme_menjalankan"
+      "target": "backoffice_frontend_readme_menjalankan",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -31725,9 +31646,9 @@
       "source_location": "L9",
       "weight": 1.0,
       "_origin": "ast",
-      "confidence_score": 1.0,
       "source": "backoffice_frontend_readme_vero_travelos_backoffice_frontend",
-      "target": "backoffice_frontend_readme_fitur_aktif"
+      "target": "backoffice_frontend_readme_fitur_aktif",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -38778,90 +38699,6 @@
       "context": "call",
       "confidence": "INFERRED",
       "confidence_score": 0.8,
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L104",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "backend_internal_utils_utils_test_testapiresponses",
-      "target": "backend_internal_utils_response_forbidden"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L116",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "backend_internal_utils_utils_test_testapiresponses",
-      "target": "backend_internal_utils_response_notfound"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L129",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "backend_internal_utils_utils_test_testapiresponses",
-      "target": "backend_internal_utils_response_servererror"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L68",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "backend_internal_utils_utils_test_testapiresponses",
-      "target": "backend_internal_utils_response_success"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L80",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "backend_internal_utils_utils_test_testapiresponses",
-      "target": "backend_internal_utils_response_badrequest"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L92",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "backend_internal_utils_utils_test_testapiresponses",
-      "target": "backend_internal_utils_response_unauthorized"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
-      "source_file": "backend/internal/utils/utils_test.go",
-      "source_location": "L19",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "backend_internal_utils_utils_test_testcontexthandler_handle",
-      "target": "backend_internal_utils_logger_newcontexthandler"
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "INFERRED",
-      "confidence_score": 0.8,
       "source_file": "backend/internal/handlers/auth_handlers.go",
       "source_location": "L78",
       "weight": 1.0,
@@ -40719,5 +40556,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "e830d05b6cd514b09928b680a656ba6fc4f27fc6"
+  "built_at_commit": "d424265c966db74fcf06816fe1c9c34b30483a07"
 }
