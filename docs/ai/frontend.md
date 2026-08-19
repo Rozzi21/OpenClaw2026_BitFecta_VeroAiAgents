@@ -37,10 +37,20 @@ Cookie `vero_guest_session` otomatis terkirim (`credentials: include`); frontend
 TIDAK menyimpan entitlement di localStorage. `lib/api.ts` kini melempar
 `APIError` (status + `error.code`) sehingga halaman trip bereaksi pada
 `GUEST_ORDER_LIMIT_REACHED`: auth gate "Your guest order has already been used"
-+ tombol Login/Create Account (Google = placeholder disabled). Order sukses
++ tombol Login/Create Account/**Continue with Google (aktif, 19 Agu 2026)**. Order sukses
 menampilkan Continue Tracking/Login/Register. Idempotency-Key dibuat per
 logical checkout (`crypto.randomUUID()`, di-ref hingga sukses). Setelah login,
 order di-claim backend dan tracking beralih ke `/api/v1/bookings/:id`.
+
+### Google OAuth UI (19 Agu 2026)
+
+Dua komponen auth baru di `frontend/src/components/auth/`:
+
+- **`GoogleButton.tsx`** — memulai Authorization Code flow lewat **full-page navigation** (`window.location.href = /api/v1/auth/google/login?return_to=<pathSaatIni>`), BUKAN `apiFetch` (browser harus mengikuti redirect consent Google). `return_to` = `usePathname()` + query saat ini agar user kembali ke halaman asal. Dipakai di `/login`, `/register`, dan guest-gate `trip/[id]` (menggantikan tombol placeholder disabled). Ikon Google inline SVG (tanpa dependency baru, patuh coding-rules §2.7).
+- **`OAuthReceiver.tsx`** — client component yang membaca `#access_token=...` dari **URL fragment** redirect callback backend (fragment tidak pernah dikirim ke server), memanggil `setCustomerAccessToken`, membersihkan hash via `history.replaceState`, lalu reload path saat ini. Juga membaca `?auth_error=...` (gagal login) dan meneruskannya via prop `onError`. Dipasang di `/login`, `/register`, `trip/[id]` — dibungkus `<Suspense>` karena memakai `useSearchParams`/`usePathname`.
+- **`AuthForm.tsx`** — menerima prop opsional `google?: React.ReactNode` yang merender tombol Google di antara submit kredensial dan footer (dengan divider "or"). Caller lama tanpa prop tidak terpengaruh.
+
+Setelah token tersimpan, flow existing berjalan normal: `apiFetch` menyertakan Bearer dari localStorage; order guest sudah di-claim backend saat callback. Backoffice TIDAK memakai Google OAuth (staff tetap email/password).
 
 ### Mekanisme Rekomendasi
 

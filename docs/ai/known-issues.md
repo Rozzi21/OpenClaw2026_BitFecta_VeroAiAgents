@@ -16,6 +16,27 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 ---
 
+## A.14 Google OAuth "Continue with Google" (19 Agu 2026) — FITUR AKTIF (feature-flag), BUKAN TECH DEBT
+
+Login Google diimplementasikan sebagai provider tambahan; auth email/password TIDAK berubah. Arsitektur + rencana lengkap: `docs/GOOGLE_OAUTH_PLAN.md`. Ringkasan implementasi:
+
+- **Endpoint baru** (grup `/api/v1/auth`, auto-kena `AuthRateLimit`): `GET /auth/google/login` (302 ke consent screen, state+nonce DB-backed) dan `GET /auth/google/callback` (validasi state single-use atomik, tukar code, verifikasi id_token via JWKS Google, issue sesi Vero normal, redirect ke FE dengan access token di URL fragment).
+- **File**: `internal/auth/google.go` (OIDC client: AuthCodeURL/Exchange/verifyIDToken + JWKS cache), `internal/services/google_oauth_service.go` (`GoogleOAuthService` — StartLogin/Callback/resolveUser), `internal/handlers/google_auth_handlers.go` (redirect-based, bukan envelope JSON), `internal/repositories/oauth_repository.go` (CreateOAuthState/ConsumeOAuthState/FindUserByGoogleSub/LinkUserGoogleSub).
+- **DB**: `users.google_sub` (nullable, partial unique index `idx_users_google_sub`) + tabel `oauth_states` (hanya hash SHA-256 state disimpan; `consumed_at` atomik seperti `RotateSession` BUG-1). Migrasi: AutoMigrate + `migrateGoogleOAuth()` (raw DDL partial index) + SQL versioned `backend/migrations/20260818_google_oauth.sql`.
+- **Account linking**: 1) match `google_sub` → login; 2) match email terverifikasi (`email_verified=true` wajib) → link `google_sub` (password lama tetap bisa); 3) tidak ada → buat `RoleUser` baru dengan password bcrypt acak (pola SEC-24). Role tidak pernah dari luar (SEC-1).
+- **Sesi**: memakai `AuthService.issueSession` yang sama → rotasi/reuse-detection/logout/revoke identik. Guest order claim direplikasi di callback (seperti login/register).
+- **Frontend**: `GoogleButton.tsx` (full navigation, bukan apiFetch), `OAuthReceiver.tsx` (baca `#access_token` fragment → `setCustomerAccessToken` → bersihkan hash), dipasang di `/login`, `/register`, dan guest-gate `trip/[id]` (placeholder disabled diganti tombol asli). `AuthForm` dapat prop opsional `google`.
+- **Config/env**: `GOOGLE_OAUTH_ENABLED` (default false), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_OAUTH_FRONTEND_URL`. `Config.Validate()` menolak production bila enabled tanpa kredensial / masih localhost (pola SEC-4).
+- **Regression tests**: `internal/services/google_oauth_service_test.go` (sanitizeReturnTo open-redirect guard, hashed-state persistence, state single-use/replay, resolveUser by-sub/link-email/create/race-fallback).
+
+Batasan diketahui:
+- **Feature-flag OFF by default** — endpoint membalas 404 saat `GOOGLE_OAUTH_ENABLED=false`; tombol tetap render tapi membawa user ke 404 bila backend belum dikonfigurasi. Aktifkan + isi kredensial Google Cloud sebelum dipakai.
+- Akun hasil Google punya password acak tak-tertebak → tidak bisa login email/password sampai ada alur set/reset password (di luar scope).
+- E2E nyata (consent screen Google) belum diuji otomatis; unit test men-cover logika non-jaringan. Verifikasi manual butuh kredensial Google dev.
+- JWKS Google di-cache in-memory 15 menit; multi-instance masing-masing fetch sendiri (aman, state tidak dibagi).
+
+---
+
 ## A.13 Guest Order Limit (18 Agu 2026) — FITUR AKTIF, BUKAN TECH DEBT
 
 Fitur "satu order per guest" aktif: identitas = `GuestSession` (cookie

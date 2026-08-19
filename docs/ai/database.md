@@ -42,7 +42,11 @@ Aturan penting (dokumentasikan sebagai pola wajib):
 Akun pengguna. Punya `Role` (`user` | `operator` | `admin`).
 - Relasi: `has many` ChatSession, Booking, AuthSession.
 - Email `uniqueIndex`. Password bcrypt (tidak diserialisasi).
+- **`GoogleSub *string`** (Google OAuth, 19 Agu 2026): kolom `google_sub` nullable, menyimpan claim `sub` Google (immutable) untuk akun yang ditautkan via "Continue with Google". Unique via **partial index** `idx_users_google_sub ... WHERE google_sub IS NOT NULL` (dibuat via raw DDL `migrateGoogleOAuth()`, bukan tag GORM). NULL untuk akun email/password murni. `json:"-"` (tidak diekspos API).
 - User "Guest Traveler" (`guest@vero.local`) dibuat via `FirstOrCreateUser` — hanya dipakai untuk memenuhi `bookings.user_id NOT NULL` saat order tamu dibuat. ChatSession tamu ber-`UserID=NULL` (bukan user ini).
+
+### OAuthState ([models.go](../../backend/internal/models/models.go))
+State CSRF single-use untuk Google OAuth (19 Agu 2026). Hanya **hash SHA-256** dari `state` yang disimpan (`StateHash`, uniqueIndex) — raw state tidak pernah tersimpan. `Nonce` mengikat id_token Google ke flow ini. `ReturnTo` menyimpan path post-login yang sudah divalidasi (allowlist, disimpan server-side). `ExpiresAt` (TTL 10 mnt) + `ConsumedAt` (nullable). Single-use ditegakkan atomik oleh `Repository.ConsumeOAuthState` (`UPDATE ... WHERE state_hash=? AND consumed_at IS NULL AND expires_at>now()` → `RowsAffected==1`, pola sama dengan `RotateSession` BUG-1). `DeleteExpiredOAuthStates` untuk housekeeping.
 
 ### GuestSession ([models.go](../../backend/internal/models/models.go))
 Identitas tamu server-side untuk kebijakan "satu order per guest" (fitur
@@ -115,7 +119,7 @@ erDiagram
 
 ## Migrasi
 
-`Database.AutoMigrate()` ([database.go](../../backend/internal/database/database.go)) dipanggil di startup (`main.go`). Mendaftarkan 11 model secara berurutan: User, AuthSession, GuestSession, ChatSession, ChatMessage, Trip, Itinerary, Booking, Payment, AILog, ToolCall. Kolom baru untuk guest order limit (`bookings.guest_session_id`, `bookings.idempotency_key_hash`, `chat_sessions.guest_session_id`) juga ditambah AutoMigrate; SQL versioned yang setara ada di `backend/migrations/20260818_guest_order_limit.sql` (additive, idempotent — termasuk partial unique index untuk `idempotency_key_hash`).
+`Database.AutoMigrate()` ([database.go](../../backend/internal/database/database.go)) dipanggil di startup (`main.go`). Mendaftarkan 12 model secara berurutan: User, AuthSession, **OAuthState** (Google OAuth, 19 Agu 2026), GuestSession, ChatSession, ChatMessage, Trip, Itinerary, Booking, Payment, AILog, ToolCall. Kolom baru untuk guest order limit (`bookings.guest_session_id`, `bookings.idempotency_key_hash`, `chat_sessions.guest_session_id`) juga ditambah AutoMigrate; SQL versioned yang setara ada di `backend/migrations/20260818_guest_order_limit.sql` (additive, idempotent — termasuk partial unique index untuk `idempotency_key_hash`).
 
 Setelah AutoMigrate, `MigrateGuestChatSessions()` menormalisasi session lama yang masih menunjuk `guest@vero.local` menjadi `UserID=NULL` dan mengisi expiry legacy dari timestamp aktivitas.
 
@@ -148,6 +152,7 @@ File (dipecah per-domain, SEC-25; satu tipe `*Repository`):
 - [log_repository.go](../../backend/internal/repositories/log_repository.go) — AILog & ToolCall.
 - [analytics_repository.go](../../backend/internal/repositories/analytics_repository.go) — query agregat dashboard (SEC-27).
 - [auth_sessions.go](../../backend/internal/repositories/auth_sessions.go) — operasi AuthSession (refresh token).
+- [oauth_repository.go](../../backend/internal/repositories/oauth_repository.go) — Google OAuth (19 Agu 2026): `CreateOAuthState`, `ConsumeOAuthState` (atomik single-use), `DeleteExpiredOAuthStates`, `FindUserByGoogleSub`, `LinkUserGoogleSub`. Interface `OAuthRepository` di `interfaces.go` (dengan compile-time assertion).
 
 
 ### Repository penting

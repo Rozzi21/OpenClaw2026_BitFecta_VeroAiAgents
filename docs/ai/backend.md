@@ -13,11 +13,11 @@ Dokumen ini menjelaskan lapisan backend Go: service layer, logika bisnis inti, m
 | `backend/internal/ai/ai_client.go` | Klien AI OpenAI-compatible + fallback lokal |
 | `backend/internal/mcp/tools.go` | Katalog definisi tool MCP |
 | `backend/internal/events/bus.go` | Event bus in-memory untuk SSE |
-| `backend/internal/auth/` | JWTService, cookie refresh, audit log |
+| `backend/internal/auth/` | JWTService, cookie refresh, audit log, Google OIDC client (`google.go`) |
 
 ## Service Layer
 
-Service di-wiring di `services.New()` (`services.go`). Container `Services` berisi: `Auth`, `AI`, `MCP`, `Trips`, `Bookings`, `Payments`, `Logs`, `Analytics`.
+Service di-wiring di `services.New()` (`services.go`). Container `Services` berisi: `Auth`, `Google`, `AI`, `MCP`, `Trips`, `Bookings`, `Payments`, `Logs`, `Analytics`, `Guests`.
 
 Sejak refactor 25 Jun 2026, kode dipecah **per-domain dalam satu package `services`** (bukan lagi satu file monolitik). API publik tidak berubah:
 
@@ -25,6 +25,7 @@ Sejak refactor 25 Jun 2026, kode dipecah **per-domain dalam satu package `servic
 |---|---|
 | `services.go` | `Services` struct, `New()`, `ChatContext`, `AuthRequestMeta`, `AuthIssueResult`, error vars |
 | `auth_service.go` | `AuthService` (Register, CreateStaff, Login, Refresh, Logout, Me, legacy booking GuestUser, issueSession) |
+| `google_oauth_service.go` | `GoogleOAuthService` (Google OAuth, 19 Agu 2026): `StartLogin` (state+nonce DB-backed), `Callback` (state atomik → tukar code → verifikasi id_token → resolve/link/create user → `AuthService.issueSession`), `resolveUser` (account linking), `sanitizeReturnTo` (open-redirect guard), helper `randomURLToken`/`hashOAuthState` |
 | `ai_service.go` | `AIService` (Chat via `ChatContext`, `generateWithToolLoop` — orkestrasi round LLM; blok single tool-call diekstrak ke helper `executeToolCall` + `toolResultMessage` (SEC-30), katalog & rekomendasi paket, memory summary, expiry cleanup; **streaming variant `ChatStream`/`generateWithToolLoopStream`/`finalizeChat` (PERF-1, 3 Agu 2026)** — final text round di-stream via `GenerateStream`, post-LLM logic shared via `finalizeChat` agar tak drift antar path; **PERF-4 (11 Agu 2026)** — `generateWithToolLoop`/`generateWithToolLoopStream`/`buildMessages` terima `session models.ChatSession` dari caller, eliminasi `FindChatSession` redundan di `buildMessages` hemat 1 DB round-trip per request; **PERF-5 (11 Agu 2026)** — pre-LLM writes (`UpdateChatSessionActivity` + `AddChatMessage` user) dijalankan concurrent via `errgroup` di `prepareChatPreLLM`, hemat ~20-40ms di critical path sebelum LLM dipanggil) |
 
 | `mcp_service.go` | `MCPService` (`Execute`, `executeSearchTrips`, `executeSelectPackage`, `executeCollectOrderDetail`, `executeCreateBooking`, `executeGetTripDetail`, `executeCalculateTripPrice`, `executeCheckTripAvailability`, `resolveAITrip`, `sanitizeStringSlice`, `mock`, `persistAuditSync`, `clonePayload`) + `ToolResult` |
@@ -61,6 +62,17 @@ Poin penting:
 - `Refresh()` mengimplementasikan **rotasi token atomik** (sejak BUG-1, 27 Jul 2026): `RotateSession()` me-revoke sesi lama dalam satu `UPDATE ... WHERE token_jti=? AND revoked_at IS NULL AND expires_at > now()`; hanya request pemenang (`RowsAffected==1`) yang menerbitkan token baru, sehingga concurrent refresh (dua tab auto-refresh) tidak menghasilkan sesi ganda. Yang kalah race ditolak tanpa eskalasi — **reuse detection** hanya memicu `RevokeAllActiveSessionsByUser()` + log `refresh_token_reuse_detected` bila sesi di-revoke LEBIH LAMA dari `refreshRotationConcurrentWindow` (1 menit); revokasi dalam window dianggap race sah (bukan pencurian).
 - `GuestUser()` membuat/menemukan user "Guest Traveler" (`guest@vero.local`) via `FirstOrCreateUser` untuk guest chat.
 - Semua aksi auth mencatat audit via `auth.LogSecurity()`.
+
+### GoogleOAuthService (19 Agu 2026)
+
+`google_oauth_service.go` — "Continue with Google" sebagai provider tambahan. **Tidak mengganti auth yang ada**; hasil akhirnya sesi Vero normal via `AuthService.issueSession` (dipanggil internal karena satu package). Alur:
+
+1. `StartLogin(ctx, returnTo)` — generate `state`+`nonce` (CSPRNG 32 byte), simpan hanya **SHA-256 hash** state ke `oauth_states` (TTL 10 mnt), validasi `returnTo` via `sanitizeReturnTo` (open-redirect guard: hanya path `/...`, tolak `//`/CRLF). Balas URL consent Google (`auth.NewGoogleClient(...).AuthCodeURL`).
+2. `Callback(ctx, code, state, meta)` — `ConsumeOAuthState` atomik (single-use, pola `RotateSession` BUG-1) → `GoogleClient.Exchange` (tukar code + verifikasi id_token: signature JWKS RS256, iss/aud/exp, **nonce** binding) → `email_verified` wajib true → `resolveUser` → `issueSession` → audit `login_success` (provider=google).
+3. `resolveUser` (account linking): (a) `FindUserByGoogleSub` → login; (b) `FindUserByEmail` (verified) → `LinkUserGoogleSub` (single-column Update, DB-2) + audit `google_account_linked`; (c) tidak ada → buat `RoleUser` baru dgn password bcrypt acak CSPRNG (pola SEC-24) + audit `google_account_created`. Race create (unique constraint) → fallback find by sub/email.
+4. Handler `google_auth_handlers.go` (redirect-based, bukan envelope JSON): set refresh cookie pada 302 + redirect ke FE dgn access token di **URL fragment**. Claim order guest direplikasi seperti login/register.
+
+`internal/auth/google.go` — `GoogleClient` OIDC: `AuthCodeURL`, `Exchange`, `verifyIDToken`, JWKS cache in-memory 15 mnt + refetch saat `kid` tak dikenal (key rotation). Sentinel errors `ErrGoogle*` (SEC-28). Feature-flag `GOOGLE_OAUTH_ENABLED` (default false) — endpoint 404 bila off. Detail + keputusan: `docs/GOOGLE_OAUTH_PLAN.md`; batasan: `known-issues.md` A.14.
 
 ### AIService - Inti Produk
 

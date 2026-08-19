@@ -103,6 +103,18 @@ Legenda: 🔓 publik · 🔒 butuh access token · 👮 butuh role operator/admi
 | POST | `/refresh` | 🔓 (cookie) | Rotasi refresh -> access token baru |
 | POST | `/logout` | 🔓 (cookie) | Revoke session + hapus cookie |
 | GET | `/me` | 🔒 | Profil user saat ini |
+| GET | `/google/login?return_to=<path>` | 🔓 | **Google OAuth (19 Agu 2026).** Bukan JSON — 302 redirect ke Google consent screen. State+nonce single-use disimpan DB (hash SHA-256). 404 bila `GOOGLE_OAUTH_ENABLED=false` |
+| GET | `/google/callback?code&state` | 🔓 | **Google OAuth.** Verifikasi state (atomik) + tukar code + verifikasi id_token (JWKS, iss/aud/exp/nonce) + find/link/create user → sesi Vero normal → 302 ke FE (`#access_token=...` fragment + cookie refresh HttpOnly). 404 bila disabled |
+
+### Google OAuth ("Continue with Google", 19 Agu 2026)
+
+Provider tambahan; **bukan** envelope JSON — kedua endpoint di atas adalah full-page navigation (302 redirect). Hasil akhir adalah sesi Vero NORMAL (memakai `AuthService.issueSession` yang sama): access JWT aud `access` + cookie refresh HttpOnly + baris `auth_sessions`, sehingga rotasi/reuse-detection/logout/revoke identik dengan login password.
+
+- `return_to` divalidasi allowlist (hanya path relatif `/...`, bukan `//`) → anti open-redirect; disimpan server-side di row state, bukan dipercaya dari callback.
+- Account linking: 1) `google_sub` match → login; 2) email `email_verified=true` match → link `google_sub` (password lama tetap jalan); 3) tidak ada → buat `RoleUser` baru (password bcrypt acak). Role tidak pernah dari luar (SEC-1).
+- Callback me-claim order guest ke akun (seperti login/register password).
+- Access token dikirim ke FE lewat **URL fragment** (`#access_token=`) agar tidak masuk access log / tidak dikirim balik sebagai query param. FE membaca fragment via `OAuthReceiver.tsx` → `setCustomerAccessToken`.
+- Rencana + keputusan keamanan lengkap: [../GOOGLE_OAUTH_PLAN.md](../GOOGLE_OAUTH_PLAN.md). Batasan/feature-flag: `known-issues.md` A.14.
 
 > Grup `/auth` memakai rate limit per-IP lebih ketat (`AuthRateLimit`, ~5 req/detik) untuk meredam brute force (SEC-7).
 

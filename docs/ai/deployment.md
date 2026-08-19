@@ -70,6 +70,15 @@ Sumber kebenaran: `backend/internal/config/config.go` (fungsi `Load()`), contoh 
 | `DOKU_SECRET` | _(kosong)_ | Secret verifikasi signature webhook HMAC-SHA256. **Wajib di production hanya saat `PAYMENTS_ENABLED=true`** — `Config.Validate()` menolak start bila kosong saat DOKU diaktifkan (SEC-4) |
 | `N8N_WEBHOOK` | _(kosong)_ | URL webhook N8N untuk otomasi pasca-pembayaran |
 | `CORS_ALLOWED_ORIGINS` | _(localhost dev)_ | Daftar origin diizinkan CORS, dipisah koma (mis. `https://app.vero.com,https://admin.vero.com`). Fallback ke `http://localhost:3000,:3001,:5173` bila kosong (SEC-8) |
+
+### Google OAuth ("Continue with Google", 19 Agu 2026)
+| Variabel | Default | Keterangan |
+|---|---|---|
+| `GOOGLE_OAUTH_ENABLED` | `false` | Feature flag. Endpoint `/auth/google/*` membalas 404 saat false |
+| `GOOGLE_CLIENT_ID` | _(kosong)_ | Client ID OAuth dari Google Cloud Console |
+| `GOOGLE_CLIENT_SECRET` | _(kosong)_ | Secret server. **Wajib di production saat `GOOGLE_OAUTH_ENABLED=true`** — `Config.Validate()` menolak start bila kosong (pola SEC-4) |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:8080/api/v1/auth/google/callback` | Harus terdaftar PERSIS di Google Cloud Console (Authorized redirect URIs). Production: tolak start bila masih localhost saat enabled |
+| `GOOGLE_OAUTH_FRONTEND_URL` | `http://localhost:3000` | Origin FE untuk redirect final + allowlist `return_to`. Jangan ambil dari request (open-redirect guard). Production: tolak localhost saat enabled |
 | `TRUSTED_PROXIES` | _(kosong)_ | Daftar CIDR reverse proxy tepercaya untuk resolusi IP klien via `X-Forwarded-For`. Kosong berarti tidak mempercayai proxy sama sekali (default dev). Wajib diisi CIDR load balancer/nginx di production agar rate limit per-IP tidak di-bypass (SEC-14) |
 
 
