@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -29,6 +30,9 @@ type GoogleOAuthService struct {
 	issuer *AuthService
 	google *auth.GoogleClient
 	cfg    config.Config
+	// enabled reports whether Google OAuth is configured (endpoint returns 404
+	// when false). Mirrored from cfg.GoogleOAuthEnabled for readability.
+	enabled bool
 }
 
 // GoogleOAuthRepository is the narrow persistence contract (SEC-27): OAuth
@@ -60,14 +64,32 @@ var (
 	ErrGoogleOAuthStateExpired = errors.New("google oauth state expired")
 )
 
+// NewGoogleOAuthService builds the service. The Google OIDC provider is only
+// resolved (network discovery) when the feature is enabled; when disabled the
+// service stays nil-safe and the handlers answer 404 without any network call.
 func NewGoogleOAuthService(cfg config.Config, repo GoogleOAuthRepository, issuer *AuthService) *GoogleOAuthService {
-	return &GoogleOAuthService{
-		repo:   repo,
-		issuer: issuer,
-		google: auth.NewGoogleClient(cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURI),
-		cfg:    cfg,
+	s := &GoogleOAuthService{repo: repo, issuer: issuer, cfg: cfg, enabled: cfg.GoogleOAuthEnabled}
+	if !cfg.GoogleOAuthEnabled {
+		return s
 	}
+	// Discovery hits Google's OIDC document once; use a bounded detached ctx
+	// (startup wiring, not a request path — SEC-26).
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client, err := auth.NewGoogleClient(ctx, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRedirectURI)
+	if err != nil {
+		// Fail closed: log and keep the service disabled rather than panic at
+		// startup or run with a half-initialised verifier.
+		log.Printf("[google-oauth] provider init failed, Google login disabled: %v", err)
+		s.enabled = false
+		return s
+	}
+	s.google = client
+	return s
 }
+
+// Enabled reports whether Google OAuth is active (drives the 404 guard).
+func (s *GoogleOAuthService) Enabled() bool { return s.enabled && s.google != nil }
 
 // StartLogin generates a single-use state + nonce, persists only the state
 // HASH, and returns the Google consent URL. returnTo is validated against the

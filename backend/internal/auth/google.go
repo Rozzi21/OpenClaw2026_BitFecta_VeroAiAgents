@@ -2,40 +2,33 @@ package auth
 
 import (
 	"context"
-	"crypto/rsa"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"math/big"
-	"net/http"
-	"net/url"
 	"strings"
-	"sync"
-	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
 )
 
-// Google OIDC client (18 Agu 2026). Implements the server side of the
-// Authorization Code flow: building the consent redirect URL, exchanging the
-// authorization code, and verifying the returned id_token against Google's
-// JWKS. No third-party OAuth dependency — everything runs over the stdlib
-// HTTP client with explicit timeouts and request contexts (SEC-26).
+// Google OIDC client (19 Agu 2026). Server side of the Authorization Code flow
+// built on Google-endorsed libraries — NO hand-rolled JWT/JWKS/cryptography:
+//
+//   - golang.org/x/oauth2      → the Authorization Code exchange (token endpoint).
+//   - github.com/coreos/go-oidc → OpenID Connect id_token verification. The
+//     Verifier validates the RS256 signature against Google's JWKS (fetched from
+//     the OIDC discovery document, cached + rotated by the library), the issuer,
+//     the audience (our client ID), and expiry.
+//
+// The provider is pinned to Google's issuer, so arbitrary OIDC providers are
+// rejected — only Google-issued id_tokens are accepted.
 
-const (
-	// GoogleAuthURL is the OAuth 2.0 authorization endpoint.
-	GoogleAuthURL = "https://accounts.google.com/o/oauth2/v2/auth"
-	// googleTokenURL exchanges an authorization code for tokens.
-	googleTokenURL = "https://oauth2.googleapis.com/token"
-	// googleJWKSURL publishes Google's signing keys for id_token verification.
-	googleJWKSURL = "https://www.googleapis.com/oauth2/v3/certs"
-	// googleScope is the minimal scope set: identity + email + display name.
-	googleScope = "openid email profile"
-	// jwksCacheTTL bounds how long a fetched JWKS is trusted before refetch.
-	jwksCacheTTL = 15 * time.Minute
-)
+// googleIssuer is the canonical Google OIDC issuer. go-oidc resolves the
+// discovery document (https://accounts.google.com/.well-known/openid-configuration)
+// from it, which pins the JWKS URI and token endpoint to Google's.
+const googleIssuer = "https://accounts.google.com"
+
+// googleScope is the minimal OIDC scope set: identity + email + display name.
+var googleScopes = []string{oidc.ScopeOpenID, "email", "profile"}
 
 // Sentinel errors surfaced by the Google flow. Callers match with errors.Is
 // (SEC-28) — never string-compare.
@@ -45,9 +38,8 @@ var (
 	ErrGoogleEmailUnverified  = errors.New("google email not verified")
 	ErrGoogleNonceMismatch    = errors.New("google id_token nonce mismatch")
 	ErrGoogleMissingIDToken   = errors.New("google token response missing id_token")
-	ErrGoogleJWKSUnavailable  = errors.New("google jwks unavailable")
-	ErrGoogleUnknownKeyID     = errors.New("google id_token signed with unknown key id")
 	ErrGoogleUnexpectedIssuer = errors.New("google id_token unexpected issuer")
+	ErrGoogleProviderInit     = errors.New("google oidc provider init failed")
 )
 
 // GoogleIdentity is the verified identity extracted from a Google id_token.
@@ -58,227 +50,137 @@ type GoogleIdentity struct {
 	Name          string
 }
 
-// GoogleClient talks to Google's OAuth/OIDC endpoints.
+// GoogleClient wraps the OIDC provider + verifier + oauth2 config.
 type GoogleClient struct {
-	clientID     string
-	clientSecret string
-	redirectURI  string
-	http         *http.Client
-
-	mu        sync.RWMutex
-	jwks      map[string]*rsa.PublicKey // kid -> public key
-	jwksFetch time.Time
+	oauthConfig oauth2.Config
+	verifier    *oidc.IDTokenVerifier
 }
 
-func NewGoogleClient(clientID, clientSecret, redirectURI string) *GoogleClient {
-	return &GoogleClient{
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		redirectURI:  redirectURI,
-		http:         &http.Client{Timeout: 10 * time.Second},
-		jwks:         map[string]*rsa.PublicKey{},
+// NewGoogleClient resolves Google's OIDC provider (discovery) and prepares an
+// id_token verifier pinned to Google's issuer and this client's ID.
+func NewGoogleClient(ctx context.Context, clientID, clientSecret, redirectURI string) (*GoogleClient, error) {
+	provider, err := oidc.NewProvider(ctx, googleIssuer)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrGoogleProviderInit, err)
 	}
+	return newGoogleClientWithProvider(provider, clientID, clientSecret, redirectURI), nil
+}
+
+// newGoogleClientWithProvider builds the client from an already-resolved
+// provider (split out so tests can inject a fake provider).
+func newGoogleClientWithProvider(provider *oidc.Provider, clientID, clientSecret, redirectURI string) *GoogleClient {
+	oauthConfig := oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  redirectURI,
+		Endpoint:     provider.Endpoint(),
+		Scopes:       googleScopes,
+	}
+	// Verify signature (JWKS from discovery), issuer, audience=clientID, expiry.
+	verifier := provider.Verifier(&oidc.Config{ClientID: clientID})
+	return &GoogleClient{oauthConfig: oauthConfig, verifier: verifier}
 }
 
 // AuthCodeURL builds the Google consent-screen redirect. `state` (CSRF) and
 // `nonce` (id_token binding) are generated by the caller and persisted
 // server-side; both are echoed back and re-validated on callback.
 func (g *GoogleClient) AuthCodeURL(state, nonce string) string {
-	q := url.Values{}
-	q.Set("client_id", g.clientID)
-	q.Set("redirect_uri", g.redirectURI)
-	q.Set("response_type", "code")
-	q.Set("scope", googleScope)
-	q.Set("state", state)
-	q.Set("nonce", nonce)
-	// Force the account chooser so shared-device users can switch accounts.
-	q.Set("prompt", "select_account")
-	return GoogleAuthURL + "?" + q.Encode()
+	// AccessType online is sufficient (no offline/refresh access needed).
+	// prompt=select_account lets shared-device users switch accounts.
+	return g.oauthConfig.AuthCodeURL(
+		state,
+		oauth2.AccessTypeOnline,
+		oauth2.SetAuthURLParam("nonce", nonce),
+		oauth2.SetAuthURLParam("prompt", "select_account"),
+	)
 }
 
-// googleTokenResponse is the subset of the token endpoint response we use.
-type googleTokenResponse struct {
-	IDToken string `json:"id_token"`
-}
-
-// googleIDClaims mirrors the Google id_token claims we validate/extract.
-type googleIDClaims struct {
+// googleClaims mirrors the Google id_token claims we extract after the
+// library has already validated signature/iss/aud/exp.
+type googleClaims struct {
 	Email         string `json:"email"`
 	EmailVerified bool   `json:"email_verified"`
 	Name          string `json:"name"`
 	Nonce         string `json:"nonce"`
-	jwt.RegisteredClaims
 }
 
-// Exchange trades an authorization code for tokens, then verifies the
-// id_token (signature via JWKS, iss/aud/exp, and the flow nonce).
+// Exchange trades an authorization code for tokens via x/oauth2, then verifies
+// the id_token with go-oidc (signature/issuer/audience/expiry) and enforces
+// the flow nonce + email_verified.
 func (g *GoogleClient) Exchange(ctx context.Context, code, expectedNonce string) (GoogleIdentity, error) {
-	form := url.Values{}
-	form.Set("code", code)
-	form.Set("client_id", g.clientID)
-	form.Set("client_secret", g.clientSecret)
-	form.Set("redirect_uri", g.redirectURI)
-	form.Set("grant_type", "authorization_code")
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, googleTokenURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return GoogleIdentity{}, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	res, err := g.http.Do(req)
+	token, err := g.oauthConfig.Exchange(ctx, code)
 	if err != nil {
 		return GoogleIdentity{}, fmt.Errorf("%w: %v", ErrGoogleExchangeFailed, err)
 	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	if err != nil {
-		return GoogleIdentity{}, fmt.Errorf("%w: %v", ErrGoogleExchangeFailed, err)
-	}
-	if res.StatusCode != http.StatusOK {
-		// Do not propagate Google's error body (may contain client context);
-		// log servers see it via the caller, clients get a generic failure.
-		return GoogleIdentity{}, fmt.Errorf("%w: status %d", ErrGoogleExchangeFailed, res.StatusCode)
-	}
-
-	var tokenRes googleTokenResponse
-	if err := json.Unmarshal(body, &tokenRes); err != nil {
-		return GoogleIdentity{}, fmt.Errorf("%w: %v", ErrGoogleExchangeFailed, err)
-	}
-	if tokenRes.IDToken == "" {
+	rawIDToken, ok := token.Extra("id_token").(string)
+	if !ok || rawIDToken == "" {
 		return GoogleIdentity{}, ErrGoogleMissingIDToken
 	}
-
-	return g.verifyIDToken(ctx, tokenRes.IDToken, expectedNonce)
+	return g.verifyIDToken(ctx, rawIDToken, expectedNonce)
 }
 
-// verifyIDToken parses and fully validates a Google id_token.
-func (g *GoogleClient) verifyIDToken(ctx context.Context, idToken, expectedNonce string) (GoogleIdentity, error) {
-	claims := &googleIDClaims{}
-	keyfunc := func(token *jwt.Token) (interface{}, error) {
-		// Restrict to RS256 — Google always signs id_tokens with RS256.
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok || token.Method.Alg() != jwt.SigningMethodRS256.Alg() {
-			return nil, ErrGoogleInvalidIDToken
-		}
-		kid, _ := token.Header["kid"].(string)
-		if kid == "" {
-			return nil, ErrGoogleUnknownKeyID
-		}
-		key, err := g.publicKey(ctx, kid)
-		if err != nil {
-			return nil, err
-		}
-		return key, nil
+// verifyIDToken verifies a Google id_token via go-oidc (RS256 signature from
+// Google's JWKS, issuer, audience=clientID, expiry all enforced by the
+// Verifier), then applies the flow-specific checks (nonce, claims present,
+// email_verified).
+func (g *GoogleClient) verifyIDToken(ctx context.Context, rawIDToken, expectedNonce string) (GoogleIdentity, error) {
+	if g.verifier == nil {
+		// Offline/test client (NewGoogleClientOfflineForTest) has no verifier.
+		return GoogleIdentity{}, ErrGoogleInvalidIDToken
 	}
-
-	token, err := jwt.ParseWithClaims(idToken, claims, keyfunc,
-		jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}),
-		jwt.WithAudience(g.clientID),
-		jwt.WithExpirationRequired(),
-	)
+	idToken, err := g.verifier.Verify(ctx, rawIDToken)
 	if err != nil {
 		return GoogleIdentity{}, fmt.Errorf("%w: %v", ErrGoogleInvalidIDToken, err)
 	}
-	if !token.Valid {
-		return GoogleIdentity{}, ErrGoogleInvalidIDToken
-	}
-	// Issuer must be Google (both forms accepted per OIDC discovery doc).
-	if claims.Issuer != "https://accounts.google.com" && claims.Issuer != "accounts.google.com" {
+	// Defense-in-depth: the verifier already pins the issuer to Google's
+	// discovery issuer, but assert it explicitly so only Google is accepted.
+	if idToken.Issuer != "https://accounts.google.com" && idToken.Issuer != "accounts.google.com" {
 		return GoogleIdentity{}, ErrGoogleUnexpectedIssuer
+	}
+
+	var claims googleClaims
+	if err := idToken.Claims(&claims); err != nil {
+		return GoogleIdentity{}, fmt.Errorf("%w: %v", ErrGoogleInvalidIDToken, err)
 	}
 	// Nonce binds the id_token to THIS flow's state row (anti replay/mix-up).
 	if claims.Nonce == "" || claims.Nonce != expectedNonce {
 		return GoogleIdentity{}, ErrGoogleNonceMismatch
 	}
-	if claims.Subject == "" || claims.Email == "" {
+	if idToken.Subject == "" || claims.Email == "" {
 		return GoogleIdentity{}, ErrGoogleInvalidIDToken
 	}
 	if !claims.EmailVerified {
 		return GoogleIdentity{}, ErrGoogleEmailUnverified
 	}
 	return GoogleIdentity{
-		Subject:       claims.Subject,
+		Subject:       idToken.Subject,
 		Email:         strings.ToLower(claims.Email),
 		EmailVerified: claims.EmailVerified,
 		Name:          claims.Name,
 	}, nil
 }
 
-// publicKey returns the RSA key for a kid, using the cached JWKS and
-// refetching once when the kid is unknown (key rotation).
-func (g *GoogleClient) publicKey(ctx context.Context, kid string) (*rsa.PublicKey, error) {
-	g.mu.RLock()
-	key, ok := g.jwks[kid]
-	stale := time.Since(g.jwksFetch) > jwksCacheTTL
-	g.mu.RUnlock()
-	if ok && !stale {
-		return key, nil
+// NewGoogleClientOfflineForTest builds a GoogleClient WITHOUT network
+// discovery, for unit tests that exercise non-network paths (state persistence,
+// open-redirect guard). It uses Google's well-known endpoints statically so no
+// HTTP call is made; the verifier is nil, so any attempt to actually verify a
+// token will fail — tests must not reach token exchange. Production code must
+// use NewGoogleClient (real discovery + JWKS verification).
+func NewGoogleClientOfflineForTest(clientID, clientSecret, redirectURI string) (*GoogleClient, error) {
+	if clientID == "" {
+		return nil, ErrGoogleProviderInit
 	}
-	if err := g.refreshJWKS(ctx); err != nil {
-		return nil, err
-	}
-	g.mu.RLock()
-	key, ok = g.jwks[kid]
-	g.mu.RUnlock()
-	if !ok {
-		return nil, ErrGoogleUnknownKeyID
-	}
-	return key, nil
-}
-
-// googleJWKS is the JWKS document shape (RSA keys only).
-type googleJWKS struct {
-	Keys []struct {
-		Kty string `json:"kty"`
-		Kid string `json:"kid"`
-		N   string `json:"n"`
-		E   string `json:"e"`
-	} `json:"keys"`
-}
-
-func (g *GoogleClient) refreshJWKS(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, googleJWKSURL, nil)
-	if err != nil {
-		return err
-	}
-	res, err := g.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrGoogleJWKSUnavailable, err)
-	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrGoogleJWKSUnavailable, err)
-	}
-	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("%w: status %d", ErrGoogleJWKSUnavailable, res.StatusCode)
-	}
-	var doc googleJWKS
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return fmt.Errorf("%w: %v", ErrGoogleJWKSUnavailable, err)
-	}
-	keys := make(map[string]*rsa.PublicKey, len(doc.Keys))
-	for _, k := range doc.Keys {
-		if k.Kty != "RSA" || k.N == "" || k.E == "" {
-			continue
-		}
-		nBytes, err := base64.RawURLEncoding.DecodeString(k.N)
-		if err != nil {
-			continue
-		}
-		eBytes, err := base64.RawURLEncoding.DecodeString(k.E)
-		if err != nil {
-			continue
-		}
-		exponent := 0
-		for _, b := range eBytes {
-			exponent = exponent<<8 + int(b)
-		}
-		keys[k.Kid] = &rsa.PublicKey{N: new(big.Int).SetBytes(nBytes), E: exponent}
-	}
-	g.mu.Lock()
-	g.jwks = keys
-	g.jwksFetch = time.Now()
-	g.mu.Unlock()
-	return nil
+	return &GoogleClient{
+		oauthConfig: oauth2.Config{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			RedirectURL:  redirectURI,
+			Endpoint: oauth2.Endpoint{
+				AuthURL:  "https://accounts.google.com/o/oauth2/v2/auth",
+				TokenURL: "https://oauth2.googleapis.com/token",
+			},
+			Scopes: googleScopes,
+		},
+		verifier: nil, // intentionally nil: no id_token verification offline
+	}, nil
 }

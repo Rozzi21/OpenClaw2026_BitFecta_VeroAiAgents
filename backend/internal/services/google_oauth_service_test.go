@@ -136,7 +136,7 @@ func TestSanitizeReturnTo(t *testing.T) {
 
 func TestStartLogin_PersistsHashedStateOnly(t *testing.T) {
 	repo := newMockOAuthRepo()
-	svc := &GoogleOAuthService{repo: repo, google: auth.NewGoogleClient("cid", "secret", "http://localhost/cb"), cfg: testCfg()}
+	svc := &GoogleOAuthService{repo: repo, google: newTestGoogleClient(t), cfg: testCfg()}
 
 	res, err := svc.StartLogin(context.Background(), "/trip/abc")
 	if err != nil {
@@ -166,7 +166,7 @@ func TestStartLogin_PersistsHashedStateOnly(t *testing.T) {
 
 func TestCallback_RejectsUnknownOrReplayedState(t *testing.T) {
 	repo := newMockOAuthRepo()
-	svc := &GoogleOAuthService{repo: repo, google: auth.NewGoogleClient("cid", "secret", "http://localhost/cb"), cfg: testCfg()}
+	svc := &GoogleOAuthService{repo: repo, google: newTestGoogleClient(t), cfg: testCfg()}
 
 	// Unknown state.
 	if _, err := svc.Callback(context.Background(), "code", "nope", AuthRequestMeta{}); !errors.Is(err, ErrGoogleOAuthStateInvalid) {
@@ -274,3 +274,17 @@ func TestResolveUser_CreateRaceFallsBackToExisting(t *testing.T) {
 }
 
 func testCfg() config.Config { return config.Config{} }
+
+// newTestGoogleClient returns a GoogleClient suitable for unit tests that never
+// touch the network. The tested paths (StartLogin state persistence, Callback
+// state rejection) never reach token exchange, so a client built from a nil
+// verifier is sufficient — AuthCodeURL only needs the oauth2 endpoint config.
+// The real provider/verifier are exercised only behind GOOGLE_OAUTH_ENABLED.
+func newTestGoogleClient(t *testing.T) *auth.GoogleClient {
+	t.Helper()
+	client, err := auth.NewGoogleClientOfflineForTest("cid", "secret", "http://localhost/cb")
+	if err != nil {
+		t.Fatalf("newTestGoogleClient: %v", err)
+	}
+	return client
+}

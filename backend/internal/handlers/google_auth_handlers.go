@@ -21,7 +21,7 @@ import (
 // usual HttpOnly cookie on the 302 response.
 
 func (h *Handler) GoogleLogin(c *gin.Context) {
-	if !h.Services.Config.GoogleOAuthEnabled {
+	if !h.Services.Google.Enabled() {
 		utils_NotFoundOAuth(c)
 		return
 	}
@@ -36,7 +36,7 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 
 func (h *Handler) GoogleCallback(c *gin.Context) {
 	cfg := h.Services.Config
-	if !cfg.GoogleOAuthEnabled {
+	if !h.Services.Google.Enabled() {
 		utils_NotFoundOAuth(c)
 		return
 	}

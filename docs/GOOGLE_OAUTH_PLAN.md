@@ -132,14 +132,14 @@ Tidak ada kolom dihapus/diubah; migrasi aman untuk data existing.
    `access_denied`) → redirect FE dengan `?auth_error=...`.
 2. `ConsumeOAuthState(state)` atomik → gagal (tidak ada/terpakai/expired) =
    400, audit `google_oauth_state_invalid`. Ini menutup replay + CSRF.
-3. Tukar code via HTTP POST (ctx request, timeout 10 dtk,
-   `http.NewRequestWithContext` + tutup body — pola SEC-26).
-4. Parse + verifikasi `id_token`:
-   - Signature RS256 terhadap JWKS Google (cache in-memory per `kid`, refresh
-     bila `kid` tak dikenal).
-   - `iss` ∈ {`https://accounts.google.com`, `accounts.google.com`}.
-   - `aud` == `GOOGLE_CLIENT_ID`. `exp` belum lewat.
-   - `nonce` == nonce dari state.
+3. Tukar code via **`golang.org/x/oauth2`** (`oauthConfig.Exchange`, ctx
+   request — pola SEC-26). Tidak ada HTTP form manual.
+4. Verifikasi `id_token` via **`github.com/coreos/go-oidc/v3`** — TANPA crypto
+   manual. `verifier.Verify` memvalidasi: signature RS256 (JWKS dari OIDC
+   discovery document, di-cache + dirotasi library), `iss` (pinned
+   `https://accounts.google.com` — provider OIDC arbitrary DITOLAK),
+   `aud` == `GOOGLE_CLIENT_ID`, `exp`. Di atas verifikasi library dicek:
+   `nonce` == nonce dari state, `sub`+`email` tidak kosong.
 5. `email_verified` harus `true` (claim Google). Tolak bila false.
 6. Resolve user (§7) → `issueSession` → `ClaimOrder` → set refresh cookie →
    302 ke FE (fragment berisi access token).
