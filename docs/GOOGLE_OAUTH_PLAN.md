@@ -120,19 +120,38 @@ Perubahan additive (AutoMigrate + SQL versioned idempoten, mengikuti pola
 
 Tidak ada kolom dihapus/diubah; migrasi aman untuk data existing.
 
-## 5. Strategi OAuth State
+## 5. Strategi OAuth State (CSRF protection)
 
-- `state` = 32 byte `crypto/rand`, base64url. Hanya **SHA-256 hash** yang
-  disimpan di DB (bocornya tabel tidak memberi state yang bisa dipakai).
-- DB-backed (bukan cookie): state tidak bisa dipalsukan client, single-use
-  enforceable, dan immune terhadap SameSite cookie quirks pada cross-site
-  redirect kembali dari Google.
-- TTL 10 menit (`GOOGLE_OAUTH_STATE_TTL_MINUTES` kalau perlu di-tune; default
-  konstan 10 menit di service).
-- `nonce` acak terpisah disimpan bareng state dan diverifikasi terhadap claim
-  `nonce` di id_token → anti token-replay / mix-up.
-- `return_to` disimpan di server (bukan query param callback) → path redirect
-  pasca-login tidak bisa diubah attacker; divalidasi allowlist (lihat §10).
+**Keputusan storage: tabel `oauth_states` server-side (DB), BUKAN global
+variable dan BUKAN cookie.** Alasan:
+
+- **Bukan global variable / in-memory map** — tidak survive restart, tidak
+  konsisten multi-instance, dan melanggar aturan "no global mutable state".
+  State disimpan di Postgres sehingga tahan restart dan siap multi-instance.
+- **Bukan cookie** — OAuth callback adalah cross-site redirect kembali dari
+  Google; cookie `SameSite=Strict`/`Lax` bisa tidak terkirim pada navigasi itu,
+  dan state di cookie bisa dibaca/dipalsukan sisi client. DB-backed membuat
+  state tak bisa dipalsukan client dan single-use enforceable atomik.
+
+Properti state (semua dikunci test):
+
+- **Unpredictable** — 32 byte dari `crypto/rand` (CSPRNG), base64url.
+  (`TestRandomURLToken_UnpredictableAndUnique`: 512 sampel, tak ada duplikat.)
+- **Short-lived** — TTL 10 menit (`oauthStateTTL`). (`TestCallback_RejectsExpiredState`.)
+- **Single-use** — dikonsumsi atomik oleh `ConsumeOAuthState`
+  (`UPDATE ... SET consumed_at=now() WHERE state_hash=? AND consumed_at IS NULL
+  AND expires_at>now()` → `RowsAffected==1`; pola `RotateSession` BUG-1).
+  (`TestCallback_RejectsUnknownOrReplayedState`.)
+- **Validated at callback** — `state` query dicocokkan ke hash tersimpan;
+  **invalid** (unknown), **expired**, dan **replayed** semuanya DITOLAK → 400
+  + audit `google_oauth_state_invalid`.
+- **Hash-only storage** — hanya SHA-256 `state_hash` yang disimpan; raw state
+  tidak pernah tersimpan, jadi kebocoran tabel tidak memberi state yang bisa
+  dipakai.
+- **nonce** acak terpisah (juga CSPRNG) disimpan bareng state dan diverifikasi
+  terhadap claim `nonce` id_token → anti token-replay / mix-up.
+- **return_to** disimpan di server (bukan query param callback) + divalidasi
+  allowlist → open-redirect tertutup (lihat §10).
 
 ## 6. Alur Callback (detail)
 

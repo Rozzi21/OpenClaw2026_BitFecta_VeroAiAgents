@@ -410,6 +410,42 @@ func TestResolveUser_ReloginBySubDoesNotDuplicate(t *testing.T) {
 	}
 }
 
+// TestCallback_RejectsExpiredState: a state past its TTL must be rejected even
+// if never consumed (short-lived requirement).
+func TestCallback_RejectsExpiredState(t *testing.T) {
+	repo := newMockOAuthRepo()
+	svc := &GoogleOAuthService{repo: repo, google: newTestGoogleClient(t), cfg: testCfg()}
+	state, _ := randomURLToken(32)
+	repo.states[hashOAuthState(state)] = &models.OAuthState{
+		StateHash: hashOAuthState(state),
+		Nonce:     "n",
+		ReturnTo:  "/",
+		ExpiresAt: time.Now().Add(-time.Minute), // already expired
+	}
+	if _, err := svc.Callback(context.Background(), "code", state, AuthRequestMeta{}); !errors.Is(err, ErrGoogleOAuthStateInvalid) {
+		t.Fatalf("expected expired state rejected, got %v", err)
+	}
+}
+
+// TestRandomURLToken_UnpredictableAndUnique: state tokens come from crypto/rand
+// (CSPRNG), are URL-safe, and never repeat across samples (unpredictable).
+func TestRandomURLToken_UnpredictableAndUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 512; i++ {
+		tok, err := randomURLToken(32)
+		if err != nil {
+			t.Fatalf("randomURLToken err: %v", err)
+		}
+		if len(tok) < 43 { // 32 bytes base64url → 43 chars min
+			t.Errorf("token too short (%d chars) — weak entropy", len(tok))
+		}
+		if seen[tok] {
+			t.Fatalf("duplicate state token generated — CSPRNG broken")
+		}
+		seen[tok] = true
+	}
+}
+
 func testCfg() config.Config { return config.Config{} }
 
 // newTestGoogleClient returns a GoogleClient suitable for unit tests that never
