@@ -73,7 +73,7 @@ func (m *mockOAuthRepo) FindUserByGoogleSub(_ context.Context, sub string) (mode
 	return models.User{}, gorm.ErrRecordNotFound
 }
 
-func (m *mockOAuthRepo) LinkUserGoogleSub(_ context.Context, userID string, sub string, _ string) error {
+func (m *mockOAuthRepo) LinkUserGoogleSub(_ context.Context, userID string, sub string, _ string, _ string) error {
 	m.linkedSub = sub
 	m.linkedUserID = userID
 	if id, err := uuid.Parse(userID); err == nil {
@@ -108,7 +108,7 @@ func (m *mockOAuthRepo) CreateUser(_ context.Context, u *models.User) error {
 
 // CreateUserWithGoogleIdentity mirrors the repo's atomic create(user + identity)
 // so resolveUser's signup path is exercised against the canonical sub mapping.
-func (m *mockOAuthRepo) CreateUserWithGoogleIdentity(_ context.Context, u *models.User, sub string, _ string) error {
+func (m *mockOAuthRepo) CreateUserWithGoogleIdentity(_ context.Context, u *models.User, sub string, _ string, _ string) error {
 	if m.createErr != nil {
 		return m.createErr
 	}
@@ -245,7 +245,7 @@ func TestResolveUser_LinkByVerifiedEmail(t *testing.T) {
 func TestResolveUser_CreateNew(t *testing.T) {
 	repo := newMockOAuthRepo()
 	svc := &GoogleOAuthService{repo: repo, cfg: testCfg()}
-	u, err := svc.resolveUser(context.Background(), auth.GoogleIdentity{Subject: "s3", Email: "c@x.com", Name: "Cee", EmailVerified: true}, AuthRequestMeta{})
+	u, err := svc.resolveUser(context.Background(), auth.GoogleIdentity{Subject: "s3", Email: "c@x.com", Name: "Cee", Picture: "https://lh3.google.com/p.jpg", EmailVerified: true}, AuthRequestMeta{})
 	if err != nil {
 		t.Fatalf("resolveUser err: %v", err)
 	}
@@ -263,6 +263,29 @@ func TestResolveUser_CreateNew(t *testing.T) {
 	}
 	if u.Name != "Cee" {
 		t.Errorf("name from Google claim = %q", u.Name)
+	}
+	if u.Email != "c@x.com" {
+		t.Errorf("email from Google claim = %q", u.Email)
+	}
+}
+
+// TestResolveUser_NeverPrivilegedRole guards SEC-1 on the OAuth path: a Google
+// identity can never mint an operator/admin account — role is hardcoded
+// server-side to RoleUser regardless of any claim content.
+func TestResolveUser_NeverPrivilegedRole(t *testing.T) {
+	for _, sub := range []string{"new-a", "new-b"} {
+		repo := newMockOAuthRepo()
+		svc := &GoogleOAuthService{repo: repo, cfg: testCfg()}
+		u, err := svc.resolveUser(context.Background(), auth.GoogleIdentity{Subject: sub, Email: sub + "@x.com", Name: "X", EmailVerified: true}, AuthRequestMeta{})
+		if err != nil {
+			t.Fatalf("resolveUser err: %v", err)
+		}
+		if u.Role == models.RoleAdmin || u.Role == models.RoleOperator {
+			t.Fatalf("OAuth must never create privileged role, got %q", u.Role)
+		}
+		if u.Role != models.RoleUser {
+			t.Errorf("expected RoleUser, got %q", u.Role)
+		}
 	}
 }
 

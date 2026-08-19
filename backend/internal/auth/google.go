@@ -48,6 +48,9 @@ type GoogleIdentity struct {
 	Email         string
 	EmailVerified bool
 	Name          string
+	// Picture is the Google profile photo URL (optional, may be empty). It is
+	// provider metadata, NOT an identity key — stored on the ExternalIdentity.
+	Picture string
 }
 
 // GoogleClient wraps the OIDC provider + verifier + oauth2 config.
@@ -101,6 +104,7 @@ type googleClaims struct {
 	Email         string `json:"email"`
 	EmailVerified bool   `json:"email_verified"`
 	Name          string `json:"name"`
+	Picture       string `json:"picture"`
 	Nonce         string `json:"nonce"`
 }
 
@@ -157,6 +161,7 @@ func (g *GoogleClient) verifyIDToken(ctx context.Context, rawIDToken, expectedNo
 		Email:         strings.ToLower(claims.Email),
 		EmailVerified: claims.EmailVerified,
 		Name:          claims.Name,
+		Picture:       claims.Picture,
 	}, nil
 }
 

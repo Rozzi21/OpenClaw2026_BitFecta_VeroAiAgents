@@ -179,8 +179,17 @@ Urutan resolusi user di callback (`resolveUser`):
    mirror `users.google_sub` dalam satu transaksi, lalu login. Password lama
    TETAP bisa dipakai (akun tidak dikunci ke satu provider).
 3. **Tidak ada match** → **create** user baru + ExternalIdentity atomik
-   (`CreateUserWithGoogleIdentity`): `Name` dari claim `name`, `Email`
-   lowercase, `Role=RoleUser` (SEC-1), password bcrypt acak CSPRNG (SEC-24).
+   (`CreateUserWithGoogleIdentity`). Field user diisi dari claim Google:
+   - `Email` = verified email (`email_verified=true` sudah dipaksa di
+     `verifyIDToken`; lowercase).
+   - `Name` = claim `name` (fallback: prefix email bila kosong).
+   - `Role` = **`RoleUser` hardcoded server-side (SEC-1)**. Google OAuth TIDAK
+     PERNAH bisa memilih `admin`/`operator`/role privileged — claim apapun
+     diabaikan; assignment role tetap 100% server-side. Regression test:
+     `TestResolveUser_NeverPrivilegedRole`.
+   - `Password` = bcrypt acak CSPRNG (SEC-24).
+   - `ExternalIdentity.Picture` = claim `picture` (opsional, foto profil
+     Google) — metadata provider, BUKAN identity key.
 4. Guest user (`guest-*@vero.local`) tidak pernah match email Google — aman.
 
 Race dua callback paralel: `UNIQUE(provider, provider_user_id)` +

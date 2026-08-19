@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS external_identities (
     user_id          UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     provider         VARCHAR(30) NOT NULL,
     provider_user_id VARCHAR(128) NOT NULL,
-    email            VARCHAR(180)
+    email            VARCHAR(180),
+    picture          TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ext_ident_provider_user

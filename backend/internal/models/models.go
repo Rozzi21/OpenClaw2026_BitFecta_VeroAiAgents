@@ -165,6 +165,9 @@ type ExternalIdentity struct {
 	// Email is the provider-reported email at link time. Informational only;
 	// NOT used for uniqueness or login resolution (sub is the key).
 	Email string `json:"email" gorm:"size:180"`
+	// Picture is the provider profile photo URL (Google `picture`). Optional
+	// provider metadata — never part of the identity key.
+	Picture string `json:"picture" gorm:"type:text"`
 
 	User User `json:"-" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
 }

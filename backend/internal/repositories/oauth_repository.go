@@ -70,7 +70,7 @@ func (r *Repository) FindUserByGoogleSub(ctx context.Context, sub string) (model
 // CreateUserWithGoogleIdentity creates a brand-new Vero user AND its canonical
 // Google ExternalIdentity row in one transaction, mirroring users.google_sub.
 // Used when no existing account matches (first-time Google signup).
-func (r *Repository) CreateUserWithGoogleIdentity(ctx context.Context, user *models.User, sub string, email string) error {
+func (r *Repository) CreateUserWithGoogleIdentity(ctx context.Context, user *models.User, sub string, email string, picture string) error {
 	return r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(user).Error; err != nil {
 			return err
@@ -80,6 +80,7 @@ func (r *Repository) CreateUserWithGoogleIdentity(ctx context.Context, user *mod
 			Provider:       models.ExternalIdentityProviderGoogle,
 			ProviderUserID: sub,
 			Email:          email,
+			Picture:        picture,
 		}
 		return tx.Create(&ident).Error
 	})
@@ -90,13 +91,14 @@ func (r *Repository) CreateUserWithGoogleIdentity(ctx context.Context, user *mod
 // users.google_sub for fast reverse lookup. Runs in one transaction so the two
 // never diverge. The UNIQUE(provider, provider_user_id) constraint makes the
 // link idempotent-safe: a duplicate link attempt surfaces a constraint error.
-func (r *Repository) LinkUserGoogleSub(ctx context.Context, userID string, sub string, email string) error {
+func (r *Repository) LinkUserGoogleSub(ctx context.Context, userID string, sub string, email string, picture string) error {
 	return r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		ident := models.ExternalIdentity{
 			UserID:         uuid.MustParse(userID),
 			Provider:       models.ExternalIdentityProviderGoogle,
 			ProviderUserID: sub,
 			Email:          email,
+			Picture:        picture,
 		}
 		if err := tx.Create(&ident).Error; err != nil {
 			return err

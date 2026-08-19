@@ -185,7 +185,7 @@ func (s *GoogleOAuthService) resolveUser(ctx context.Context, identity auth.Goog
 	// 2. Link by verified email.
 	user, err = s.repo.FindUserByEmail(ctx, identity.Email)
 	if err == nil {
-		if linkErr := s.repo.LinkUserGoogleSub(ctx, user.ID.String(), identity.Subject, identity.Email); linkErr != nil {
+		if linkErr := s.repo.LinkUserGoogleSub(ctx, user.ID.String(), identity.Subject, identity.Email, identity.Picture); linkErr != nil {
 			return models.User{}, linkErr
 		}
 		auth.LogSecurity(auth.EventGoogleAccountLinked, map[string]any{
@@ -223,7 +223,7 @@ func (s *GoogleOAuthService) resolveUser(ctx context.Context, identity auth.Goog
 	}
 	// Create user + canonical ExternalIdentity (sub→user) atomically. The
 	// identity mapping — not email — is the source of truth for future logins.
-	if err := s.repo.CreateUserWithGoogleIdentity(ctx, &newUser, identity.Subject, identity.Email); err != nil {
+	if err := s.repo.CreateUserWithGoogleIdentity(ctx, &newUser, identity.Subject, identity.Email, identity.Picture); err != nil {
 		// Race: a parallel callback created the same email/sub first. Fall back
 		// to the now-existing row so the second login still succeeds.
 		if existing, findErr := s.repo.FindUserByGoogleSub(ctx, identity.Subject); findErr == nil {

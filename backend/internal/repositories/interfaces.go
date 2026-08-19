@@ -48,8 +48,8 @@ type OAuthRepository interface {
 	ConsumeOAuthState(ctx context.Context, stateHash string) (models.OAuthState, bool, error)
 	DeleteExpiredOAuthStates(ctx context.Context, before time.Time) (int64, error)
 	FindUserByGoogleSub(ctx context.Context, sub string) (models.User, error)
-	LinkUserGoogleSub(ctx context.Context, userID string, sub string, email string) error
-	CreateUserWithGoogleIdentity(ctx context.Context, user *models.User, sub string, email string) error
+	LinkUserGoogleSub(ctx context.Context, userID string, sub string, email string, picture string) error
+	CreateUserWithGoogleIdentity(ctx context.Context, user *models.User, sub string, email string, picture string) error
 }
 
 // ChatRepository — chat session + message persistence.
