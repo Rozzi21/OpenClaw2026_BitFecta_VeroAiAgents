@@ -73,7 +73,7 @@ func (m *mockOAuthRepo) FindUserByGoogleSub(_ context.Context, sub string) (mode
 	return models.User{}, gorm.ErrRecordNotFound
 }
 
-func (m *mockOAuthRepo) LinkUserGoogleSub(_ context.Context, userID string, sub string) error {
+func (m *mockOAuthRepo) LinkUserGoogleSub(_ context.Context, userID string, sub string, _ string) error {
 	m.linkedSub = sub
 	m.linkedUserID = userID
 	if id, err := uuid.Parse(userID); err == nil {
@@ -102,6 +102,20 @@ func (m *mockOAuthRepo) CreateUser(_ context.Context, u *models.User) error {
 	if u.GoogleSub != nil {
 		m.usersBySub[*u.GoogleSub] = u
 	}
+	m.usersByID[u.ID] = u
+	return nil
+}
+
+// CreateUserWithGoogleIdentity mirrors the repo's atomic create(user + identity)
+// so resolveUser's signup path is exercised against the canonical sub mapping.
+func (m *mockOAuthRepo) CreateUserWithGoogleIdentity(_ context.Context, u *models.User, sub string, _ string) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
+	u.ID = uuid.New()
+	m.createdUser = u
+	m.usersByEmail[u.Email] = u
+	m.usersBySub[sub] = u
 	m.usersByID[u.ID] = u
 	return nil
 }

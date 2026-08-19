@@ -4,7 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/models"
+	"gorm.io/gorm"
 )
 
 // OAuth state + Google account-link persistence (Google OAuth, 18 Agu 2026).
@@ -46,17 +48,62 @@ func (r *Repository) DeleteExpiredOAuthStates(ctx context.Context, before time.T
 	return result.RowsAffected, result.Error
 }
 
-// FindUserByGoogleSub resolves an account previously linked to a Google `sub`.
+// FindUserByGoogleSub resolves the Vero account linked to a Google `sub` via
+// the canonical external_identities mapping (identity keyed by sub, NOT email).
+// users.google_sub is only a denormalized fast-path mirror; the source of truth
+// is the ExternalIdentity row (UNIQUE(provider, provider_user_id)).
 func (r *Repository) FindUserByGoogleSub(ctx context.Context, sub string) (models.User, error) {
+	var ident models.ExternalIdentity
+	err := r.DB.WithContext(ctx).
+		Where("provider = ? AND provider_user_id = ?", models.ExternalIdentityProviderGoogle, sub).
+		First(&ident).Error
+	if err != nil {
+		return models.User{}, err
+	}
 	var user models.User
-	err := r.DB.WithContext(ctx).Where("google_sub = ?", sub).First(&user).Error
-	return user, err
+	if err := r.DB.WithContext(ctx).Where("id = ?", ident.UserID).First(&user).Error; err != nil {
+		return models.User{}, err
+	}
+	return user, nil
 }
 
-// LinkUserGoogleSub attaches a Google `sub` to an existing user (account
-// linking by verified email). Single-column update — never a full Save (DB-2).
-func (r *Repository) LinkUserGoogleSub(ctx context.Context, userID string, sub string) error {
-	return r.DB.WithContext(ctx).Model(&models.User{}).
-		Where("id = ?", userID).
-		Update("google_sub", sub).Error
+// CreateUserWithGoogleIdentity creates a brand-new Vero user AND its canonical
+// Google ExternalIdentity row in one transaction, mirroring users.google_sub.
+// Used when no existing account matches (first-time Google signup).
+func (r *Repository) CreateUserWithGoogleIdentity(ctx context.Context, user *models.User, sub string, email string) error {
+	return r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+		ident := models.ExternalIdentity{
+			UserID:         user.ID,
+			Provider:       models.ExternalIdentityProviderGoogle,
+			ProviderUserID: sub,
+			Email:          email,
+		}
+		return tx.Create(&ident).Error
+	})
+}
+
+// LinkUserGoogleSub attaches a Google `sub` to an existing user by creating the
+// canonical ExternalIdentity row (the sub→user mapping) AND mirroring
+// users.google_sub for fast reverse lookup. Runs in one transaction so the two
+// never diverge. The UNIQUE(provider, provider_user_id) constraint makes the
+// link idempotent-safe: a duplicate link attempt surfaces a constraint error.
+func (r *Repository) LinkUserGoogleSub(ctx context.Context, userID string, sub string, email string) error {
+	return r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		ident := models.ExternalIdentity{
+			UserID:         uuid.MustParse(userID),
+			Provider:       models.ExternalIdentityProviderGoogle,
+			ProviderUserID: sub,
+			Email:          email,
+		}
+		if err := tx.Create(&ident).Error; err != nil {
+			return err
+		}
+		// Mirror into users.google_sub (single-column update, never Save — DB-2).
+		return tx.Model(&models.User{}).
+			Where("id = ?", userID).
+			Update("google_sub", sub).Error
+	})
 }

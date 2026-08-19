@@ -138,7 +138,39 @@ type User struct {
 	ChatSessions []ChatSession `json:"-" gorm:"foreignKey:UserID"`
 	Bookings     []Booking     `json:"-" gorm:"foreignKey:UserID"`
 	AuthSessions []AuthSession `json:"-" gorm:"foreignKey:UserID"`
+
+	// ExternalIdentities links this user to external OAuth/OIDC providers
+	// (Google, etc.). The canonical "one Google account → one Vero account"
+	// mapping lives there (identity keyed by `sub`, NOT by email alone).
+	ExternalIdentities []ExternalIdentity `json:"-" gorm:"foreignKey:UserID"`
 }
+
+// ExternalIdentity maps a Vero user to an external identity provider account.
+// Identity is keyed by the provider's immutable `ProviderUserID` (Google `sub`)
+// — NOT by email, which is mutable and only a hint for first-time linking.
+//
+// The UNIQUE(provider, provider_user_id) composite index guarantees one
+// provider account resolves to exactly one Vero user. Email is stored for
+// display/audit only and is not a uniqueness key.
+type ExternalIdentity struct {
+	BaseModel
+	// UserID is the Vero account this external identity resolves to.
+	UserID uuid.UUID `json:"user_id" gorm:"type:uuid;not null;index"`
+	// Provider is the OAuth/OIDC provider slug, e.g. "google". Part of the
+	// composite unique key so multiple providers can coexist per user.
+	Provider string `json:"provider" gorm:"size:30;not null;uniqueIndex:idx_ext_ident_provider_user"`
+	// ProviderUserID is the provider's immutable subject (Google `sub`).
+	// Part of the composite unique key — the canonical identity key.
+	ProviderUserID string `json:"provider_user_id" gorm:"size:128;not null;uniqueIndex:idx_ext_ident_provider_user"`
+	// Email is the provider-reported email at link time. Informational only;
+	// NOT used for uniqueness or login resolution (sub is the key).
+	Email string `json:"email" gorm:"size:180"`
+
+	User User `json:"-" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE"`
+}
+
+// ExternalIdentityProviderGoogle is the canonical provider slug for Google.
+const ExternalIdentityProviderGoogle = "google"
 
 // OAuthState is a one-time, short-lived record backing the OAuth 2.0 `state`
 // parameter for Google login. The raw state is never stored — StateHash holds

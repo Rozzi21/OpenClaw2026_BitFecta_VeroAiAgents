@@ -93,13 +93,23 @@ yang satu origin via proxy Next.js), bukan pada respons Google.
 
 ## 4. Perubahan Database
 
-Dua perubahan additive (AutoMigrate + SQL versioned idempoten, mengikuti pola
+Perubahan additive (AutoMigrate + SQL versioned idempoten, mengikuti pola
 `20260818_guest_order_limit.sql`):
 
-1. **`users.google_sub`** — `VARCHAR(64) NULL` + `UNIQUE` (partial index
-   `WHERE google_sub IS NOT NULL`). Menyimpan claim `sub` Google (immutable,
-   stabil per akun Google). Nullable: user email/password tidak berubah.
-2. **Tabel baru `oauth_states`** (model `OAuthState`):
+1. **Tabel baru `external_identities`** (model `ExternalIdentity`) — **link
+   kanonik** user→akun provider. Identity dikunci oleh `provider_user_id`
+   (Google `sub`), BUKAN email. Field: `user_id` (FK→users CASCADE),
+   `provider` (`"google"`), `provider_user_id` (sub), `email` (informational).
+   **Composite UNIQUE `(provider, provider_user_id)`** → satu akun Google =
+   satu akun Vero. Ini sumber kebenaran mapping.
+2. **`users.google_sub`** — `VARCHAR(64) NULL` + partial unique index.
+   Dipertahankan HANYA sebagai **denormalized fast-path mirror** (reverse
+   lookup cepat); bukan sumber kebenaran. Ditulis atomik bersama
+   ExternalIdentity dalam satu transaksi. (Keputusan: lihat §7 — kita pakai
+   ExternalIdentity sebagai kanonik, google_sub sebagai mirror, alih-alih
+   menghapus google_sub, agar tidak ada tabel berlebih dan lookup login tetap
+   murah.)
+3. **Tabel baru `oauth_states`** (model `OAuthState`):
    - `id` uuid PK (BaseModel), `state_hash` varchar(64) uniqueIndex (SHA-256
      dari state raw — raw state tidak disimpan), `nonce` varchar(64),
      `return_to` varchar(255), `expires_at` timestamptz index,
@@ -146,27 +156,36 @@ Tidak ada kolom dihapus/diubah; migrasi aman untuk data existing.
 7. Audit: `google_login_success` / `google_login_failed` via
    `auth.LogSecurity` (event baru di `auth/audit.go`).
 
-## 7. Kebijakan Account Linking
+## 7. Kebijakan Account Linking — identitas via `sub`, BUKAN email
 
-Urutan resolusi user di callback:
+**Keputusan desain (19 Agu 2026):** link Google↔Vero memakai tabel
+`external_identities` (model `ExternalIdentity`) sebagai **sumber kebenaran**,
+dengan composite `UNIQUE(provider, provider_user_id)`. Identitas dikunci oleh
+Google **`sub`** (immutable per akun Google), BUKAN email — email bisa berubah/
+dipakai ulang dan hanya dipakai sebagai **hint saat linking pertama kali**.
+`users.google_sub` dipertahankan sebagai **denormalized fast-path mirror**
+(reverse lookup murah); keduanya ditulis atomik dalam SATU transaksi sehingga
+tidak bisa divergen. Kita sengaja TIDAK menghapus `google_sub` (menghindari
+tabel/kolom berlebih + menjaga lookup login tetap 1-query via mirror) —
+ExternalIdentity adalah kanonik, google_sub hanya cache.
 
-1. **`google_sub` match** → user ditemukan → login. Paling kuat; `sub` immutable.
-2. **Email match + `email_verified=true`** → **link**: set
-   `users.google_sub = sub` pada akun existing (Update kolom tunggal, bukan
-   `Save` — DB-2), lalu login. Aman karena Google menjamin kepemilikan email
-   terverifikasi; password lama TETAP bisa dipakai (akun tidak dikunci ke satu
-   provider).
-3. **Tidak ada match** → **create** user baru: `Name` dari claim `name`
-   (fallback prefix email), `Email` lowercase, `Role=RoleUser` (SEC-1: role
-   tidak pernah dari luar), `GoogleSub=sub`, dan password = bcrypt(random 16
-   byte CSPRNG) — placeholder tak-tertebak yang memenuhi constraint `not null`
-   (pola sama dengan `GuestUser`, SEC-24).
-4. Guest user (`guest-*@vero.local`) tidak akan pernah match email Google —
-   aman by construction.
+Urutan resolusi user di callback (`resolveUser`):
 
-Race dua callback paralel untuk email baru: unique index `users.email` +
-`users.google_sub` menjamin satu pemenang; yang kalah di-retry sebagai "match
-by sub/email" (fallback find setelah `CreateUser` gagal constraint).
+1. **`sub` match via ExternalIdentity** (`FindUserByGoogleSub` → cari
+   `external_identities WHERE provider='google' AND provider_user_id=sub` →
+   load user) → login. Paling kuat; `sub` immutable.
+2. **Email match + `email_verified=true`** (hanya bila `sub` belum pernah
+   ter-link) → **link**: `LinkUserGoogleSub` membuat row ExternalIdentity +
+   mirror `users.google_sub` dalam satu transaksi, lalu login. Password lama
+   TETAP bisa dipakai (akun tidak dikunci ke satu provider).
+3. **Tidak ada match** → **create** user baru + ExternalIdentity atomik
+   (`CreateUserWithGoogleIdentity`): `Name` dari claim `name`, `Email`
+   lowercase, `Role=RoleUser` (SEC-1), password bcrypt acak CSPRNG (SEC-24).
+4. Guest user (`guest-*@vero.local`) tidak pernah match email Google — aman.
+
+Race dua callback paralel: `UNIQUE(provider, provider_user_id)` +
+`users.email`/`google_sub` menjamin satu pemenang; yang kalah fallback find
+by sub/email.
 
 ## 8. Integrasi JWT/Sesi
 
