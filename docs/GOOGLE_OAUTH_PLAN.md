@@ -173,7 +173,11 @@ Urutan resolusi user di callback (`resolveUser`):
 
 1. **`sub` match via ExternalIdentity** (`FindUserByGoogleSub` → cari
    `external_identities WHERE provider='google' AND provider_user_id=sub` →
-   load user) → login. Paling kuat; `sub` immutable.
+   load user) → login dengan sesi Vero NORMAL (`issueSession` → AuthSession
+   baru, rotasi/reuse/logout identik). Paling kuat; `sub` immutable. **Re-login
+   dengan sub yang sama SELALU resolve ke user yang sama — TIDAK pernah membuat
+   user duplikat**, walau email/name Google berubah (sub satu-satunya kunci).
+   Dikunci test `TestResolveUser_ReloginBySubDoesNotDuplicate`.
 2. **Email match + `email_verified=true`** (hanya bila `sub` belum pernah
    ter-link) → **link**: `LinkUserGoogleSub` membuat row ExternalIdentity +
    mirror `users.google_sub` dalam satu transaksi, lalu login. Password lama

@@ -310,6 +310,35 @@ func TestResolveUser_CreateRaceFallsBackToExisting(t *testing.T) {
 	}
 }
 
+func TestResolveUser_ReloginBySubDoesNotDuplicate(t *testing.T) {
+	repo := newMockOAuthRepo()
+	svc := &GoogleOAuthService{repo: repo, cfg: testCfg()}
+
+	// First login creates the user.
+	first, err := svc.resolveUser(context.Background(), auth.GoogleIdentity{Subject: "sub-x", Email: "x@x.com", Name: "X", EmailVerified: true}, AuthRequestMeta{})
+	if err != nil {
+		t.Fatalf("first resolveUser err: %v", err)
+	}
+	createdCount := repo.createdUser != nil
+	if !createdCount {
+		t.Fatal("expected first login to create a user")
+	}
+
+	// Second login with same sub but CHANGED email/name (user changed Google
+	// profile) must still resolve to the same user — no duplicate.
+	repo.createdUser = nil
+	second, err := svc.resolveUser(context.Background(), auth.GoogleIdentity{Subject: "sub-x", Email: "newmail@x.com", Name: "X Renamed", EmailVerified: true}, AuthRequestMeta{})
+	if err != nil {
+		t.Fatalf("second resolveUser err: %v", err)
+	}
+	if repo.createdUser != nil {
+		t.Error("duplicate user created on re-login by sub — must reuse existing")
+	}
+	if second.ID != first.ID {
+		t.Errorf("re-login resolved to different user: first=%v second=%v", first.ID, second.ID)
+	}
+}
+
 func testCfg() config.Config { return config.Config{} }
 
 // newTestGoogleClient returns a GoogleClient suitable for unit tests that never
