@@ -178,10 +178,20 @@ Urutan resolusi user di callback (`resolveUser`):
    dengan sub yang sama SELALU resolve ke user yang sama — TIDAK pernah membuat
    user duplikat**, walau email/name Google berubah (sub satu-satunya kunci).
    Dikunci test `TestResolveUser_ReloginBySubDoesNotDuplicate`.
-2. **Email match + `email_verified=true`** (hanya bila `sub` belum pernah
-   ter-link) → **link**: `LinkUserGoogleSub` membuat row ExternalIdentity +
-   mirror `users.google_sub` dalam satu transaksi, lalu login. Password lama
-   TETAP bisa dipakai (akun tidak dikunci ke satu provider).
+2. **Email match + sub belum ter-link → TOLAK auto-merge (account-takeover
+   guard, 19 Agu 2026).** `resolveUser` TIDAK menautkan akun hanya karena email
+   Google cocok. Melewatkan akun existing di sini akan membuka hijab akun
+   password Vero oleh siapa pun yang bisa menghasilkan token Google untuk email
+   tsb. Sebagai gantinya return `ErrGoogleAccountExists` (handler →
+   `auth_error=account_exists_link_required`) + audit `google_link_required`.
+   **Linking yang aman bersifat eksplisit**: user login ke akun Vero dulu →
+   Account Settings → "Link Google Account" → `GET /auth/google/link` (guard
+   `Auth`) → `StartLogin(..., &userID)` men-stamp `oauth_states.link_user_id` →
+   Google auth → callback mendeteksi `LinkUserID` → `LinkAccount` (bukan
+   resolveUser) → tulis ExternalIdentity. Pemilik akun Vero DAN pemilik akun
+   Google sama-sama terbukti. Tidak ada merge diam-diam. Regression test:
+   `TestResolveUser_NoAutoMergeByEmail`, `TestLinkAccount_Success`,
+   `TestLinkAccount_RejectsSubTakenByAnother`, `TestLinkAccount_IdempotentSameAccount`.
 3. **Tidak ada match** → **create** user baru + ExternalIdentity atomik
    (`CreateUserWithGoogleIdentity`). Field user diisi dari claim Google:
    - `Email` = verified email (`email_verified=true` sudah dipaksa di

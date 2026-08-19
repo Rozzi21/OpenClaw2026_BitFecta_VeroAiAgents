@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -8,8 +9,10 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/auth"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/models"
+	"github.com/rozzi/vero-ai-travel-agents/backend/internal/services"
 )
 
 // Google OAuth handlers (18 Agu 2026). Unlike the JSON auth endpoints these
@@ -25,9 +28,34 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 		utils_NotFoundOAuth(c)
 		return
 	}
-	result, err := h.Services.Google.StartLogin(c.Request.Context(), c.Query("return_to"))
+	result, err := h.Services.Google.StartLogin(c.Request.Context(), c.Query("return_to"), nil)
 	if err != nil {
 		log.Printf("[google-login] start failed: %v", err)
+		h.redirectOAuthError(c, "/", "start_failed")
+		return
+	}
+	c.Redirect(http.StatusFound, result.RedirectURL)
+}
+
+// GoogleLinkStart begins the explicit "Link Google Account" flow for an
+// ALREADY AUTHENTICATED user (Account Settings → Link Google). It reuses the
+// same Google consent redirect but stamps the OAuth state with the caller's
+// user ID, so the callback links the verified Google identity to that account
+// instead of resolving/creating one. Requires the Auth middleware (route
+// guard) — the user must prove ownership of the Vero account first.
+func (h *Handler) GoogleLinkStart(c *gin.Context) {
+	if !h.Services.Google.Enabled() {
+		utils_NotFoundOAuth(c)
+		return
+	}
+	uid := currentUserID(c)
+	if uid == uuid.Nil {
+		h.redirectOAuthError(c, "/", "unauthorized")
+		return
+	}
+	result, err := h.Services.Google.StartLogin(c.Request.Context(), c.Query("return_to"), &uid)
+	if err != nil {
+		log.Printf("[google-link] start failed user=%s: %v", uid, err)
 		h.redirectOAuthError(c, "/", "start_failed")
 		return
 	}
@@ -58,7 +86,27 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	if err != nil {
 		// SEC-15: raw error stays server-side; the client gets a generic code.
 		log.Printf("[google-callback] failed: %v", err)
-		h.redirectOAuthError(c, "/", "authentication_failed")
+		code := "authentication_failed"
+		if errors.Is(err, services.ErrGoogleAccountExists) {
+			code = "account_exists_link_required"
+		} else if errors.Is(err, services.ErrGoogleIdentityTaken) {
+			code = "google_identity_taken"
+		}
+		h.redirectOAuthError(c, "/", code)
+		return
+	}
+
+	// Link flow: the Google identity was linked to an already-authenticated
+	// account. No new session is issued (the user already has one) — just send
+	// them back with a success marker.
+	if linkedID := result.LinkedUserID(); linkedID != "" {
+		returnTo := result.ReturnTo
+		sep := "?"
+		if strings.Contains(returnTo, "?") {
+			sep = "&"
+		}
+		target := strings.TrimRight(cfg.GoogleOAuthFrontendURL, "/") + returnTo + sep + "google_linked=1"
+		c.Redirect(http.StatusFound, target)
 		return
 	}
 

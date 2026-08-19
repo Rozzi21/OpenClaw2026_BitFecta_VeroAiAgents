@@ -152,7 +152,7 @@ func TestStartLogin_PersistsHashedStateOnly(t *testing.T) {
 	repo := newMockOAuthRepo()
 	svc := &GoogleOAuthService{repo: repo, google: newTestGoogleClient(t), cfg: testCfg()}
 
-	res, err := svc.StartLogin(context.Background(), "/trip/abc")
+	res, err := svc.StartLogin(context.Background(), "/trip/abc", nil)
 	if err != nil {
 		t.Fatalf("StartLogin err: %v", err)
 	}
@@ -219,7 +219,11 @@ func TestResolveUser_BySub(t *testing.T) {
 	}
 }
 
-func TestResolveUser_LinkByVerifiedEmail(t *testing.T) {
+// TestResolveUser_NoAutoMergeByEmail locks the account-takeover guard: an
+// existing Vero account whose email matches the Google email but whose sub was
+// NEVER linked must NOT be silently merged. resolveUser must refuse with
+// ErrGoogleAccountExists and must NOT write any link.
+func TestResolveUser_NoAutoMergeByEmail(t *testing.T) {
 	repo := newMockOAuthRepo()
 	existing := &models.User{Name: "B", Email: "b@x.com", Role: models.RoleUser}
 	existing.ID = uuid.New()
@@ -227,18 +231,85 @@ func TestResolveUser_LinkByVerifiedEmail(t *testing.T) {
 	repo.usersByID[existing.ID] = existing
 
 	svc := &GoogleOAuthService{repo: repo, cfg: testCfg()}
-	u, err := svc.resolveUser(context.Background(), auth.GoogleIdentity{Subject: "newsub", Email: "b@x.com", EmailVerified: true}, AuthRequestMeta{})
+	_, err := svc.resolveUser(context.Background(), auth.GoogleIdentity{Subject: "newsub", Email: "b@x.com", EmailVerified: true}, AuthRequestMeta{})
+	if !errors.Is(err, ErrGoogleAccountExists) {
+		t.Fatalf("expected ErrGoogleAccountExists (no auto-merge), got %v", err)
+	}
+	if repo.linkedSub != "" {
+		t.Errorf("auto-merge happened — link must NOT be written, got sub %q", repo.linkedSub)
+	}
+	if existing.GoogleSub != nil {
+		t.Error("existing user GoogleSub mutated by login flow — takeover guard broken")
+	}
+}
+
+// TestLinkAccount_Success covers the secure explicit-link path: an
+// authenticated Vero user links a fresh verified Google sub.
+func TestLinkAccount_Success(t *testing.T) {
+	repo := newMockOAuthRepo()
+	existing := &models.User{Name: "B", Email: "b@x.com", Role: models.RoleUser}
+	existing.ID = uuid.New()
+	repo.usersByEmail["b@x.com"] = existing
+	repo.usersByID[existing.ID] = existing
+
+	svc := &GoogleOAuthService{repo: repo, cfg: testCfg()}
+	u, err := svc.LinkAccount(context.Background(), existing.ID.String(), auth.GoogleIdentity{Subject: "newsub", Email: "b@x.com", EmailVerified: true}, AuthRequestMeta{})
 	if err != nil {
-		t.Fatalf("resolveUser err: %v", err)
+		t.Fatalf("LinkAccount err: %v", err)
 	}
-	if repo.linkedSub != "newsub" {
-		t.Errorf("expected link google_sub=newsub, got %q", repo.linkedSub)
-	}
-	if repo.linkedUserID != existing.ID.String() {
-		t.Errorf("linked wrong user %q", repo.linkedUserID)
+	if repo.linkedSub != "newsub" || repo.linkedUserID != existing.ID.String() {
+		t.Errorf("link not written: sub=%q user=%q", repo.linkedSub, repo.linkedUserID)
 	}
 	if u.GoogleSub == nil || *u.GoogleSub != "newsub" {
 		t.Error("returned user does not reflect link")
+	}
+	if u.Role != models.RoleUser {
+		t.Errorf("role must stay server-side RoleUser, got %q", u.Role)
+	}
+}
+
+// TestLinkAccount_RejectsSubTakenByAnother: a Google sub already linked to a
+// DIFFERENT Vero account can never be re-linked (one Google → one Vero).
+func TestLinkAccount_RejectsSubTakenByAnother(t *testing.T) {
+	repo := newMockOAuthRepo()
+	owner := &models.User{Name: "Owner", Email: "owner@x.com", Role: models.RoleUser}
+	owner.ID = uuid.New()
+	sub := "shared-sub"
+	owner.GoogleSub = &sub
+	repo.usersBySub[sub] = owner
+
+	attacker := &models.User{Name: "Atk", Email: "atk@x.com", Role: models.RoleUser}
+	attacker.ID = uuid.New()
+	repo.usersByID[attacker.ID] = attacker
+
+	svc := &GoogleOAuthService{repo: repo, cfg: testCfg()}
+	_, err := svc.LinkAccount(context.Background(), attacker.ID.String(), auth.GoogleIdentity{Subject: sub, Email: "owner@x.com", EmailVerified: true}, AuthRequestMeta{})
+	if !errors.Is(err, ErrGoogleIdentityTaken) {
+		t.Fatalf("expected ErrGoogleIdentityTaken, got %v", err)
+	}
+	if attacker.GoogleSub != nil {
+		t.Error("attacker account gained a link to another user's Google sub")
+	}
+}
+
+// TestLinkAccount_IdempotentSameAccount: re-linking the SAME sub to the SAME
+// account is a no-op success (no error, no duplicate).
+func TestLinkAccount_IdempotentSameAccount(t *testing.T) {
+	repo := newMockOAuthRepo()
+	u := &models.User{Name: "C", Email: "c@x.com", Role: models.RoleUser}
+	u.ID = uuid.New()
+	sub := "c-sub"
+	u.GoogleSub = &sub
+	repo.usersByID[u.ID] = u
+	repo.usersBySub[sub] = u
+
+	svc := &GoogleOAuthService{repo: repo, cfg: testCfg()}
+	got, err := svc.LinkAccount(context.Background(), u.ID.String(), auth.GoogleIdentity{Subject: sub, Email: "c@x.com", EmailVerified: true}, AuthRequestMeta{})
+	if err != nil {
+		t.Fatalf("idempotent re-link must succeed, got %v", err)
+	}
+	if got.ID != u.ID {
+		t.Errorf("resolved to wrong user %v", got.ID)
 	}
 }
 

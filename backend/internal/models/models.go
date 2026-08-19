@@ -187,6 +187,12 @@ type OAuthState struct {
 	ReturnTo   string     `json:"-" gorm:"size:255;not null;default:/"`
 	ExpiresAt  time.Time  `json:"-" gorm:"index;not null"`
 	ConsumedAt *time.Time `json:"-" gorm:"index"`
+	// LinkUserID is set ONLY for the explicit "Link Google Account" flow (an
+	// authenticated user linking their Google identity). NULL for the normal
+	// login flow. When set, the callback links the verified Google sub to THIS
+	// user instead of resolving/creating an account — this is what makes
+	// account linking require proof of Vero-account ownership (no email merge).
+	LinkUserID *uuid.UUID `json:"-" gorm:"type:uuid;index"`
 }
 
 type AuthSession struct {

@@ -104,7 +104,8 @@ Legenda: 🔓 publik · 🔒 butuh access token · 👮 butuh role operator/admi
 | POST | `/logout` | 🔓 (cookie) | Revoke session + hapus cookie |
 | GET | `/me` | 🔒 | Profil user saat ini |
 | GET | `/google/login?return_to=<path>` | 🔓 | **Google OAuth (19 Agu 2026).** Bukan JSON — 302 redirect ke Google consent screen. State+nonce single-use disimpan DB (hash SHA-256). 404 bila `GOOGLE_OAUTH_ENABLED=false` |
-| GET | `/google/callback?code&state` | 🔓 | **Google OAuth.** Verifikasi state (atomik) + tukar code + verifikasi id_token (JWKS, iss/aud/exp/nonce) + find/link/create user → sesi Vero normal → 302 ke FE (`#access_token=...` fragment + cookie refresh HttpOnly). 404 bila disabled |
+| GET | `/google/callback?code&state` | 🔓 | **Google OAuth.** Verifikasi state (atomik) + tukar code + verifikasi id_token (JWKS, iss/aud/exp/nonce) + find-by-sub / create-baru (TANPA auto-merge email) → sesi Vero normal → 302 ke FE (`#access_token=...` fragment + cookie refresh HttpOnly). 404 bila disabled |
+| GET | `/google/link?return_to=<path>` | 🔒 JWT | **Link Google Account eksplisit (19 Agu 2026).** Wajib login (guard Auth). Men-stamp `oauth_states.link_user_id` lalu 302 ke Google. Callback menautkan Google sub ke akun yang TERBUKTI milik caller (bukan auto-merge email) → anti account-takeover. Callback sukses redirect `?google_linked=1` tanpa sesi baru. 404 bila disabled |
 
 ### Google OAuth ("Continue with Google", 19 Agu 2026)
 

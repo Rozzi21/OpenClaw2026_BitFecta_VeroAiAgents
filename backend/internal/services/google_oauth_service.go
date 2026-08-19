@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/auth"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/config"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/models"
@@ -47,11 +48,24 @@ type GoogleStartResult struct {
 	RedirectURL string
 }
 
-// GoogleCallbackResult is the outcome of a verified callback: a normal Vero
-// session (same shape as password login) plus the validated post-login path.
+// GoogleCallbackResult is the outcome of a verified callback. For the LOGIN
+// flow it carries a normal Vero session (Issue) plus the validated post-login
+// path. For the LINK flow it carries the freshly-linked user (LinkedUserID)
+// and no new session (the user already has one).
 type GoogleCallbackResult struct {
 	Issue    AuthIssueResult
 	ReturnTo string
+	// linkedUser is non-nil ONLY for the link flow (LinkUserID set on state).
+	linkedUser *models.User
+}
+
+// LinkedUserID returns the linked account's ID for the link flow, or "" for
+// the login flow. Handler uses it to confirm the link without a new session.
+func (r GoogleCallbackResult) LinkedUserID() string {
+	if r.linkedUser == nil {
+		return ""
+	}
+	return r.linkedUser.ID.String()
 }
 
 // oauthStateTTL bounds the login flow. States also expire at consume time, so
@@ -62,6 +76,13 @@ const oauthStateTTL = 10 * time.Minute
 var (
 	ErrGoogleOAuthStateInvalid = errors.New("google oauth state invalid")
 	ErrGoogleOAuthStateExpired = errors.New("google oauth state expired")
+	// ErrGoogleAccountExists: a Vero account with this email exists but the
+	// Google sub is not linked. We refuse to auto-merge (takeover guard); the
+	// user must link explicitly via LinkAccount after authenticating.
+	ErrGoogleAccountExists = errors.New("vero account with this email already exists")
+	// ErrGoogleIdentityTaken: this Google sub is already linked to a DIFFERENT
+	// Vero account. A Google account can never map to two Vero accounts.
+	ErrGoogleIdentityTaken = errors.New("google account already linked to another user")
 )
 
 // NewGoogleOAuthService builds the service. The Google OIDC provider is only
@@ -94,7 +115,10 @@ func (s *GoogleOAuthService) Enabled() bool { return s.enabled && s.google != ni
 // StartLogin generates a single-use state + nonce, persists only the state
 // HASH, and returns the Google consent URL. returnTo is validated against the
 // allowlist here so an attacker-controlled path never reaches the callback.
-func (s *GoogleOAuthService) StartLogin(ctx context.Context, returnTo string) (GoogleStartResult, error) {
+// linkUserID is nil for the normal login flow; when set (the "Link Google
+// Account" flow, called by an authenticated handler), the callback links the
+// verified Google sub to that user instead of resolving/creating an account.
+func (s *GoogleOAuthService) StartLogin(ctx context.Context, returnTo string, linkUserID *uuid.UUID) (GoogleStartResult, error) {
 	state, err := randomURLToken(32)
 	if err != nil {
 		return GoogleStartResult{}, err
@@ -104,10 +128,11 @@ func (s *GoogleOAuthService) StartLogin(ctx context.Context, returnTo string) (G
 		return GoogleStartResult{}, err
 	}
 	row := models.OAuthState{
-		StateHash: hashOAuthState(state),
-		Nonce:     nonce,
-		ReturnTo:  sanitizeReturnTo(returnTo),
-		ExpiresAt: time.Now().Add(oauthStateTTL),
+		StateHash:  hashOAuthState(state),
+		Nonce:      nonce,
+		ReturnTo:   sanitizeReturnTo(returnTo),
+		ExpiresAt:  time.Now().Add(oauthStateTTL),
+		LinkUserID: linkUserID,
 	}
 	if err := s.repo.CreateOAuthState(ctx, &row); err != nil {
 		return GoogleStartResult{}, err
@@ -144,6 +169,17 @@ func (s *GoogleOAuthService) Callback(ctx context.Context, code, state string, m
 		return GoogleCallbackResult{}, err
 	}
 
+	// Link flow: the state was started by an ALREADY authenticated user who
+	// wants to attach this Google identity to their account. Link instead of
+	// resolving/creating — this is the secure account-linking path.
+	if row.LinkUserID != nil {
+		user, linkErr := s.LinkAccount(ctx, row.LinkUserID.String(), identity, meta)
+		if linkErr != nil {
+			return GoogleCallbackResult{}, linkErr
+		}
+		return GoogleCallbackResult{ReturnTo: row.ReturnTo, linkedUser: &user}, nil
+	}
+
 	user, err := s.resolveUser(ctx, identity, meta)
 	if err != nil {
 		return GoogleCallbackResult{}, err
@@ -165,15 +201,18 @@ func (s *GoogleOAuthService) Callback(ctx context.Context, code, state string, m
 	return GoogleCallbackResult{Issue: issue, ReturnTo: row.ReturnTo}, nil
 }
 
-// resolveUser implements the account-linking policy:
-//  1. google_sub match → existing linked account.
-//  2. verified-email match → link google_sub to the existing account (the
-//     password login keeps working; the account is not locked to Google).
-//  3. no match → create a plain RoleUser with a random unguessable password
-//     (same CSPRNG+bcrypt pattern as GuestUser, SEC-24) so the not-null
-//     password constraint stays satisfied.
+// resolveUser implements the account-resolution policy. Deliberately there is
+// NO automatic email-based merge (account-takeover guard, 19 Agu 2026):
+//
+//  1. google_sub match (canonical ExternalIdentity) → existing linked account.
+//  2. email match but sub NOT linked → REFUSE to merge. Returning the existing
+//     account here would let anyone who can produce a Google token for an
+//     email they don't truly own hijack a pre-existing Vero password account.
+//     The user must instead link explicitly (LinkAccount) after proving they
+//     own the Vero account (authenticated). We surface ErrGoogleAccountExists.
+//  3. no match at all → create a fresh RoleUser (random CSPRNG password).
 func (s *GoogleOAuthService) resolveUser(ctx context.Context, identity auth.GoogleIdentity, meta AuthRequestMeta) (models.User, error) {
-	// 1. Stable immutable key first.
+	// 1. Stable immutable key first — one Google account → one Vero account.
 	user, err := s.repo.FindUserByGoogleSub(ctx, identity.Subject)
 	if err == nil {
 		return user, nil
@@ -182,20 +221,14 @@ func (s *GoogleOAuthService) resolveUser(ctx context.Context, identity auth.Goog
 		return models.User{}, err
 	}
 
-	// 2. Link by verified email.
-	user, err = s.repo.FindUserByEmail(ctx, identity.Email)
-	if err == nil {
-		if linkErr := s.repo.LinkUserGoogleSub(ctx, user.ID.String(), identity.Subject, identity.Email, identity.Picture); linkErr != nil {
-			return models.User{}, linkErr
-		}
-		auth.LogSecurity(auth.EventGoogleAccountLinked, map[string]any{
-			"ip":      meta.IP,
-			"user_id": user.ID.String(),
-			"email":   user.Email,
+	// 2. Email exists but this Google sub was never linked. Do NOT auto-merge:
+	//    require explicit, authenticated linking (see LinkAccount). Fail closed.
+	if _, err = s.repo.FindUserByEmail(ctx, identity.Email); err == nil {
+		auth.LogSecurity(auth.EventGoogleLinkRequired, map[string]any{
+			"ip":    meta.IP,
+			"email": identity.Email,
 		})
-		// Reflect the link on the returned struct (jwt.Generate embeds user).
-		user.GoogleSub = &identity.Subject
-		return user, nil
+		return models.User{}, ErrGoogleAccountExists
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return models.User{}, err
@@ -240,6 +273,54 @@ func (s *GoogleOAuthService) resolveUser(ctx context.Context, identity auth.Goog
 		"email":   newUser.Email,
 	})
 	return newUser, nil
+}
+
+// LinkAccount explicitly attaches a VERIFIED Google identity to an ALREADY
+// AUTHENTICATED Vero account. This is the secure alternative to email
+// auto-merge: the caller must have proven ownership of the Vero account
+// (valid access token) AND of the Google account (verified id_token via the
+// link flow's own OAuth state). Guards:
+//   - the Google sub must not already belong to a DIFFERENT account
+//     (ErrGoogleIdentityTaken) — one Google account → one Vero account;
+//   - the Google sub must not already be linked to THIS account (idempotent
+//     no-op, returns the user unchanged);
+//   - the link only writes the identity mapping; it never touches role or
+//     password (SEC-1 — role stays server-side).
+func (s *GoogleOAuthService) LinkAccount(ctx context.Context, userID string, identity auth.GoogleIdentity, meta AuthRequestMeta) (models.User, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return models.User{}, err
+	}
+	user, err := s.repo.FindUserByID(ctx, uid)
+	if err != nil {
+		return models.User{}, err
+	}
+	// Already linked to some account?
+	existing, err := s.repo.FindUserByGoogleSub(ctx, identity.Subject)
+	if err == nil {
+		if existing.ID == user.ID {
+			return user, nil // idempotent: same account re-linking
+		}
+		auth.LogSecurity(auth.EventGoogleLoginFailed, map[string]any{
+			"ip":      meta.IP,
+			"user_id": user.ID.String(),
+			"error":   "google identity already linked to another account",
+		})
+		return models.User{}, ErrGoogleIdentityTaken
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return models.User{}, err
+	}
+	if linkErr := s.repo.LinkUserGoogleSub(ctx, user.ID.String(), identity.Subject, identity.Email, identity.Picture); linkErr != nil {
+		return models.User{}, linkErr
+	}
+	auth.LogSecurity(auth.EventGoogleAccountLinked, map[string]any{
+		"ip":      meta.IP,
+		"user_id": user.ID.String(),
+		"email":   user.Email,
+	})
+	user.GoogleSub = &identity.Subject
+	return user, nil
 }
 
 // hashOAuthState stores only the SHA-256 digest of the raw state so a leaked

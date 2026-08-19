@@ -20,6 +20,10 @@ const (
 	EventGoogleOAuthStateInvalid = "google_oauth_state_invalid"
 	EventGoogleAccountLinked     = "google_account_linked"
 	EventGoogleAccountCreated    = "google_account_created"
+	// EventGoogleLinkRequired: a Google login hit an existing email whose sub
+	// was never linked; auto-merge refused (account-takeover guard). The user
+	// must link explicitly after authenticating (LinkAccount).
+	EventGoogleLinkRequired = "google_link_required"
 )
 
 func LogSecurity(event string, fields map[string]any) {

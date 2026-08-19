@@ -19,8 +19,15 @@ CREATE TABLE IF NOT EXISTS oauth_states (
     nonce       VARCHAR(64) NOT NULL,
     return_to   VARCHAR(255) NOT NULL DEFAULT '/',
     expires_at  TIMESTAMPTZ NOT NULL,
-    consumed_at TIMESTAMPTZ
+    consumed_at TIMESTAMPTZ,
+    -- Set ONLY for the explicit "Link Google Account" flow (authenticated user
+    -- attaching their Google identity). NULL for the normal login flow. When
+    -- set, the callback links the verified Google sub to THIS user instead of
+    -- resolving/creating an account (no email auto-merge → no takeover).
+    link_user_id UUID
 );
+ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS link_user_id UUID;
+CREATE INDEX IF NOT EXISTS idx_oauth_states_link_user_id ON oauth_states (link_user_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_states_state_hash ON oauth_states (state_hash);
 CREATE INDEX IF NOT EXISTS idx_oauth_states_expires_at ON oauth_states (expires_at);
