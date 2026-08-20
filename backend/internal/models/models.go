@@ -182,11 +182,15 @@ const ExternalIdentityProviderGoogle = "google"
 // never be replayed. Nonce binds the Google id_token to this flow.
 type OAuthState struct {
 	BaseModel
-	StateHash  string     `json:"-" gorm:"size:64;uniqueIndex;not null"`
-	Nonce      string     `json:"-" gorm:"size:64;not null"`
-	ReturnTo   string     `json:"-" gorm:"size:255;not null;default:/"`
-	ExpiresAt  time.Time  `json:"-" gorm:"index;not null"`
-	ConsumedAt *time.Time `json:"-" gorm:"index"`
+	StateHash string `json:"-" gorm:"size:64;uniqueIndex;not null"`
+	Nonce     string `json:"-" gorm:"size:64;not null"`
+	// CodeVerifier is the PKCE code_verifier (high-entropy, server-side only).
+	// Its S256 challenge went to Google at authorize time; the verifier itself
+	// is presented at token exchange to prove continuity (anti code-interception).
+	CodeVerifier string     `json:"-" gorm:"size:128;not null;default:''"`
+	ReturnTo     string     `json:"-" gorm:"size:255;not null;default:/"`
+	ExpiresAt    time.Time  `json:"-" gorm:"index;not null"`
+	ConsumedAt   *time.Time `json:"-" gorm:"index"`
 	// LinkUserID is set ONLY for the explicit "Link Google Account" flow (an
 	// authenticated user linking their Google identity). NULL for the normal
 	// login flow. When set, the callback links the verified Google sub to THIS

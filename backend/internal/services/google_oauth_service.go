@@ -127,17 +127,33 @@ func (s *GoogleOAuthService) StartLogin(ctx context.Context, returnTo string, li
 	if err != nil {
 		return GoogleStartResult{}, err
 	}
+	// PKCE: a high-entropy code_verifier is generated server-side and stored in
+	// the state row; only its S256 challenge is sent to Google. At exchange the
+	// verifier is presented to prove this callback is the same party that
+	// started the flow (mitigates authorization-code interception).
+	codeVerifier, err := randomURLToken(64)
+	if err != nil {
+		return GoogleStartResult{}, err
+	}
 	row := models.OAuthState{
-		StateHash:  hashOAuthState(state),
-		Nonce:      nonce,
-		ReturnTo:   sanitizeReturnTo(returnTo),
-		ExpiresAt:  time.Now().Add(oauthStateTTL),
-		LinkUserID: linkUserID,
+		StateHash:    hashOAuthState(state),
+		Nonce:        nonce,
+		CodeVerifier: codeVerifier,
+		ReturnTo:     sanitizeReturnTo(returnTo),
+		ExpiresAt:    time.Now().Add(oauthStateTTL),
+		LinkUserID:   linkUserID,
 	}
 	if err := s.repo.CreateOAuthState(ctx, &row); err != nil {
 		return GoogleStartResult{}, err
 	}
-	return GoogleStartResult{RedirectURL: s.google.AuthCodeURL(state, nonce)}, nil
+	return GoogleStartResult{RedirectURL: s.google.AuthCodeURL(state, nonce, pkceS256Challenge(codeVerifier))}, nil
+}
+
+// pkceS256Challenge derives the RFC 7636 S256 code_challenge from a verifier:
+// BASE64URL(SHA256(verifier)), no padding.
+func pkceS256Challenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 // Callback validates the state (single-use, anti-CSRF), exchanges the code,
@@ -158,7 +174,7 @@ func (s *GoogleOAuthService) Callback(ctx context.Context, code, state string, m
 		return GoogleCallbackResult{}, ErrGoogleOAuthStateInvalid
 	}
 
-	identity, err := s.google.Exchange(ctx, code, row.Nonce)
+	identity, err := s.google.Exchange(ctx, code, row.Nonce, row.CodeVerifier)
 	if err != nil {
 		auth.LogSecurity(auth.EventGoogleLoginFailed, map[string]any{
 			"ip":         meta.IP,

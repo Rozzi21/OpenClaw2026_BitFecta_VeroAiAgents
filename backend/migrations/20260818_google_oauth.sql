@@ -24,9 +24,12 @@ CREATE TABLE IF NOT EXISTS oauth_states (
     -- attaching their Google identity). NULL for the normal login flow. When
     -- set, the callback links the verified Google sub to THIS user instead of
     -- resolving/creating an account (no email auto-merge → no takeover).
-    link_user_id UUID
+    link_user_id UUID,
+    -- PKCE code_verifier (server-side only; S256 challenge went to Google).
+    code_verifier VARCHAR(128) NOT NULL DEFAULT ''
 );
 ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS link_user_id UUID;
+ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS code_verifier VARCHAR(128) NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_oauth_states_link_user_id ON oauth_states (link_user_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_states_state_hash ON oauth_states (state_hash);

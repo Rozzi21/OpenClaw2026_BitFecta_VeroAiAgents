@@ -163,6 +163,21 @@ Properti state (semua dikunci test):
    400, audit `google_oauth_state_invalid`. Ini menutup replay + CSRF.
 3. Tukar code via **`golang.org/x/oauth2`** (`oauthConfig.Exchange`, ctx
    request — pola SEC-26). Tidak ada HTTP form manual.
+
+**Keputusan PKCE (19 Agu 2026): Authorization Code + PKCE (S256).** Backend
+Vero adalah **confidential client** (Go server memegang `GOOGLE_CLIENT_SECRET`;
+code exchange terjadi di server; secret tak pernah ke browser) — jadi flow
+server-side ini sudah benar dan PKCE tidak diwajibkan spesifikasi. Namun PKCE
+ditambahkan sebagai **defense-in-depth**: `code_verifier` (64 byte CSPRNG,
+disimpan server-side di `oauth_states.code_verifier`) → hanya challenge
+`S256 = BASE64URL(SHA256(verifier))` yang dikirim ke Google saat authorize
+(`oauth2.S256ChallengeOption`) → verifier dikirim saat exchange
+(`oauth2.VerifierOption`). Ini memitigasi authorization-code interception:
+attacker yang mencuri `code` dari redirect tidak bisa menukarnya tanpa
+verifier yang hanya ada di server. BUKAN implementasi PKCE-untuk-public-client
+(frontend tidak melakukan exchange) — PKCE di sini melindungi confidential
+client, valid dan direkomendasikan OAuth 2.1. Regression test:
+`TestPKCE_S256Challenge` (RFC 7636 Appendix B known-answer vector).
 4. Verifikasi `id_token` via **`github.com/coreos/go-oidc/v3`** — TANPA crypto
    manual. `verifier.Verify` memvalidasi: signature RS256 (JWKS dari OIDC
    discovery document, di-cache + dirotasi library), `iss` (pinned

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -443,6 +444,21 @@ func TestRandomURLToken_UnpredictableAndUnique(t *testing.T) {
 			t.Fatalf("duplicate state token generated — CSPRNG broken")
 		}
 		seen[tok] = true
+	}
+}
+
+// TestPKCE_S256Challenge: RFC 7636 Appendix B known-answer vector.
+// verifier "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk" must hash to
+// challenge "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".
+func TestPKCE_S256Challenge(t *testing.T) {
+	const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	const want = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+	if got := pkceS256Challenge(verifier); got != want {
+		t.Errorf("S256 challenge = %q, want %q", got, want)
+	}
+	// Challenge must be URL-safe (no +, /, or = padding).
+	if c := pkceS256Challenge("any-verifier"); strings.ContainsAny(c, "+/=") {
+		t.Errorf("challenge not URL-safe: %q", c)
 	}
 }
 
