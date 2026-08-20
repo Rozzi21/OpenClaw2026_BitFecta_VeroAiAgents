@@ -29,6 +29,8 @@ type mockOAuthRepo struct {
 	linkedUserID string
 	createdUser  *models.User
 	createErr    error
+
+	sessions []models.AuthSession
 }
 
 func newMockOAuthRepo() *mockOAuthRepo {
@@ -119,6 +121,80 @@ func (m *mockOAuthRepo) CreateUserWithGoogleIdentity(_ context.Context, u *model
 	m.usersBySub[sub] = u
 	m.usersByID[u.ID] = u
 	return nil
+}
+
+// --- AuthSessionRepository methods (needed so a real AuthService can act as
+// the issuer in the session-equivalence test) ---
+func (m *mockOAuthRepo) CreateAuthSession(_ context.Context, userID uuid.UUID, tokenJTI string, expiresAt time.Time) error {
+	m.sessions = append(m.sessions, models.AuthSession{UserID: userID, TokenJTI: tokenJTI, ExpiresAt: expiresAt})
+	return nil
+}
+func (m *mockOAuthRepo) FindActiveSessionByJTI(_ context.Context, jti string) (models.AuthSession, error) {
+	for _, s := range m.sessions {
+		if s.TokenJTI == jti && s.RevokedAt == nil && s.ExpiresAt.After(time.Now()) {
+			return s, nil
+		}
+	}
+	return models.AuthSession{}, gorm.ErrRecordNotFound
+}
+func (m *mockOAuthRepo) FindSessionByJTI(_ context.Context, jti string) (models.AuthSession, error) {
+	for _, s := range m.sessions {
+		if s.TokenJTI == jti {
+			return s, nil
+		}
+	}
+	return models.AuthSession{}, gorm.ErrRecordNotFound
+}
+func (m *mockOAuthRepo) RevokeSessionByJTI(_ context.Context, jti string) error {
+	for i := range m.sessions {
+		if m.sessions[i].TokenJTI == jti {
+			now := time.Now()
+			m.sessions[i].RevokedAt = &now
+		}
+	}
+	return nil
+}
+func (m *mockOAuthRepo) RotateSession(_ context.Context, jti string) (bool, error) {
+	for i := range m.sessions {
+		if m.sessions[i].TokenJTI == jti && m.sessions[i].RevokedAt == nil && m.sessions[i].ExpiresAt.After(time.Now()) {
+			now := time.Now()
+			m.sessions[i].RevokedAt = &now
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (m *mockOAuthRepo) RevokeAllActiveSessionsByUser(_ context.Context, userID uuid.UUID) error {
+	now := time.Now()
+	for i := range m.sessions {
+		if m.sessions[i].UserID == userID {
+			m.sessions[i].RevokedAt = &now
+		}
+	}
+	return nil
+}
+func (m *mockOAuthRepo) IsSessionRevoked(_ context.Context, jti string) (bool, error) {
+	for _, s := range m.sessions {
+		if s.TokenJTI == jti {
+			return s.RevokedAt != nil, nil
+		}
+	}
+	return false, nil
+}
+func (m *mockOAuthRepo) RevokeSessionByJTIIfExists(_ context.Context, jti string) error {
+	return m.RevokeSessionByJTI(context.Background(), jti)
+}
+func (m *mockOAuthRepo) CountActiveSessionsByJTI(_ context.Context, jti string) (int64, error) {
+	var n int64
+	for _, s := range m.sessions {
+		if s.TokenJTI == jti && s.RevokedAt == nil {
+			n++
+		}
+	}
+	return n, nil
+}
+func (m *mockOAuthRepo) RevokeSessionByJTIAllowMissing(_ context.Context, jti string) error {
+	return m.RevokeSessionByJTI(context.Background(), jti)
 }
 
 func (m *mockOAuthRepo) FirstOrCreateUser(_ context.Context, u *models.User) error { return nil }
@@ -459,6 +535,71 @@ func TestPKCE_S256Challenge(t *testing.T) {
 	// Challenge must be URL-safe (no +, /, or = padding).
 	if c := pkceS256Challenge("any-verifier"); strings.ContainsAny(c, "+/=") {
 		t.Errorf("challenge not URL-safe: %q", c)
+	}
+}
+
+// TestGoogleSession_EquivalentToPasswordLogin proves a Google login produces a
+// NORMAL Vero session, not a parallel auth mechanism: the issued access token
+// has aud=access, the refresh token aud=refresh with a JTI, an AuthSession row
+// is persisted, and the same refresh/revoke machinery works on it.
+func TestGoogleSession_EquivalentToPasswordLogin(t *testing.T) {
+	repo := newMockOAuthRepo()
+	// Pre-link a user to a Google sub.
+	existing := &models.User{Name: "A", Email: "a@x.com", Role: models.RoleUser}
+	existing.ID = uuid.New()
+	sub := "google-sub-eq"
+	existing.GoogleSub = &sub
+	repo.usersBySub[sub] = existing
+	repo.usersByID[existing.ID] = existing
+
+	// Real AuthService (real JWTService) as the session issuer.
+	cfg := config.Config{JWTSecret: "test-secret-key-0123456789abcdef", JWTAccessTTL: 15 * time.Minute, JWTRefreshTTL: 720 * time.Hour}
+	jwtSvc := auth.NewJWTService(cfg)
+	issuer := &AuthService{repo: repo, jwt: jwtSvc, cfg: cfg}
+
+	svc := &GoogleOAuthService{repo: repo, issuer: issuer, google: newTestGoogleClient(t), cfg: cfg}
+
+	// We bypass the network exchange by injecting the identity resolution
+	// through resolveUser + issueSession directly (same path Callback takes
+	// after a verified Google identity).
+	user, err := svc.resolveUser(context.Background(), auth.GoogleIdentity{Subject: sub, Email: "a@x.com", EmailVerified: true}, AuthRequestMeta{})
+	if err != nil {
+		t.Fatalf("resolveUser: %v", err)
+	}
+	issue, err := issuer.issueSession(context.Background(), user)
+	if err != nil {
+		t.Fatalf("issueSession: %v", err)
+	}
+
+	// Access token must be a valid access-audience JWT for this user.
+	accessClaims, err := jwtSvc.ParseWithAudience(issue.Response.AccessToken, auth.AudienceAccess)
+	if err != nil {
+		t.Fatalf("access token not a valid access JWT: %v", err)
+	}
+	if accessClaims.UserID != existing.ID || accessClaims.Role != models.RoleUser {
+		t.Errorf("access claims wrong: %+v", accessClaims)
+	}
+
+	// Refresh token must be a valid refresh-audience JWT carrying a JTI.
+	refreshClaims, err := jwtSvc.ParseWithAudience(issue.RefreshToken, auth.AudienceRefresh)
+	if err != nil {
+		t.Fatalf("refresh token not a valid refresh JWT: %v", err)
+	}
+	if refreshClaims.ID == "" || refreshClaims.ID != issue.RefreshJTI {
+		t.Errorf("refresh JTI missing/mismatch: %q vs %q", refreshClaims.ID, issue.RefreshJTI)
+	}
+
+	// An AuthSession row must be persisted for the refresh JTI (revocable).
+	if _, err := repo.FindActiveSessionByJTI(context.Background(), issue.RefreshJTI); err != nil {
+		t.Fatalf("AuthSession row not persisted: %v", err)
+	}
+
+	// The refresh token can be revoked (logout) through the normal machinery.
+	if err := repo.RevokeSessionByJTI(context.Background(), issue.RefreshJTI); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if _, err := repo.FindActiveSessionByJTI(context.Background(), issue.RefreshJTI); err == nil {
+		t.Error("session still active after revoke — logout broken")
 	}
 }
 

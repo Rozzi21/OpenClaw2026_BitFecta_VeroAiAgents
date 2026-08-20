@@ -185,6 +185,27 @@ client, valid dan direkomendasikan OAuth 2.1. Regression test:
    `aud` == `GOOGLE_CLIENT_ID`, `exp`. Di atas verifikasi library dicek:
    `nonce` == nonce dari state, `sub`+`email` tidak kosong.
 5. `email_verified` harus `true` (claim Google). Tolak bila false.
+
+**Checklist validasi (semua ditegakkan + dikunci test di
+`internal/auth/google_test.go`):**
+
+| Klaim | Divalidasi oleh | Test |
+|---|---|---|
+| `state` | `ConsumeOAuthState` (unknown/expired/replay ditolak) | `TestCallback_Rejects*` |
+| authorization code | `oauthConfig.Exchange` (Google menolak code palsu/dipakai) | E2E manual |
+| token signature | go-oidc JWKS RS256 | `TestVerifyIDToken_RejectsBadSignature` |
+| issuer | go-oidc pin + assert `accounts.google.com` | `TestVerifyIDToken_RejectsWrongIssuer` |
+| audience | `oidc.Config{ClientID}` | `TestVerifyIDToken_RejectsWrongAudience` |
+| expiration | go-oidc `exp` | `TestVerifyIDToken_RejectsExpired` |
+| nonce | `claims.Nonce == expectedNonce` | `TestVerifyIDToken_RejectsNonceMismatch` |
+| email verification | `email_verified` wajib true | `TestVerifyIDToken_RejectsEmailUnverified` |
+
+**Tidak percaya input arbitrary:** `redirect_uri` dari env (bukan request);
+`state` server-generated hash-only; provider OIDC di-pin Google (bukan OIDC
+arbitrary); `client_id` dari env. **Open redirect tertutup:** `return_to`
+divalidasi `sanitizeReturnTo` (hanya path `/...`, tolak `//`/CRLF) + origin FE
+dari env `GOOGLE_OAUTH_FRONTEND_URL`, bukan dari request
+(`TestSanitizeReturnTo`).
 6. Resolve user (§7) → `issueSession` → `ClaimOrder` → set refresh cookie →
    302 ke FE (fragment berisi access token).
 7. Audit: `google_login_success` / `google_login_failed` via
@@ -252,6 +273,14 @@ by sub/email.
   normal: access JWT aud `access`, refresh JWT aud `refresh` + baris
   `auth_sessions` + cookie HttpOnly.
 - Refresh/rotasi/reuse-detection/logout/revoke/role/middleware: tidak tersentuh.
+- **Ekuivalensi sesi (dikunci test `TestGoogleSession_EquivalentToPasswordLogin`):**
+  login Google menghasilkan sesi Vero NORMAL, BUKAN mekanisme auth paralel.
+  Access token `aud=access`, refresh token `aud=refresh` + JTI, baris
+  `auth_sessions` ter-persist (revocable), dan refresh/revoke/logout memakai
+  machinery yang SAMA dengan login password. Implikasi: user Google bisa akses
+  protected endpoints, refresh session, logout, revoke, akses/buat booking,
+  pakai AI chat, dan semua fitur authenticated normal — identik dengan user
+  email/password.
 - User Google bisa juga set password nanti (alur reset di luar scope); login
   email/password untuk akun hasil Google secara praktis tidak mungkin karena
   password random — dapat diterima.

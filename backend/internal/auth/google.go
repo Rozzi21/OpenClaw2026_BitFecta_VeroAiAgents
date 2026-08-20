@@ -169,6 +169,20 @@ func (g *GoogleClient) verifyIDToken(ctx context.Context, rawIDToken, expectedNo
 	}, nil
 }
 
+// newGoogleClientWithKeySet builds a client whose id_token verifier trusts a
+// STATIC key set (used by tests to sign tokens with a throwaway RSA key and
+// assert signature/issuer/audience/expiry enforcement without any network).
+func newGoogleClientWithKeySet(clientID, redirectURI string, keySet oidc.KeySet) *GoogleClient {
+	return &GoogleClient{
+		oauthConfig: oauth2.Config{
+			ClientID:    clientID,
+			RedirectURL: redirectURI,
+			Scopes:      googleScopes,
+		},
+		verifier: oidc.NewVerifier(googleIssuer, keySet, &oidc.Config{ClientID: clientID}),
+	}
+}
+
 // NewGoogleClientOfflineForTest builds a GoogleClient WITHOUT network
 // discovery, for unit tests that exercise non-network paths (state persistence,
 // open-redirect guard). It uses Google's well-known endpoints statically so no
