@@ -358,12 +358,16 @@ func randomURLToken(n int) (string, error) {
 // sanitizeReturnTo allowlists post-login paths: only absolute site-relative
 // paths are accepted ("/trip/x"), never scheme/host-relative URLs ("//evil").
 // Anything else falls back to "/". This is the open-redirect guard.
+//
+// Backslashes are rejected outright: browsers normalize "\" to "/" when
+// parsing a Location header, so "/\evil.com" would be navigated as the
+// protocol-relative "//evil.com" — an open redirect despite the "//" check.
 func sanitizeReturnTo(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") {
 		return "/"
 	}
-	if strings.ContainsAny(value, "\r\n") {
+	if strings.ContainsAny(value, "\r\n\\") {
 		return "/"
 	}
 	return value

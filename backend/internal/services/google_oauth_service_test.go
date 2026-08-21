@@ -217,7 +217,15 @@ func TestSanitizeReturnTo(t *testing.T) {
 		"  /login  ":           "/login",
 		"/path\r\nSet-Cookie:": "/",
 		"relative":             "/",
+		// Backslash variants: browsers normalize "\" to "/" in Location, so
+		// these would resolve to protocol-relative //evil.com (open redirect).
+		`/\\evil.com`:     "/",
+		`/\evil.com`:      "/",
+		"/%5C%5Cevil.com": "/%5C%5Cevil.com", // percent-encoded stays inert server-side
+		`/trip/\../admin`: "/",
+		`\\evil.com`:      "/",
 	}
+
 	for in, want := range cases {
 		if got := sanitizeReturnTo(in); got != want {
 			t.Errorf("sanitizeReturnTo(%q) = %q, want %q", in, got, want)

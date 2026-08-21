@@ -28,6 +28,8 @@ Login Google diimplementasikan sebagai provider tambahan; auth email/password TI
 - **Frontend**: `GoogleButton.tsx` (full navigation, bukan apiFetch), `OAuthReceiver.tsx` (baca `#access_token` fragment → `setCustomerAccessToken` → bersihkan hash), dipasang di `/login`, `/register`, dan guest-gate `trip/[id]` (placeholder disabled diganti tombol asli). `AuthForm` dapat prop opsional `google`.
 - **Config/env**: `GOOGLE_OAUTH_ENABLED` (default false), `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_OAUTH_FRONTEND_URL`. `Config.Validate()` menolak production bila enabled tanpa kredensial / masih localhost (pola SEC-4).
 - **Regression tests**: `internal/services/google_oauth_service_test.go` (sanitizeReturnTo open-redirect guard, hashed-state persistence, state single-use/replay, resolveUser by-sub/link-email/create/race-fallback).
+- **Open-redirect hardening (21 Agu 2026)**: `sanitizeReturnTo` kini juga menolak backslash (`\`). Browser menormalisasi `\` menjadi `/` saat parse header `Location`, sehingga `return_to=/\evil.com` akan dinavigasi sebagai protocol-relative `//evil.com` — bypass atas cek prefix `//`. Varian backslash dikunci di `TestSanitizeReturnTo`. Audit checklist penuh (state/iss/aud/signature/exp/nonce/email_verified/redirect) menemukan semua validasi lain sudah terpenuhi oleh `coreos/go-oidc` + state atomik + PKCE.
+
 
 Batasan diketahui:
 - **Feature-flag OFF by default** — endpoint membalas 404 saat `GOOGLE_OAUTH_ENABLED=false`; tombol tetap render tapi membawa user ke 404 bila backend belum dikonfigurasi. Aktifkan + isi kredensial Google Cloud sebelum dipakai.
