@@ -16,28 +16,17 @@ import (
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/repositories"
 	"golang.org/x/crypto/bcrypt"
 )
-
-// SEC-27: AuthService depends on narrow repository interfaces (user + auth
-// session store) instead of the concrete *repositories.Repository. The
-// concrete repo satisfies these implicitly; tests can now inject mocks.
 type AuthService struct {
 	repo AuthRepository
 	jwt  *auth.JWTService
 	cfg  config.Config
 }
 
-// AuthRepository is the narrow repository contract AuthService actually uses.
-// It composes the user + auth-session domain interfaces defined in
-// repositories/interfaces.go (SEC-27).
 type AuthRepository interface {
 	repositories.UserRepository
 	repositories.AuthSessionRepository
 }
 
-// refreshRotationConcurrentWindow bounds how recently a session must have been
-// revoked to be treated as a benign concurrent-refresh race loser rather than
-// token theft/reuse. Two tabs auto-refreshing within milliseconds lose the
-// rotation race; a revoked token resurfacing minutes later signals reuse.
 const refreshRotationConcurrentWindow = 1 * time.Minute
 
 func (s *AuthService) auditFields(meta AuthRequestMeta, extra map[string]any) map[string]any {
@@ -53,9 +42,7 @@ func (s *AuthService) auditFields(meta AuthRequestMeta, extra map[string]any) ma
 }
 
 func (s *AuthService) Register(ctx context.Context, req dto.RegisterRequest, meta AuthRequestMeta) (AuthIssueResult, error) {
-	// SEC-1: public registration must never honor a client-supplied role.
-	// Self-service signups are always plain users. Operator/admin accounts are
-	// created exclusively via the protected AuthService.CreateStaff path.
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return AuthIssueResult{}, err
@@ -246,20 +233,9 @@ func (s *AuthService) Me(ctx context.Context, userID uuid.UUID) (models.User, er
 	return s.repo.FindUserByID(ctx, userID)
 }
 
-// GuestUser now generates an isolated user per guest booking (Fix for #8).
-// We no longer share the `guest@vero.local` dummy user across all guest orders.
+// GuestUser now generates an isolated user per guest booking 
 func (s *AuthService) GuestUser(ctx context.Context) (models.User, error) {
-	// BUG-8 fix: handle bcrypt errors explicitly. Previously the error was
-	// swallowed (`hash, _ :=`), which on failure would persist a guest row
-	// with an empty/invalid password hash — a latent data-integrity defect.
-	// bcrypt.GenerateFromPassword fails only on inputs exceeding 72 bytes; a
-	// UUID v4 string is 36 chars so this is defensive, but the `_` pattern is
-	// dangerous if copied elsewhere.
-	// SEC-24 fix: (1) email uses the FULL 36-char UUID — previously truncated to
-	// 8 hex chars where birthday-paradox collisions (~65k guests) would let
-	// FirstOrCreateUser return a prior guest's account, attaching booking B to
-	// guest A. (2) password material comes from crypto/rand (CSPRNG), not
-	// math/rand-backed uuid v4.
+
 	passwordBytes := make([]byte, 16)
 	if _, err := rand.Read(passwordBytes); err != nil {
 		return models.User{}, err
