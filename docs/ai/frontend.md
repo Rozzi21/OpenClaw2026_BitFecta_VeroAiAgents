@@ -52,6 +52,16 @@ Dua komponen auth baru di `frontend/src/components/auth/`:
 
 Setelah token tersimpan, flow existing berjalan normal: `apiFetch` menyertakan Bearer dari localStorage; order guest sudah di-claim backend saat callback. Backoffice TIDAK memakai Google OAuth (staff tetap email/password).
 
+### Customer Session Helpers (23 Agu 2026)
+
+`frontend/src/lib/api.ts` kini mengekspos helper sesi customer yang melengkapi ekuivalensi login Google ↔ password. Sesi Google ADALAH sesi Vero normal (`AuthSession` + cookie refresh HttpOnly path `/api/v1/auth`), jadi ketiga helper ini bekerja identik untuk kedua provider:
+
+- **`ensureCustomerSession(): Promise<"active" | "anonymous">`** — menjamin access token bisa dipakai. Bila token sudah tersimpan → langsung `"active"`. Bila tidak (mis. access token 15-menit sudah kedaluwarsa / tab baru), ia menukar **cookie refresh HttpOnly** SEKALI via `POST /api/v1/auth/refresh` (rotasi atomik, sama seperti password login) lalu menyimpan token baru. Balas `"anonymous"` bila tidak ada sesi (belum login / sesi di-revoke / expired / reuse). **Concurrent caller berbagi SATU promise in-flight** (`refreshInFlight`) sehingga dua tab/komponen tidak men-balapan rotasi single-use (yang kalah akan ditolak reuse-detection backend).
+- **`customerLogout(): Promise<void>`** — sign-out NYATA: `POST /api/v1/auth/logout` membaca cookie refresh dan me-revoke JTI-nya di server (persis logout password), lalu membersihkan access token lokal. Aman dipanggil saat sudah anonymous.
+- **`clearCustomerAccessToken()`** — hanya menghapus token lokal TANPA menyentuh sesi server; pasangkan dengan `customerLogout()` untuk sign-out penuh.
+
+Sebelumnya customer frontend hanya menyimpan access token dan TIDAK pernah memanggil `/auth/refresh` atau `/auth/logout` — token mati setelah 15 menit tanpa perpanjangan dan tidak ada cara client me-revoke sesi. Helper ini menutup gap itu sehingga user Google (dan password) bisa refresh session + logout + revoke seperti fitur authenticated normal.
+
 ### Mekanisme Rekomendasi
 
 Response `POST /api/v1/chat` sekarang mengandung field:

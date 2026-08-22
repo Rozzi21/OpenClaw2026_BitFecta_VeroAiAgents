@@ -16,6 +16,7 @@ import (
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/repositories"
 	"golang.org/x/crypto/bcrypt"
 )
+
 type AuthService struct {
 	repo AuthRepository
 	jwt  *auth.JWTService
@@ -233,7 +234,7 @@ func (s *AuthService) Me(ctx context.Context, userID uuid.UUID) (models.User, er
 	return s.repo.FindUserByID(ctx, userID)
 }
 
-// GuestUser now generates an isolated user per guest booking 
+// GuestUser now generates an isolated user per guest booking
 func (s *AuthService) GuestUser(ctx context.Context) (models.User, error) {
 
 	passwordBytes := make([]byte, 16)

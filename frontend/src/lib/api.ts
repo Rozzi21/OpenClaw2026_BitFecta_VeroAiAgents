@@ -102,6 +102,73 @@ export function getCustomerAccessToken() {
   return typeof window !== "undefined" ? window.localStorage.getItem(CUSTOMER_TOKEN_KEY) : null;
 }
 
+// Remove the stored access token WITHOUT touching the server session. Pair with
+// customerLogout() for a real sign-out (which also revokes the refresh session);
+// this alone only forgets the token locally.
+export function clearCustomerAccessToken() {
+  if (typeof window !== "undefined") window.localStorage.removeItem(CUSTOMER_TOKEN_KEY);
+}
+
+type RefreshResponse = { access_token: string };
+
+// Refresh outcome. The Google session is a NORMAL Vero session, so the same
+// refresh cookie + rotation machinery applies identically to password logins.
+export type CustomerSessionState = "active" | "anonymous";
+
+// ensureCustomerSession guarantees a usable access token for an authenticated
+// customer. If a token is already stored it is returned as-is; otherwise the
+// HttpOnly refresh cookie (set at login/Google callback, path /api/v1/auth) is
+// exchanged once for a fresh access token via POST /auth/refresh (atomic
+// rotation, same as password login). Returns "active" when a token is
+// available, "anonymous" when there is no session (never logged in, or the
+// refresh session was revoked/expired/reused — e.g. after logout).
+//
+// Concurrent callers share ONE in-flight refresh so two tabs/components do not
+// race the single-use rotation (the loser would be rejected by reuse
+// detection). Only meaningful client-side (needs localStorage + cookies).
+let refreshInFlight: Promise<CustomerSessionState> | null = null;
+
+export function ensureCustomerSession(): Promise<CustomerSessionState> {
+  if (typeof window === "undefined") return Promise.resolve("anonymous");
+  if (getCustomerAccessToken()) return Promise.resolve("active");
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async (): Promise<CustomerSessionState> => {
+    try {
+      const result = await apiFetch<RefreshResponse>("/api/v1/auth/refresh", { method: "POST" });
+      if (result && result.access_token) {
+        setCustomerAccessToken(result.access_token);
+        return "active";
+      }
+      return "anonymous";
+    } catch {
+      // 401 (revoked/expired/reused) or network — no usable session.
+      return "anonymous";
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
+// customerLogout performs a REAL sign-out: it revokes the server-side refresh
+// session (POST /auth/logout reads the HttpOnly cookie and revokes its JTI,
+// exactly like a password-login logout) and clears the stored access token.
+// Works identically for Google-authenticated sessions (same AuthSession). Safe
+// to call when already anonymous. Returns after the local token is cleared.
+export async function customerLogout(): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    await apiFetch("/api/v1/auth/logout", { method: "POST" });
+  } catch {
+    // Network/parse failure — still clear the local token so the client is not
+    // stuck appearing logged-in; the server session expires on its own.
+  } finally {
+    refreshInFlight = null;
+    clearCustomerAccessToken();
+  }
+}
+
 // Abort requests that hang so the UI does not stay in a loading state forever.
 const REQUEST_TIMEOUT_MS = 35_000; // slightly above the max AI workflow timeout
 
