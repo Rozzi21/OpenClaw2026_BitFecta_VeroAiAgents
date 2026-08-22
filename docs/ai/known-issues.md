@@ -55,6 +55,20 @@ Karena sesi Google diterbitkan lewat `AuthService.issueSession` yang sama, ketig
 
 ---
 
+## A.16 Hardening Log HTTP: Redaksi Query Sensitif (23 Agu 2026) — DITUTUP
+
+**Audit sesi/cookie (23 Agu 2026).** Implementasi cookie diverifikasi sudah benar dan TIDAK diubah: refresh cookie (`auth.SetRefreshCookie`, `internal/auth/cookie.go`) = **HttpOnly(`true`)**, **Secure** (dari `JWT_COOKIE_SECURE`, dipaksa `true` saat SameSite=None), **SameSite** (`parseSameSite`, default Strict), **path scoped `/api/v1/auth`** (bukan `/` — cookie tidak terkirim ke endpoint lain), **maxAge = `JWTRefreshTTL`**. Refresh token hanya pernah lewat cookie HttpOnly (bukan body JSON), jadi tidak bisa dibaca JavaScript. Guest cookies (`vero_chat_session`, `vero_guest_session`) mengikuti pola sama. Google OAuth flow sudah benar: Google access/id token, client secret, authorization code, dan PKCE code_verifier TIDAK pernah di-log mentah — id_token hanya diverifikasi lalu dibuang, sesi diterbitkan `issueSession` Vero (lihat A.14).
+
+**Temuan:** `middlewares.StructuredLogger` (`internal/middlewares/logging.go`) me-log `c.Request.URL.RawQuery` **mentah**. Google callback adalah `GET /auth/google/callback?code=<authorization_code>&state=<state>&scope=...`, sehingga **authorization code single-use + anti-CSRF state masuk log** via field `query`. Melanggar prinsip "jangan pernah log OAuth authorization code / token / secret".
+
+**Perbaikan:** query kini dilewatkan `redactSensitiveQuery()` sebelum di-log. Helper mem-parse query, lalu mengganti value dari key sensitif (case-insensitive) menjadi `[redacted]`: `code`, `state`, `access_token`, `refresh_token`, `id_token`, `token`, `client_secret`, `password`. Key non-sensitif dipertahankan agar log tetap berguna. Pada kegagalan parse query, helper mengembalikan string kosong (fail-closed) alih-alih meng-echo string mentah. Tidak ada perubahan kontrak route/handler.
+
+**Regression test:** `internal/middlewares/logging_test.go` `TestRedactSensitiveQuery` — mengunci redaksi code/state Google callback, redaksi semua key sensitif (case-insensitive), preservasi query non-sensitif, empty query, dan fail-closed pada query malformed.
+
+Verifikasi: `go build ./...` + `go vet` + `gofmt` + `go test ./...` bersih.
+
+---
+
 ## A.13 Guest Order Limit (18 Agu 2026) — FITUR AKTIF, BUKAN TECH DEBT
 
 Fitur "satu order per guest" aktif: identitas = `GuestSession` (cookie

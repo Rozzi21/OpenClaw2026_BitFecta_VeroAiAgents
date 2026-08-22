@@ -2,6 +2,8 @@ package middlewares
 
 import (
 	"log/slog"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,7 +14,11 @@ func StructuredLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
-		query := c.Request.URL.RawQuery
+		// SEC-hardening (23 Agu 2026): never log raw OAuth/query secrets. The
+		// Google callback arrives as ?code=<authorization_code>&state=<state>;
+		// logging RawQuery verbatim would persist a single-use auth code and
+		// anti-CSRF state into logs. Redact sensitive keys before logging.
+		query := redactSensitiveQuery(c.Request.URL.RawQuery)
 
 		c.Next()
 
@@ -57,4 +63,38 @@ func StructuredLogger() gin.HandlerFunc {
 
 		slog.Log(c.Request.Context(), level, "http_request", attributes...)
 	}
+}
+
+// sensitiveQueryKeys are query parameter names that must never be written to
+// logs because they carry credentials or single-use OAuth artifacts. Matched
+// case-insensitively after url-decoding the key.
+var sensitiveQueryKeys = map[string]struct{}{
+	"code":          {}, // OAuth authorization code (single-use, but sensitive)
+	"state":         {}, // OAuth anti-CSRF state
+	"access_token":  {}, // bearer access token (defense-in-depth)
+	"refresh_token": {}, // refresh token (defense-in-depth)
+	"id_token":      {}, // OIDC id_token
+	"token":         {}, // generic bearer token
+	"client_secret": {}, // OAuth client secret
+	"password":      {}, // credential (defense-in-depth)
+}
+
+// redactSensitiveQuery parses rawQuery and re-encodes it with the values of
+// sensitive keys replaced by "[redacted]". It preserves non-sensitive keys and
+// ordering so logs stay useful for debugging. On any parse failure it returns
+// the empty string rather than risk leaking a secret (fail-closed).
+func redactSensitiveQuery(rawQuery string) string {
+	if rawQuery == "" {
+		return ""
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return ""
+	}
+	for key := range values {
+		if _, sensitive := sensitiveQueryKeys[strings.ToLower(key)]; sensitive {
+			values.Set(key, "[redacted]")
+		}
+	}
+	return values.Encode()
 }
