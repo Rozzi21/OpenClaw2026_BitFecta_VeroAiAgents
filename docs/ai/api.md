@@ -124,7 +124,8 @@ Request penting:
   - ✅ **SEC-1 sudah diperbaiki:** register publik **selalu** membuat user biasa (`RoleUser`). Field `role` dihapus dari DTO dan diabaikan total. Pembuatan operator/admin lewat endpoint admin terproteksi (lihat tabel Admin: `POST /admin/users`).
 - `login`: `{email|username, password}` (DTO `LoginRequest`).
 - `refresh`/`logout`: tanpa body; refresh token dibaca dari cookie HttpOnly.
-- Response auth: `{access_token, token_type:"Bearer", expires_in, user}` (user di-omit pada refresh).
+- Response auth: `{access_token, token_type:"Bearer", expires_in, user}` (user di-omit pada refresh). **`refresh_token` tidak pernah ada di body JSON** — DTO `AuthResponse.RefreshToken` bertag `json:"-"` (fail-closed, audit A.17) dan tidak ada DTO request berisi refresh token; token hanya lewat cookie HttpOnly.
+
 
 ### Chat & AI
 

@@ -118,10 +118,13 @@ func Load() Config {
 		CORSAllowedOrigins:   parseCSVEnv("CORS_ALLOWED_ORIGINS", []string{"http://localhost:3000", "http://localhost:3001", "http://localhost:5173"}),
 		TrustedProxies:       parseCSVEnv("TRUSTED_PROXIES", nil),
 
-		GoogleOAuthEnabled:     getBoolEnv("GOOGLE_OAUTH_ENABLED", false),
-		GoogleClientID:         strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
-		GoogleClientSecret:     strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
-		GoogleRedirectURI:      getEnv("GOOGLE_REDIRECT_URI", "http://localhost:8080/api/v1/auth/google/callback"),
+		GoogleOAuthEnabled: getBoolEnv("GOOGLE_OAUTH_ENABLED", false),
+		GoogleClientID:     strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
+		GoogleClientSecret: strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
+		// GOOGLE_REDIRECT_URI is the canonical OAuth2 name. GOOGLE_REDIRECT_URL
+		// is accepted as an alias fallback for operator convenience (23 Agu
+		// 2026); URI wins when both are set.
+		GoogleRedirectURI:      getEnvFirst([]string{"GOOGLE_REDIRECT_URI", "GOOGLE_REDIRECT_URL"}, "http://localhost:8080/api/v1/auth/google/callback"),
 		GoogleOAuthFrontendURL: getEnv("GOOGLE_OAUTH_FRONTEND_URL", "http://localhost:3000"),
 	}
 
@@ -177,6 +180,18 @@ func (c Config) Validate() error {
 func getEnv(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return fallback
+}
+
+// getEnvFirst returns the first non-empty value among keys, else the fallback.
+// Used for env aliases (e.g. GOOGLE_REDIRECT_URI canonical, GOOGLE_REDIRECT_URL
+// alias) where an earlier key takes precedence over later ones.
+func getEnvFirst(keys []string, fallback string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
 	}
 	return fallback
 }

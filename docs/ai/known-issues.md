@@ -55,6 +55,24 @@ Karena sesi Google diterbitkan lewat `AuthService.issueSession` yang sama, ketig
 
 ---
 
+## A.17 Audit Cookie/Session + Token Hygiene (23 Agu 2026) — DITUTUP
+
+**Audit sesi/cookie menyeluruh (23 Agu 2026)** terhadap requirement: (a) preserve HttpOnly/Secure/SameSite/path/expiration pada semua cookie; (b) refresh token tidak pernah terekspos ke JavaScript; (c) Google client secret / access token / id token / authorization code tidak pernah masuk log.
+
+**Verdict: implementasi SUDAH memenuhi semua requirement tanpa perubahan perilaku.** Verifikasi per-item:
+
+- **Refresh cookie** (`auth.SetRefreshCookie`/`ClearRefreshCookie`, `internal/auth/cookie.go`): HttpOnly=`true` hardcoded; Secure dari `JWT_COOKIE_SECURE` (default `true` di production via `config.Load`), dipaksa `true` saat SameSite=None; SameSite via `parseSameSite` (default Strict); **path scoped `/api/v1/auth`** (cookie tidak terkirim ke endpoint lain); maxAge = `JWTRefreshTTL` (default 720 jam, selaras expiry JWT refresh).
+- **Guest cookies** (`vero_chat_session` path `/api/v1/chat`, `vero_guest_session` path `/api/v1`): pola sama (HttpOnly, Secure config, SameSite default Lax, TTL masing-masing `GuestSessionTTL`/`GuestIdentityTTL`).
+- **Refresh token tidak pernah ke JS**: hanya di-set via `Set-Cookie` HttpOnly di `respondAuthIssue` (`helpers.go`) dan `GoogleCallback` (`google_auth_handlers.go`). Frontend (backoffice `api.ts`, customer `api.ts`) membaca hanya `access_token` dari JSON; `credentials:"include"` mengirim cookie tanpa membacanya. Legacy key `backoffice_refresh_token` di localStorage dihapus agresif saat module load + clear.
+- **Google secrets tidak masuk log**: client secret hanya di-pass ke `oauth2.Config` (dikirim hanya ke token endpoint Google oleh library); Google access token & id_token dari token response tidak pernah di-log — id_token hanya diverifikasi (`verifyIDToken`) lalu dibuang, identity (`sub`/email/name) yang dipakai; authorization code + state diredaksi dari request log oleh `redactSensitiveQuery` (A.16); PKCE `code_verifier` tidak pernah di-log; audit log (`auth.LogSecurity`) hanya memuat `jti`/user_id/email, bukan token. Handler `[google-callback] failed: %v` me-log sentinel-wrapped error — error dari `oauth2.Exchange`/`oidc.Verify` tidak mengandung token mentah.
+- **Model serialization fail-closed**: `models.User.Password`, `GoogleSub`, `OAuthState.StateHash/Nonce/CodeVerifier` semuanya `json:"-"`.
+
+**Perbaikan hardening (satu-satunya perubahan):** `internal/dto/dto.go` — struct `RefreshRequest` (`{refresh_token}`) dihapus (dead code; keberadaannya menandakan refresh token boleh dikirim via body JSON, melanggar prinsip cookie-only) dan `AuthResponse.RefreshToken` diubah dari `json:"refresh_token,omitempty"` menjadi **`json:"-"`** sehingga refresh token tidak akan terserialisasi ke respons JSON sekalipun code path masa depan lupa membersihkannya (fail-closed). Komentar SEC ditambahkan di DTO. Tidak ada caller yang terdampak (`grep` memastikan `RefreshRequest` tidak dipakai handler mana pun; `AuthService.issueSession` tidak mengisi `Response.RefreshToken`).
+
+Verifikasi: `gofmt -l` kosong, `go build ./...` bersih, `go test ./...` semua PASS.
+
+---
+
 ## A.16 Hardening Log HTTP: Redaksi Query Sensitif (23 Agu 2026) — DITUTUP
 
 **Audit sesi/cookie (23 Agu 2026).** Implementasi cookie diverifikasi sudah benar dan TIDAK diubah: refresh cookie (`auth.SetRefreshCookie`, `internal/auth/cookie.go`) = **HttpOnly(`true`)**, **Secure** (dari `JWT_COOKIE_SECURE`, dipaksa `true` saat SameSite=None), **SameSite** (`parseSameSite`, default Strict), **path scoped `/api/v1/auth`** (bukan `/` — cookie tidak terkirim ke endpoint lain), **maxAge = `JWTRefreshTTL`**. Refresh token hanya pernah lewat cookie HttpOnly (bukan body JSON), jadi tidak bisa dibaca JavaScript. Guest cookies (`vero_chat_session`, `vero_guest_session`) mengikuti pola sama. Google OAuth flow sudah benar: Google access/id token, client secret, authorization code, dan PKCE code_verifier TIDAK pernah di-log mentah — id_token hanya diverifikasi lalu dibuang, sesi diterbitkan `issueSession` Vero (lihat A.14).

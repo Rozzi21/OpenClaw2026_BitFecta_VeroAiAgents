@@ -24,13 +24,18 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
-type RefreshRequest struct {
-	RefreshToken string `json:"refresh_token"`
-}
+// NOTE (SEC, 23 Agu 2026): there is intentionally NO RefreshRequest DTO. The
+// refresh token travels ONLY in the HttpOnly cookie (Path=/api/v1/auth);
+// accepting it in a JSON body would let JavaScript handle it and widen the
+// XSS-exfiltration surface. Keep it that way.
 
 type AuthResponse struct {
-	AccessToken  string      `json:"access_token"`
-	RefreshToken string      `json:"refresh_token,omitempty"`
+	AccessToken string `json:"access_token"`
+	// RefreshToken is NEVER serialized: handlers clear it from the response
+	// and deliver the token via SetRefreshCookie only. The field exists so a
+	// populated value would be dropped by `json:"-"` even if a future code
+	// path forgot to clear it (fail-closed).
+	RefreshToken string      `json:"-"`
 	TokenType    string      `json:"token_type"`
 	ExpiresIn    int64       `json:"expires_in"`
 	User         interface{} `json:"user,omitempty"`
