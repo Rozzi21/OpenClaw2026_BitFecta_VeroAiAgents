@@ -58,8 +58,9 @@ Authorization Code Flow (server-side, confidential client):
 
 ```
 Browser → FE (/login, /register, trip page) klik "Continue with Google"
-  → window.location = /api/v1/auth/google/login?return_to=<path>
-Backend (GET /auth/google/login):
+  → window.location = /api/v1/auth/google?return_to=<path>
+  (catatan 24 Agu 2026: path /auth/google/login direname ke /auth/google)
+Backend (GET /auth/google):
   → generate state = random 32 byte (CSPRNG) + nonce
   → simpan OAuthState{StateHash, Nonce, ReturnTo, ExpiresAt: now+10m} ke DB
   → 302 redirect ke accounts.google.com/o/oauth2/v2/auth
@@ -242,7 +243,9 @@ Urutan resolusi user di callback (`resolveUser`):
    **Linking yang aman bersifat eksplisit**: user login ke akun Vero dulu →
    Account Settings → "Link Google Account" → `GET /auth/google/link` (guard
    `Auth`) → `StartLogin(..., &userID)` men-stamp `oauth_states.link_user_id` →
-   Google auth → callback mendeteksi `LinkUserID` → `LinkAccount` (bukan
+   Google auth (redirect URI `GOOGLE_LINK_REDIRECT_URI`) →
+   `GET /auth/google/link/callback` (24 Agu 2026; handler sama, state
+   mendeteksi `LinkUserID`) → `LinkAccount` (bukan
    resolveUser) → tulis ExternalIdentity. Pemilik akun Vero DAN pemilik akun
    Google sama-sama terbukti. Tidak ada merge diam-diam. Regression test:
    `TestResolveUser_NoAutoMergeByEmail`, `TestLinkAccount_Success`,
@@ -291,8 +294,9 @@ by sub/email.
   `frontend/src/components/auth/GoogleButton.tsx`) dipakai di `/login`,
   `/register`, dan menggantikan placeholder disabled di
   `frontend/src/app/trip/[id]/page.tsx` (guest order limit gate).
-- Aksi: `window.location.href = "/api/v1/auth/google/login?return_to=" +
-  encodeURIComponent(pathSaatIni)`. Bukan `apiFetch` — full navigation.
+- Aksi: `window.location.href = "/api/v1/auth/google?return_to=" +
+  encodeURIComponent(pathSaatIni)` (path `/google/login` direname ke `/google`
+  24 Agu 2026). Bukan `apiFetch` — full navigation.
 - Handler penerima token: komponen client kecil
   `frontend/src/components/auth/OAuthCallback.tsx` (dipasang di `/login`,
   `/register`, dan halaman trip, atau halaman khusus `/auth/callback`) yang
@@ -337,6 +341,7 @@ by sub/email.
 | `GOOGLE_CLIENT_ID` | _(kosong)_ | Client ID dari Google Cloud Console |
 | `GOOGLE_CLIENT_SECRET` | _(kosong)_ | Rahasia server. Wajib saat enabled di production |
 | `GOOGLE_REDIRECT_URI` | `http://localhost:8080/api/v1/auth/google/callback` | Harus terdaftar persis di Google Console |
+| `GOOGLE_LINK_REDIRECT_URI` | derive dari `GOOGLE_REDIRECT_URI` → `…/auth/google/link/callback` | Redirect URI alur link (24 Agu 2026); daftarkan juga di Google Console |
 | `GOOGLE_OAUTH_FRONTEND_URL` | `http://localhost:3000` | Origin FE untuk redirect final + validasi return_to |
 
 `.env.example` diperbarui; `deployment.md` mendapat tabel baru ini.

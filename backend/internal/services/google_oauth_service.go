@@ -146,7 +146,19 @@ func (s *GoogleOAuthService) StartLogin(ctx context.Context, returnTo string, li
 	if err := s.repo.CreateOAuthState(ctx, &row); err != nil {
 		return GoogleStartResult{}, err
 	}
-	return GoogleStartResult{RedirectURL: s.google.AuthCodeURL(state, nonce, pkceS256Challenge(codeVerifier))}, nil
+	return GoogleStartResult{RedirectURL: s.google.AuthCodeURLForRedirect(s.callbackRedirectURI(linkUserID != nil), state, nonce, pkceS256Challenge(codeVerifier))}, nil
+}
+
+// callbackRedirectURI returns the redirect URI the given flow must use. The
+// link flow gets its own /google/link/callback endpoint; the login flow uses
+// the configured callback. The token endpoint rejects exchanges whose
+// redirect_uri differs from the authorization request, so Callback must ask
+// for the same value again at exchange time.
+func (s *GoogleOAuthService) callbackRedirectURI(linkFlow bool) string {
+	if linkFlow && s.cfg.GoogleLinkRedirectURI != "" {
+		return s.cfg.GoogleLinkRedirectURI
+	}
+	return s.cfg.GoogleRedirectURI
 }
 
 // pkceS256Challenge derives the RFC 7636 S256 code_challenge from a verifier:
@@ -174,7 +186,7 @@ func (s *GoogleOAuthService) Callback(ctx context.Context, code, state string, m
 		return GoogleCallbackResult{}, ErrGoogleOAuthStateInvalid
 	}
 
-	identity, err := s.google.Exchange(ctx, code, row.Nonce, row.CodeVerifier)
+	identity, err := s.google.ExchangeForRedirect(ctx, s.callbackRedirectURI(row.LinkUserID != nil), code, row.Nonce, row.CodeVerifier)
 	if err != nil {
 		auth.LogSecurity(auth.EventGoogleLoginFailed, map[string]any{
 			"ip":         meta.IP,

@@ -263,6 +263,38 @@ func TestStartLogin_PersistsHashedStateOnly(t *testing.T) {
 	}
 }
 
+// The link flow must start Google with its OWN redirect URI
+// (/google/link/callback) so the route stays distinct end-to-end; the login
+// flow keeps the configured callback. (Route split, 24 Agu 2026.)
+func TestStartLogin_LinkFlowUsesLinkRedirectURI(t *testing.T) {
+	repo := newMockOAuthRepo()
+	cfg := testCfg()
+	cfg.GoogleRedirectURI = "http://localhost:8080/api/v1/auth/google/callback"
+	cfg.GoogleLinkRedirectURI = "http://localhost:8080/api/v1/auth/google/link/callback"
+	svc := &GoogleOAuthService{repo: repo, google: newTestGoogleClient(t), cfg: cfg}
+
+	uid := uuid.New()
+	res, err := svc.StartLogin(context.Background(), "/settings", &uid)
+	if err != nil {
+		t.Fatalf("StartLogin err: %v", err)
+	}
+	// AuthCodeURL query-escapes redirect_uri; assert on the escaped marker.
+	if !strings.Contains(res.RedirectURL, "link%2Fcallback") {
+		t.Errorf("link flow redirect URL does not target link callback: %q", res.RedirectURL)
+	}
+
+	res, err = svc.StartLogin(context.Background(), "/", nil)
+	if err != nil {
+		t.Fatalf("StartLogin err: %v", err)
+	}
+	if strings.Contains(res.RedirectURL, "link%2Fcallback") {
+		t.Errorf("login flow redirect URL must not target link callback: %q", res.RedirectURL)
+	}
+	if !strings.Contains(res.RedirectURL, "google%2Fcallback") {
+		t.Errorf("login flow redirect URL does not target login callback: %q", res.RedirectURL)
+	}
+}
+
 func TestCallback_RejectsUnknownOrReplayedState(t *testing.T) {
 	repo := newMockOAuthRepo()
 	svc := &GoogleOAuthService{repo: repo, google: newTestGoogleClient(t), cfg: testCfg()}

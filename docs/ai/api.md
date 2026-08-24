@@ -103,16 +103,18 @@ Legenda: 🔓 publik · 🔒 butuh access token · 👮 butuh role operator/admi
 | POST | `/refresh` | 🔓 (cookie) | Rotasi refresh -> access token baru |
 | POST | `/logout` | 🔓 (cookie) | Revoke session + hapus cookie |
 | GET | `/me` | 🔒 | Profil user saat ini |
-| GET | `/google/login?return_to=<path>` | 🔓 | **Google OAuth (19 Agu 2026).** Bukan JSON — 302 redirect ke Google consent screen. State+nonce single-use disimpan DB (hash SHA-256). 404 bila `GOOGLE_OAUTH_ENABLED=false` |
+| GET | `/google?return_to=<path>` | 🔓 | **Google OAuth (19 Agu 2026; path `/google/login` direname ke `/google` 24 Agu 2026).** Bukan JSON — 302 redirect ke Google consent screen. State+nonce single-use disimpan DB (hash SHA-256). 404 bila `GOOGLE_OAUTH_ENABLED=false` |
 | GET | `/google/callback?code&state` | 🔓 | **Google OAuth.** Verifikasi state (atomik) + tukar code + verifikasi id_token (JWKS, iss/aud/exp/nonce) + find-by-sub / create-baru (TANPA auto-merge email) → sesi Vero normal → 302 ke FE (`#access_token=...` fragment + cookie refresh HttpOnly). 404 bila disabled |
-| GET | `/google/link?return_to=<path>` | 🔒 JWT | **Link Google Account eksplisit (19 Agu 2026).** Wajib login (guard Auth). Men-stamp `oauth_states.link_user_id` lalu 302 ke Google. Callback menautkan Google sub ke akun yang TERBUKTI milik caller (bukan auto-merge email) → anti account-takeover. Callback sukses redirect `?google_linked=1` tanpa sesi baru. 404 bila disabled |
+| GET | `/google/link?return_to=<path>` | 🔒 JWT | **Link Google Account eksplisit (19 Agu 2026).** Wajib login (guard Auth). Men-stamp `oauth_states.link_user_id` lalu 302 ke Google dengan redirect URI khusus `/google/link/callback`. Callback menautkan Google sub ke akun yang TERBUKTI milik caller (bukan auto-merge email) → anti account-takeover. 404 bila disabled |
+| GET | `/google/link/callback?code&state` | 🔓 | **Callback link flow (24 Agu 2026).** Handler yang sama dengan `/google/callback`; `link_user_id` pada state memilih cabang linking (`LinkAccount`). Sukses → 302 ke FE `?google_linked=1` TANPA sesi baru (user sudah login). 404 bila disabled |
 
 ### Google OAuth ("Continue with Google", 19 Agu 2026)
 
 Provider tambahan; **bukan** envelope JSON — kedua endpoint di atas adalah full-page navigation (302 redirect). Hasil akhir adalah sesi Vero NORMAL (memakai `AuthService.issueSession` yang sama): access JWT aud `access` + cookie refresh HttpOnly + baris `auth_sessions`, sehingga rotasi/reuse-detection/logout/revoke identik dengan login password.
 
 - `return_to` divalidasi allowlist (hanya path relatif `/...`, bukan `//`) → anti open-redirect; disimpan server-side di row state, bukan dipercaya dari callback.
-- Account linking: 1) `google_sub` match → login; 2) email `email_verified=true` match → link `google_sub` (password lama tetap jalan); 3) tidak ada → buat `RoleUser` baru (password bcrypt acak). Role tidak pernah dari luar (SEC-1).
+- Account linking: 1) `google_sub` match → login; 2) email match tapi sub belum ter-link → **DITOLAK** (`auth_error=account_exists_link_required`, anti account-takeover) — link HANYA via alur eksplisit `/google/link` (user login dulu); 3) tidak ada → buat `RoleUser` baru (password bcrypt acak). Role tidak pernah dari luar (SEC-1).
+- Login flow dan link flow memakai redirect URI berbeda (`GOOGLE_REDIRECT_URI` vs `GOOGLE_LINK_REDIRECT_URI`, derive otomatis `…/google/callback` → `…/google/link/callback`, 24 Agu 2026); keduanya harus terdaftar di Google Cloud Console.
 - Callback me-claim order guest ke akun (seperti login/register password).
 - Access token dikirim ke FE lewat **URL fragment** (`#access_token=`) agar tidak masuk access log / tidak dikirim balik sebagai query param. FE membaca fragment via `OAuthReceiver.tsx` → `setCustomerAccessToken`.
 - Rencana + keputusan keamanan lengkap: [../GOOGLE_OAUTH_PLAN.md](../GOOGLE_OAUTH_PLAN.md). Batasan/feature-flag: `known-issues.md` A.14.

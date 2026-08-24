@@ -17,11 +17,13 @@ import (
 
 // Google OAuth handlers (18 Agu 2026). Unlike the JSON auth endpoints these
 // are full-page navigations, so they answer with HTTP redirects, not the
-// JSON envelope: /google/login 302s to the Google consent screen and
+// JSON envelope: /google 302s to the Google consent screen and
 // /google/callback 302s back to the frontend. The access token is delivered
 // in the URL FRAGMENT (#...) of the final redirect so it never reaches access
 // logs or the backend as a query param; the refresh token goes out as the
-// usual HttpOnly cookie on the 302 response.
+// usual HttpOnly cookie on the 302 response. The link flow (/google/link →
+// /google/link/callback) shares GoogleCallback; the OAuth state's
+// link_user_id selects the linking branch.
 
 func (h *Handler) GoogleLogin(c *gin.Context) {
 	if !h.Services.Google.Enabled() {

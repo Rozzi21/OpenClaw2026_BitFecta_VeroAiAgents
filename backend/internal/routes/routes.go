@@ -41,12 +41,15 @@ func Register(router *gin.Engine, h *handlers.Handler, s *services.Services) {
 			authGroup.POST("/logout", h.Logout)
 			authGroup.GET("/me", middlewares.Auth(s.JWT), h.Me)
 			// Google OAuth (full-page navigations; redirect-based, not JSON).
-			authGroup.GET("/google/login", h.GoogleLogin)
+			authGroup.GET("/google", h.GoogleLogin)
 			authGroup.GET("/google/callback", h.GoogleCallback)
 			// Explicit "Link Google Account" — requires an authenticated Vero
 			// session so the verified Google identity is attached to the PROVEN
 			// account owner (no email-based auto-merge → no account takeover).
+			// The link flow returns to its own callback path (same handler; the
+			// state's link_user_id selects the linking branch).
 			authGroup.GET("/google/link", middlewares.Auth(s.JWT), h.GoogleLinkStart)
+			authGroup.GET("/google/link/callback", h.GoogleCallback)
 		}
 
 		// SEC-18: SSE broadcasts internal workflow/payment events to every

@@ -63,10 +63,15 @@ type Config struct {
 	// in Google Cloud Console). FrontendURL is the origin used for the final
 	// post-login redirect and the return_to allowlist — never taken from the
 	// request (open-redirect guard).
-	GoogleOAuthEnabled     bool
-	GoogleClientID         string
-	GoogleClientSecret     string
-	GoogleRedirectURI      string
+	GoogleOAuthEnabled bool
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRedirectURI  string
+	// GoogleLinkRedirectURI is the redirect URI of the explicit "Link Google
+	// Account" flow (/api/v1/auth/google/link/callback). Derived from
+	// GoogleRedirectURI unless GOOGLE_LINK_REDIRECT_URI overrides it. Both
+	// URIs must be registered in Google Cloud Console.
+	GoogleLinkRedirectURI  string
 	GoogleOAuthFrontendURL string
 
 	// TrustedProxies is the list of reverse proxies that are trusted when
@@ -128,6 +133,10 @@ func Load() Config {
 		GoogleOAuthFrontendURL: getEnv("GOOGLE_OAUTH_FRONTEND_URL", "http://localhost:3000"),
 	}
 
+	// Link callback URI: explicit env wins; otherwise derive from the login
+	// callback path so both flows land on their own endpoints.
+	cfg.GoogleLinkRedirectURI = getEnv("GOOGLE_LINK_REDIRECT_URI", deriveGoogleLinkRedirectURI(cfg.GoogleRedirectURI))
+
 	if cfg.DatabaseURL == "" || strings.Contains(cfg.DatabaseURL, "YOUR_PASSWORD") {
 		cfg.DatabaseURL = fmt.Sprintf(
 			"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
@@ -141,6 +150,19 @@ func Load() Config {
 	}
 
 	return cfg
+}
+
+// deriveGoogleLinkRedirectURI rewrites the login callback path to the link
+// callback path ("/auth/google/callback" -> "/auth/google/link/callback") so
+// the link flow lands on its own endpoint. Custom URIs that do not end with
+// that suffix are returned unchanged (both flows then share one callback; the
+// OAuth state row still distinguishes link from login).
+func deriveGoogleLinkRedirectURI(loginURI string) string {
+	const loginSuffix = "/auth/google/callback"
+	if strings.HasSuffix(loginURI, loginSuffix) {
+		return strings.TrimSuffix(loginURI, loginSuffix) + "/auth/google/link/callback"
+	}
+	return loginURI
 }
 
 // Validate enforces production-safety invariants. In production the JWT secret
@@ -169,8 +191,8 @@ func (c Config) Validate() error {
 			if c.GoogleClientID == "" || c.GoogleClientSecret == "" {
 				return errors.New("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set when GOOGLE_OAUTH_ENABLED=true in production")
 			}
-			if strings.Contains(c.GoogleRedirectURI, "localhost") || strings.Contains(c.GoogleOAuthFrontendURL, "localhost") {
-				return errors.New("GOOGLE_REDIRECT_URI and GOOGLE_OAUTH_FRONTEND_URL must not point to localhost when APP_ENV=production")
+			if strings.Contains(c.GoogleRedirectURI, "localhost") || strings.Contains(c.GoogleLinkRedirectURI, "localhost") || strings.Contains(c.GoogleOAuthFrontendURL, "localhost") {
+				return errors.New("GOOGLE_REDIRECT_URI, GOOGLE_LINK_REDIRECT_URI and GOOGLE_OAUTH_FRONTEND_URL must not point to localhost when APP_ENV=production")
 			}
 		}
 	}

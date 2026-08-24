@@ -13,7 +13,7 @@ export function GoogleButton({ label = "Continue with Google" }: { label?: strin
   function start() {
     const query = searchParams?.toString();
     const returnTo = query ? `${pathname}?${query}` : pathname ?? "/";
-    window.location.href = `/api/v1/auth/google/login?return_to=${encodeURIComponent(returnTo)}`;
+    window.location.href = `/api/v1/auth/google?return_to=${encodeURIComponent(returnTo)}`;
   }
 
   return (
