@@ -38,7 +38,7 @@ export default function RegisterPage() {
         includeName
         google={
           <Suspense fallback={null}>
-            <GoogleButton label="Sign up with Google" />
+            <GoogleButton />
           </Suspense>
         }
         footer={<Link href="/login">Already have an account? Login</Link>}

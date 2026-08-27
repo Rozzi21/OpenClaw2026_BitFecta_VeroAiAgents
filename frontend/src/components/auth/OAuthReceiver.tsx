@@ -35,9 +35,36 @@ export function OAuthReceiver({ onError }: { onError?: (message: string) => void
     const query = new URLSearchParams(window.location.search);
     const authError = query.get("auth_error");
     if (authError && onError) {
-      onError("Google sign-in failed. Please try again.");
+      onError(oauthErrorMessage(authError));
     }
   }, [onError]);
 
   return null;
+}
+
+// Maps the backend's log-safe auth_error codes (see google_auth_handlers.go)
+// to user-friendly messages. Raw internal errors never reach the client
+// (SEC-15), so each code covers a class of failure:
+// - access_denied: user cancelled or Google denied consent.
+// - start_failed: backend could not build the consent redirect (backend error).
+// - missing_params / authentication_failed: invalid/expired OAuth state,
+//   code exchange failure, or id_token verification failure (callback error).
+// - account_exists_link_required / google_identity_taken: account conflicts.
+function oauthErrorMessage(code: string): string {
+  switch (code) {
+    case "access_denied":
+      return "Google sign-in was cancelled. No changes were made to your account.";
+    case "start_failed":
+      return "Could not start Google sign-in. Please try again.";
+    case "missing_params":
+      return "Google sign-in was interrupted. Please try again.";
+    case "authentication_failed":
+      return "Google sign-in could not be completed. Please try again.";
+    case "account_exists_link_required":
+      return "An account with this email already exists. Please log in with your email and password.";
+    case "google_identity_taken":
+      return "This Google account is already linked to another user.";
+    default:
+      return "Google sign-in failed. Please try again.";
+  }
 }
