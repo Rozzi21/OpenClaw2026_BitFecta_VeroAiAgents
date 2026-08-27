@@ -1,8 +1,10 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -237,7 +239,7 @@ func TestStartLogin_PersistsHashedStateOnly(t *testing.T) {
 	repo := newMockOAuthRepo()
 	svc := &GoogleOAuthService{repo: repo, google: newTestGoogleClient(t), cfg: testCfg()}
 
-	res, err := svc.StartLogin(context.Background(), "/trip/abc", nil)
+	res, err := svc.StartLogin(context.Background(), "/trip/abc", nil, AuthRequestMeta{})
 	if err != nil {
 		t.Fatalf("StartLogin err: %v", err)
 	}
@@ -274,7 +276,7 @@ func TestStartLogin_LinkFlowUsesLinkRedirectURI(t *testing.T) {
 	svc := &GoogleOAuthService{repo: repo, google: newTestGoogleClient(t), cfg: cfg}
 
 	uid := uuid.New()
-	res, err := svc.StartLogin(context.Background(), "/settings", &uid)
+	res, err := svc.StartLogin(context.Background(), "/settings", &uid, AuthRequestMeta{})
 	if err != nil {
 		t.Fatalf("StartLogin err: %v", err)
 	}
@@ -283,7 +285,7 @@ func TestStartLogin_LinkFlowUsesLinkRedirectURI(t *testing.T) {
 		t.Errorf("link flow redirect URL does not target link callback: %q", res.RedirectURL)
 	}
 
-	res, err = svc.StartLogin(context.Background(), "/", nil)
+	res, err = svc.StartLogin(context.Background(), "/", nil, AuthRequestMeta{})
 	if err != nil {
 		t.Fatalf("StartLogin err: %v", err)
 	}
@@ -640,6 +642,61 @@ func TestGoogleSession_EquivalentToPasswordLogin(t *testing.T) {
 	}
 	if _, err := repo.FindActiveSessionByJTI(context.Background(), issue.RefreshJTI); err == nil {
 		t.Error("session still active after revoke — logout broken")
+	}
+}
+
+// TestGoogleAuditEvents_SafePayloadsOnly locks the audit-trail contract
+// (27 Agu 2026): the Google flow emits google_login_started / _failed with
+// safe identifiers (provider, flow, success, reason, request meta) and NEVER
+// leaks flow secrets — authorization code, raw state, nonce, or PKCE verifier.
+func TestGoogleAuditEvents_SafePayloadsOnly(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	repo := newMockOAuthRepo()
+	svc := &GoogleOAuthService{repo: repo, google: newTestGoogleClient(t), cfg: testCfg()}
+	meta := AuthRequestMeta{IP: "127.0.0.1", UserAgent: "ua", RequestID: "req-1"}
+
+	if _, err := svc.StartLogin(context.Background(), "/trip/abc", nil, meta); err != nil {
+		t.Fatalf("StartLogin err: %v", err)
+	}
+	// Failing callback: unknown state → google_login_failed (state_invalid).
+	if _, err := svc.Callback(context.Background(), "secret-auth-code", "raw-unknown-state", meta); !errors.Is(err, ErrGoogleOAuthStateInvalid) {
+		t.Fatalf("expected ErrGoogleOAuthStateInvalid, got %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{
+		auth.EventGoogleLoginStarted,
+		auth.EventGoogleLoginFailed,
+		auth.EventGoogleOAuthStateInvalid,
+		`"provider":"google"`,
+		`"flow":"login"`,
+		`"success":true`,
+		`"success":false`,
+		`"reason":"state_invalid"`,
+		`"request_id":"req-1"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("audit log missing %q", want)
+		}
+	}
+
+	// Forbidden: no flow secret may appear anywhere in the audit output.
+	for _, forbidden := range []string{"secret-auth-code", "raw-unknown-state"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("audit log leaks forbidden value %q", forbidden)
+		}
+	}
+	for _, row := range repo.states {
+		if strings.Contains(out, row.Nonce) {
+			t.Error("audit log leaks nonce")
+		}
+		if strings.Contains(out, row.CodeVerifier) {
+			t.Error("audit log leaks PKCE code_verifier")
+		}
 	}
 }
 

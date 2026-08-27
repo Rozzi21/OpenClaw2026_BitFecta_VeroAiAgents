@@ -30,7 +30,7 @@ func (h *Handler) GoogleLogin(c *gin.Context) {
 		utils_NotFoundOAuth(c)
 		return
 	}
-	result, err := h.Services.Google.StartLogin(c.Request.Context(), c.Query("return_to"), nil)
+	result, err := h.Services.Google.StartLogin(c.Request.Context(), c.Query("return_to"), nil, authRequestMeta(c))
 	if err != nil {
 		log.Printf("[google-login] start failed: %v", err)
 		h.redirectOAuthError(c, "/", "start_failed")
@@ -55,7 +55,7 @@ func (h *Handler) GoogleLinkStart(c *gin.Context) {
 		h.redirectOAuthError(c, "/", "unauthorized")
 		return
 	}
-	result, err := h.Services.Google.StartLogin(c.Request.Context(), c.Query("return_to"), &uid)
+	result, err := h.Services.Google.StartLogin(c.Request.Context(), c.Query("return_to"), &uid, authRequestMeta(c))
 	if err != nil {
 		log.Printf("[google-link] start failed user=%s: %v", uid, err)
 		h.redirectOAuthError(c, "/", "start_failed")

@@ -118,7 +118,11 @@ func (s *GoogleOAuthService) Enabled() bool { return s.enabled && s.google != ni
 // linkUserID is nil for the normal login flow; when set (the "Link Google
 // Account" flow, called by an authenticated handler), the callback links the
 // verified Google sub to that user instead of resolving/creating an account.
-func (s *GoogleOAuthService) StartLogin(ctx context.Context, returnTo string, linkUserID *uuid.UUID) (GoogleStartResult, error) {
+//
+// Emits the google_login_started audit event. Payload is deliberately limited
+// to safe identifiers (ip/user_agent/request_id/flow/link_user_id) — the raw
+// state, nonce, and PKCE verifier are secrets of the flow and never logged.
+func (s *GoogleOAuthService) StartLogin(ctx context.Context, returnTo string, linkUserID *uuid.UUID, meta AuthRequestMeta) (GoogleStartResult, error) {
 	state, err := randomURLToken(32)
 	if err != nil {
 		return GoogleStartResult{}, err
@@ -144,9 +148,39 @@ func (s *GoogleOAuthService) StartLogin(ctx context.Context, returnTo string, li
 		LinkUserID:   linkUserID,
 	}
 	if err := s.repo.CreateOAuthState(ctx, &row); err != nil {
+		auth.LogSecurity(auth.EventGoogleLoginStarted, map[string]any{
+			"ip":         meta.IP,
+			"user_agent": meta.UserAgent,
+			"request_id": meta.RequestID,
+			"provider":   "google",
+			"flow":       googleFlowName(linkUserID),
+			"success":    false,
+			"reason":     "state_persist_failed",
+		})
 		return GoogleStartResult{}, err
 	}
+	startFields := map[string]any{
+		"ip":         meta.IP,
+		"user_agent": meta.UserAgent,
+		"request_id": meta.RequestID,
+		"provider":   "google",
+		"flow":       googleFlowName(linkUserID),
+		"success":    true,
+	}
+	if linkUserID != nil {
+		startFields["link_user_id"] = linkUserID.String()
+	}
+	auth.LogSecurity(auth.EventGoogleLoginStarted, startFields)
 	return GoogleStartResult{RedirectURL: s.google.AuthCodeURLForRedirect(s.callbackRedirectURI(linkUserID != nil), state, nonce, pkceS256Challenge(codeVerifier))}, nil
+}
+
+// googleFlowName labels the audit trail: "login" for the normal flow, "link"
+// for the authenticated account-linking flow.
+func googleFlowName(linkUserID *uuid.UUID) string {
+	if linkUserID != nil {
+		return "link"
+	}
+	return "login"
 }
 
 // callbackRedirectURI returns the redirect URI the given flow must use. The
@@ -178,22 +212,24 @@ func (s *GoogleOAuthService) Callback(ctx context.Context, code, state string, m
 		return GoogleCallbackResult{}, err
 	}
 	if !ok {
+		// Dedicated event kept for CSRF-attempt alerting; also counted as a
+		// login failure. No raw state is logged — only its fate.
 		auth.LogSecurity(auth.EventGoogleOAuthStateInvalid, map[string]any{
 			"ip":         meta.IP,
 			"user_agent": meta.UserAgent,
 			"request_id": meta.RequestID,
+			"provider":   "google",
+			"success":    false,
 		})
+		s.logGoogleLoginFailed(meta, "state_invalid")
 		return GoogleCallbackResult{}, ErrGoogleOAuthStateInvalid
 	}
 
 	identity, err := s.google.ExchangeForRedirect(ctx, s.callbackRedirectURI(row.LinkUserID != nil), code, row.Nonce, row.CodeVerifier)
 	if err != nil {
-		auth.LogSecurity(auth.EventGoogleLoginFailed, map[string]any{
-			"ip":         meta.IP,
-			"user_agent": meta.UserAgent,
-			"request_id": meta.RequestID,
-			"error":      err.Error(),
-		})
+		// Safe reason only: exchange/verify errors may embed provider response
+		// detail — never log the raw error (or the code/tokens) here.
+		s.logGoogleLoginFailed(meta, "exchange_or_verify_failed")
 		return GoogleCallbackResult{}, err
 	}
 
@@ -210,14 +246,16 @@ func (s *GoogleOAuthService) Callback(ctx context.Context, code, state string, m
 
 	user, err := s.resolveUser(ctx, identity, meta)
 	if err != nil {
+		s.logGoogleLoginFailed(meta, googleResolveFailReason(err))
 		return GoogleCallbackResult{}, err
 	}
 
 	issue, err := s.issuer.issueSession(ctx, user)
 	if err != nil {
+		s.logGoogleLoginFailed(meta, "session_issue_failed")
 		return GoogleCallbackResult{}, err
 	}
-	auth.LogSecurity(auth.EventLoginSuccess, map[string]any{
+	auth.LogSecurity(auth.EventGoogleLoginSuccess, map[string]any{
 		"ip":         meta.IP,
 		"user_agent": meta.UserAgent,
 		"request_id": meta.RequestID,
@@ -225,8 +263,37 @@ func (s *GoogleOAuthService) Callback(ctx context.Context, code, state string, m
 		"email":      user.Email,
 		"jti":        issue.RefreshJTI,
 		"provider":   "google",
+		"flow":       "login",
+		"success":    true,
 	})
 	return GoogleCallbackResult{Issue: issue, ReturnTo: row.ReturnTo}, nil
+}
+
+// logGoogleLoginFailed emits google_login_failed with only safe identifiers
+// and a category reason — never the raw provider error, authorization code,
+// or any token.
+func (s *GoogleOAuthService) logGoogleLoginFailed(meta AuthRequestMeta, reason string) {
+	auth.LogSecurity(auth.EventGoogleLoginFailed, map[string]any{
+		"ip":         meta.IP,
+		"user_agent": meta.UserAgent,
+		"request_id": meta.RequestID,
+		"provider":   "google",
+		"success":    false,
+		"reason":     reason,
+	})
+}
+
+// googleResolveFailReason maps account-resolution sentinel errors to safe,
+// stable category strings for the audit trail.
+func googleResolveFailReason(err error) string {
+	switch {
+	case errors.Is(err, ErrGoogleAccountExists):
+		return "account_link_required"
+	case errors.Is(err, ErrGoogleIdentityTaken):
+		return "identity_taken"
+	default:
+		return "account_resolution_failed"
+	}
 }
 
 // resolveUser implements the account-resolution policy. Deliberately there is
@@ -296,9 +363,12 @@ func (s *GoogleOAuthService) resolveUser(ctx context.Context, identity auth.Goog
 		return models.User{}, err
 	}
 	auth.LogSecurity(auth.EventGoogleAccountCreated, map[string]any{
-		"ip":      meta.IP,
-		"user_id": newUser.ID.String(),
-		"email":   newUser.Email,
+		"ip":         meta.IP,
+		"request_id": meta.RequestID,
+		"user_id":    newUser.ID.String(),
+		"email":      newUser.Email,
+		"provider":   "google",
+		"success":    true,
 	})
 	return newUser, nil
 }
@@ -330,9 +400,13 @@ func (s *GoogleOAuthService) LinkAccount(ctx context.Context, userID string, ide
 			return user, nil // idempotent: same account re-linking
 		}
 		auth.LogSecurity(auth.EventGoogleLoginFailed, map[string]any{
-			"ip":      meta.IP,
-			"user_id": user.ID.String(),
-			"error":   "google identity already linked to another account",
+			"ip":         meta.IP,
+			"request_id": meta.RequestID,
+			"user_id":    user.ID.String(),
+			"provider":   "google",
+			"flow":       "link",
+			"success":    false,
+			"reason":     "identity_taken",
 		})
 		return models.User{}, ErrGoogleIdentityTaken
 	}
@@ -343,9 +417,13 @@ func (s *GoogleOAuthService) LinkAccount(ctx context.Context, userID string, ide
 		return models.User{}, linkErr
 	}
 	auth.LogSecurity(auth.EventGoogleAccountLinked, map[string]any{
-		"ip":      meta.IP,
-		"user_id": user.ID.String(),
-		"email":   user.Email,
+		"ip":         meta.IP,
+		"request_id": meta.RequestID,
+		"user_id":    user.ID.String(),
+		"email":      user.Email,
+		"provider":   "google",
+		"flow":       "link",
+		"success":    true,
 	})
 	user.GoogleSub = &identity.Subject
 	return user, nil
