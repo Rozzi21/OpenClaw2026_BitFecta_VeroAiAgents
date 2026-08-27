@@ -42,8 +42,11 @@ type AIRepository interface {
 
 // MCPToolExecutor is the inter-service contract AIService uses to run a tool
 // through the MCP pipeline (SEC-27). *MCPService satisfies it.
+// userID is the authenticated caller when the chat request carried a valid
+// Bearer token (nil for pure guests). create_booking uses it to attribute the
+// order to the account (no guest-order limit) instead of the guest session.
 type MCPToolExecutor interface {
-	Execute(ctx context.Context, sessionID uuid.UUID, toolName string, payload map[string]interface{}) (ToolResult, error)
+	Execute(ctx context.Context, sessionID uuid.UUID, userID *uuid.UUID, toolName string, payload map[string]interface{}) (ToolResult, error)
 }
 
 type ChatResult struct {
@@ -129,7 +132,7 @@ func (s *AIService) Chat(ctx context.Context, chatCtx ChatContext, req dto.ChatR
 	// and buildMessages instead of re-fetching it. Chat() already validated
 	// and loaded the session above; a second FindChatSession in buildMessages
 	// was a redundant DB round-trip (~10-30ms) per request.
-	aiResponse, toolResults, err := s.generateWithToolLoop(ctx, session, req.Prompt)
+	aiResponse, toolResults, err := s.generateWithToolLoop(ctx, session, req.Prompt, chatCtx.UserID)
 	return s.finalizeChat(ctx, sessionID, aiResponse, toolResults, err)
 }
 
@@ -154,7 +157,13 @@ func sessionOwnedByContext(session models.ChatSession, chatCtx ChatContext) bool
 	if chatCtx.UserID == nil {
 		return session.UserID == nil
 	}
-	return session.UserID != nil && *session.UserID == *chatCtx.UserID
+	if session.UserID != nil && *session.UserID == *chatCtx.UserID {
+		return true
+	}
+	// Guest-cookie flow: the HttpOnly cookie already proved ownership of this
+	// anonymous session; the Bearer token only upgrades order attribution. It
+	// must never grant access to a session owned by a DIFFERENT user.
+	return chatCtx.GuestCookieBound && session.UserID == nil
 }
 
 // finalizeChat completes the post-LLM work that is identical whether the final
@@ -367,7 +376,7 @@ func (s *AIService) ChatStream(ctx context.Context, chatCtx ChatContext, req dto
 
 	// PERF-4: pass the already-fetched `session` struct (same rationale as
 	// Chat above) to avoid a redundant FindChatSession in buildMessages.
-	aiResponse, toolResults, err := s.generateWithToolLoopStream(ctx, session, req.Prompt, onDelta)
+	aiResponse, toolResults, err := s.generateWithToolLoopStream(ctx, session, req.Prompt, chatCtx.UserID, onDelta)
 	return s.finalizeChat(ctx, sessionID, aiResponse, toolResults, err)
 }
 
@@ -580,7 +589,7 @@ func responseMentionsSelectionOptions(response string) bool {
 //
 // PERF-4: accepts the already-fetched session struct instead of re-querying
 // it in buildMessages. The caller (Chat) has validated + loaded the session.
-func (s *AIService) generateWithToolLoop(ctx context.Context, session models.ChatSession, prompt string) (ai.CompletionResponse, []ToolResult, error) {
+func (s *AIService) generateWithToolLoop(ctx context.Context, session models.ChatSession, prompt string, userID *uuid.UUID) (ai.CompletionResponse, []ToolResult, error) {
 	// SEC-26: use the incoming request context directly so a client disconnect
 	// cancels the LLM call and the tool loop's DB/tool work. Each individual
 	// API call is guarded by the HTTP client's timeout (cfg.AITimeout, 35s),
@@ -621,7 +630,7 @@ func (s *AIService) generateWithToolLoop(ctx context.Context, session models.Cha
 		messages = append(messages, assistantMsg)
 
 		for _, tc := range resp.ToolCalls {
-			toolResult, toolMsg := s.executeToolCall(ctx, sessionID, tc, calledTools)
+			toolResult, toolMsg := s.executeToolCall(ctx, sessionID, userID, tc, calledTools)
 			allToolResults = append(allToolResults, toolResult)
 			messages = append(messages, toolMsg)
 		}
@@ -644,7 +653,7 @@ func (s *AIService) generateWithToolLoop(ctx context.Context, session models.Cha
 // combinations), we fall back to non-streaming Generate. The frontend's
 // shouldAnimate fallback then animates the text so the user still sees a
 // typing effect.
-func (s *AIService) generateWithToolLoopStream(ctx context.Context, session models.ChatSession, prompt string, onDelta func(text string)) (ai.CompletionResponse, []ToolResult, error) {
+func (s *AIService) generateWithToolLoopStream(ctx context.Context, session models.ChatSession, prompt string, userID *uuid.UUID, onDelta func(text string)) (ai.CompletionResponse, []ToolResult, error) {
 	// Same rationale as generateWithToolLoop: each individual API call is guarded
 	// by the HTTP client's timeout (cfg.AITimeout, 35s). The overall loop is
 	// bounded by MaxToolCallRounds (5). A single context.WithTimeout wrapping
@@ -709,7 +718,7 @@ func (s *AIService) generateWithToolLoopStream(ctx context.Context, session mode
 		messages = append(messages, assistantMsg)
 
 		for _, tc := range resp.ToolCalls {
-			toolResult, toolMsg := s.executeToolCall(ctx, sessionID, tc, calledTools)
+			toolResult, toolMsg := s.executeToolCall(ctx, sessionID, userID, tc, calledTools)
 			allToolResults = append(allToolResults, toolResult)
 			messages = append(messages, toolMsg)
 		}
@@ -726,7 +735,7 @@ func (s *AIService) generateWithToolLoopStream(ctx context.Context, session mode
 // and this function can be read/debugged in isolation. Behaviour is
 // unchanged: dedup and error mapping rules are identical to the old inline
 // block; calledTools is shared across rounds via the caller's map.
-func (s *AIService) executeToolCall(ctx context.Context, sessionID uuid.UUID, tc ai.ToolCall, calledTools map[string]bool) (ToolResult, ai.Message) {
+func (s *AIService) executeToolCall(ctx context.Context, sessionID uuid.UUID, userID *uuid.UUID, tc ai.ToolCall, calledTools map[string]bool) (ToolResult, ai.Message) {
 	log.Printf("[ai] executing tool: %s (call_id=%s) args=%s", tc.Function.Name, tc.ID, tc.Function.Arguments)
 
 	var args map[string]interface{}
@@ -748,7 +757,7 @@ func (s *AIService) executeToolCall(ctx context.Context, sessionID uuid.UUID, tc
 	}
 	calledTools[callKey] = true
 
-	toolResult, execErr := s.mcp.Execute(ctx, sessionID, tc.Function.Name, args)
+	toolResult, execErr := s.mcp.Execute(ctx, sessionID, userID, tc.Function.Name, args)
 	if execErr != nil {
 		log.Printf("[ai] tool execution error for %s: %v", tc.Function.Name, execErr)
 		toolResult = ToolResult{

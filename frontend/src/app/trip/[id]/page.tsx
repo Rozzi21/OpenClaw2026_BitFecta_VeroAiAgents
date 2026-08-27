@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { ArrowLeft, MapPin, Clock, CheckCircle2, Plane, BedDouble, Ticket, ShieldCheck } from "lucide-react";
-import { APIError, apiFetch, assetURL, BookingOrder, getCustomerAccessToken, TripPackage } from "@/lib/api";
+import { APIError, apiFetch, assetURL, BookingOrder, ensureCustomerSession, TripPackage } from "@/lib/api";
 import { getTripAdultPrice, getTripChildPrice } from "@/lib/format";
 import { TripPriceBlock, TripPriceInline } from "@/components/pricing/TripPriceBlock";
 import { GoogleButton } from "@/components/auth/GoogleButton";
@@ -44,7 +44,10 @@ export default function TripDetailPage({ params }: { params: { id: string } }) {
     setAuthRequired(false);
     try {
 	  idempotencyKeyRef.current ??= crypto.randomUUID();
-	  const authenticated = Boolean(getCustomerAccessToken());
+	  // ensureCustomerSession renews the 15-minute access token from the
+	  // refresh cookie; without it a signed-in user whose token expired would
+	  // fall back to the guest endpoint and hit GUEST_ORDER_LIMIT_REACHED.
+	  const authenticated = (await ensureCustomerSession()) === "active";
       const created = await apiFetch<BookingOrder>(authenticated ? "/api/v1/bookings" : "/api/v1/orders", {
         method: "POST",
 		headers: { "Idempotency-Key": idempotencyKeyRef.current },

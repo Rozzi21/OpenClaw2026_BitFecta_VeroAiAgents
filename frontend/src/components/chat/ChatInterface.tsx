@@ -23,6 +23,7 @@ import { TripPriceBlock } from "../pricing/TripPriceBlock";
 import {
   apiFetch,
   assetURL,
+  ensureCustomerSession,
   streamChat,
   TripPackage,
   GuestChatHistoryResponse,
@@ -229,6 +230,12 @@ export default function ChatInterface() {
       ]);
 
       try {
+        // Renew the access token from the refresh cookie if needed so a
+        // signed-in customer (password or Google) is recognized by the chat
+        // endpoint and orders are created on their account, not limited by
+        // the one-order guest policy. Anonymous users: resolves "anonymous"
+        // and the request proceeds as a pure guest (unchanged).
+        await ensureCustomerSession();
         await streamChat(
           "/api/v1/chat",
           { prompt: text, stream: true },

@@ -19,6 +19,12 @@ import (
 type ChatContext struct {
 	SessionID uuid.UUID
 	UserID    *uuid.UUID
+	// GuestCookieBound is true only when the session was resolved from the
+	// HttpOnly guest cookie (GuestChat). The cookie is the ownership proof for
+	// anonymous sessions; a Bearer token on the same request then upgrades
+	// order attribution (create_booking runs as the authenticated user, no
+	// guest-order limit) without widening session access for other users.
+	GuestCookieBound bool
 }
 
 // Services wires the per-domain service structs together. Each domain lives in

@@ -46,6 +46,7 @@ Diterapkan ke semua request via `router.Use(...)` di [backend/cmd/server/main.go
 - `PublicWriteRateLimit` — `POST /chat` & `POST /orders`: 5 req/**menit** per-IP, bucket terpisah per route (SEC-13, anti spam order & abuse biaya LLM).
 - `RequestBodyLimit` — `POST /chat` & `POST /orders`: body JSON maksimum 64 KiB (SEC-16).
 - `Auth(jwt)` — wajib `Authorization: Bearer <access_token>`. Memvalidasi audience `access`. Jika refresh token dipakai sebagai access, dicatat sebagai event audit `refresh_token_used_as_access`. Set `user_id`, `role`, `email` ke context.
+- `OptionalAuth(jwt)` — seperti `Auth` tapi TIDAK PERNAH menolak request: tanpa token / token invalid / kedaluwarsa, request lanjut sebagai anonymous. Dipakai di `POST /chat` (27 Agu 2026): Bearer access token valid meng-upgrade chat menjadi caller terautentikasi sehingga `create_booking` membuat order atas nama AKUN (tanpa limit satu order guest). Refresh token yang dikirim sebagai Bearer diabaikan (bukan diterima).
 - `Role(roles...)` — RBAC; harus dijalankan SETELAH `Auth`. Membandingkan `role` di context dengan daftar role yang diizinkan.
 
 ## Authentication & Authorization Flow
@@ -133,7 +134,7 @@ Request penting:
 
 | Method | Path | Akses | Fungsi |
 |---|---|---|---|
-| POST | `/api/v1/chat` | 🔓 guest (rate limit 5/menit per-IP, SEC-13) | Jalankan workflow AI; balas message + recommended_packages |
+| POST | `/api/v1/chat` | 🔓 guest + 🔑 Bearer opsional (`OptionalAuth`, 27 Agu 2026); rate limit 5/menit per-IP (SEC-13) | Jalankan workflow AI; balas message + recommended_packages. Dengan Bearer access token valid, order dari `create_booking` diatribusikan ke akun (bypass guest limit) |
 | GET | `/api/v1/chat/sessions` | 🔒 | Daftar sesi chat milik user |
 | GET | `/api/v1/chat/:id/messages` | 🔒 | Pesan dalam satu sesi |
 | GET | `/api/v1/chat/history` | 🔓 guest cookie | Pulihkan history guest aktif; session identifier tidak diterima dari request dan tidak dikembalikan |
@@ -152,7 +153,7 @@ Request penting:
 { "success": false, "message": "Please sign in to create another order.", "error": { "status": "authentication_required", "code": "GUEST_ORDER_LIMIT_REACHED" } }
 ```
 
-`Idempotency-Key` (16-200 char) wajib di `POST /orders` dan `POST /bookings`; retry dengan key sama mengembalikan booking yang sama (hash di `bookings.idempotency_key_hash`, unique). Error validasi dibalas `400` dengan `error.code` = `BOOKING_VALIDATION_FAILED` atau `IDEMPOTENCY_KEY_REQUIRED` - keduanya TIDAK mengonsumsi allowance. Setelah login/register sukses, backend meng-claim order guest ke akun (cookie-diverifikasi, single-use, atomic) dan user bisa membuat order tambahan via `POST /bookings`. Detail lengkap: [GUEST_ORDER_LIMIT.md](../GUEST_ORDER_LIMIT.md).
+`Idempotency-Key` (16-200 char) wajib di `POST /orders` dan `POST /bookings`; retry dengan key sama mengembalikan booking yang sama (hash di `bookings.idempotency_key_hash`, unique). Error validasi dibalas `400` dengan `error.code` = `BOOKING_VALIDATION_FAILED` atau `IDEMPOTENCY_KEY_REQUIRED` - keduanya TIDAK mengonsumsi allowance. Setelah login/register sukses (password MAUPUN Google OAuth — claim direplikasi di `GoogleCallback`), backend meng-claim order guest ke akun (cookie-diverifikasi, single-use, atomic) dan user bisa membuat order tambahan via `POST /bookings`. Sejak 27 Agu 2026, order lewat CHAT juga eligible: `POST /chat` membawa Bearer access token opsional (`OptionalAuth`); bila valid, `create_booking` memakai jalur authenticated (`BookingService.Create`) sehingga limit guest tidak berlaku. Pemisahan tanggung jawab dijaga: Google OAuth hanya autentikasi identitas; kebijakan guest order tetap di `BookingService`. Detail lengkap: [GUEST_ORDER_LIMIT.md](../GUEST_ORDER_LIMIT.md).
 
 - `chat` request: `{prompt(min 2, max 4000), session_id?, stream?}` (DTO `ChatRequest`). Body maksimum 64 KiB. `session_id` hanya dipakai bila milik caller; ID sesi asing/tidak ditemukan diabaikan dan request dibuat pada sesi baru milik caller (SEC-17). `stream` (bool, default `false`) mengaktifkan mode streaming SSE (PERF-1).
 - `chat` response data: `{message, workflow[], show_recommendations, recommendation_reason, recommended_packages[]}` (lihat `ChatResult`). Session identifier tidak dikembalikan di JSON; browser memakai HttpOnly cookie `vero_chat_session`.

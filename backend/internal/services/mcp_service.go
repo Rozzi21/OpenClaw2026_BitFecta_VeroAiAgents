@@ -49,7 +49,12 @@ type MCPRepository interface {
 
 // BookingCreator is the inter-service contract MCPService uses to create a
 // booking via the booking domain (SEC-27). *BookingService satisfies it.
+// CreateGuest enforces the one-order guest policy; Create is the authenticated
+// path (no guest limit) used when the chat request carried a valid Bearer
+// token. Booking authorization stays in the booking domain — MCP only picks
+// WHICH identity the order belongs to.
 type BookingCreator interface {
+	Create(ctx context.Context, userID uuid.UUID, idempotencyKey string, req dto.BookingRequest) (models.Booking, error)
 	CreateGuest(ctx context.Context, userID, guestID uuid.UUID, idempotencyKey string, req dto.BookingRequest) (models.Booking, error)
 }
 
@@ -65,7 +70,9 @@ type ToolResult struct {
 	Data   map[string]interface{} `json:"data"`
 }
 
-func (s *MCPService) Execute(ctx context.Context, sessionID uuid.UUID, toolName string, payload map[string]interface{}) (ToolResult, error) {
+// userID is non-nil when the chat request carried a valid Bearer access token
+// (see middlewares.OptionalAuth). Only create_booking consumes it today.
+func (s *MCPService) Execute(ctx context.Context, sessionID uuid.UUID, userID *uuid.UUID, toolName string, payload map[string]interface{}) (ToolResult, error) {
 	start := time.Now()
 	var result ToolResult
 	log.Printf("[mcp] tool selected session=%s tool=%s payload=%+v", sessionID, toolName, payload)
@@ -87,7 +94,7 @@ func (s *MCPService) Execute(ctx context.Context, sessionID uuid.UUID, toolName 
 		result = s.executeCollectOrderDetail(toolName, payload)
 
 	case mcp.ToolCreateBooking, mcp.ToolCreateOrder:
-		result = s.executeCreateBooking(ctx, sessionID, payload)
+		result = s.executeCreateBooking(ctx, sessionID, userID, payload)
 
 	// AIW-5: detail / pricing / availability tools.
 	case mcp.ToolGetTripDetail:
@@ -725,7 +732,7 @@ func (s *MCPService) mock(toolName string, _ map[string]any) ToolResult {
 	}
 }
 
-func (s *MCPService) executeCreateBooking(ctx context.Context, sessionID uuid.UUID, payload map[string]interface{}) ToolResult {
+func (s *MCPService) executeCreateBooking(ctx context.Context, sessionID uuid.UUID, userID *uuid.UUID, payload map[string]interface{}) ToolResult {
 	log.Printf("[mcp] create_booking called args=%+v", payload)
 
 	// AIW-8 duplicate-order guard: if an order already exists for THIS session,
@@ -776,18 +783,27 @@ func (s *MCPService) executeCreateBooking(ctx context.Context, sessionID uuid.UU
 		log.Printf("[mcp] create_booking failed invalid_date travel_date=%q", req.TravelDate)
 		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "invalid travel_date format, please use ISO format (YYYY-MM-DD)"}}
 	}
-	session, err := s.repo.FindChatSession(ctx, sessionID)
-	if err != nil || session.GuestSessionID == nil {
-		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "guest session is unavailable"}}
-	}
-	guest, err := s.repo.FindGuestSession(ctx, *session.GuestSessionID)
-	if err != nil {
-		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "guest session is unavailable"}}
-	}
 	payloadJSON, _ := json.Marshal(payload)
 	idempotencyKey := "mcp:" + sessionID.String() + ":" + HashGuestToken(string(payloadJSON))
 
-	booking, err := s.bookings.CreateGuest(ctx, guest.UserID, guest.ID, idempotencyKey, req)
+	var booking models.Booking
+	if userID != nil {
+		// Authenticated caller (Bearer token validated by OptionalAuth on
+		// POST /chat): the order belongs to the account and the one-order
+		// guest policy does not apply. Booking authorization itself stays in
+		// BookingService.Create — same validation, same server-side pricing.
+		booking, err = s.bookings.Create(ctx, *userID, idempotencyKey, req)
+	} else {
+		session, serr := s.repo.FindChatSession(ctx, sessionID)
+		if serr != nil || session.GuestSessionID == nil {
+			return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "guest session is unavailable"}}
+		}
+		guest, gerr := s.repo.FindGuestSession(ctx, *session.GuestSessionID)
+		if gerr != nil {
+			return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "guest session is unavailable"}}
+		}
+		booking, err = s.bookings.CreateGuest(ctx, guest.UserID, guest.ID, idempotencyKey, req)
+	}
 	if err != nil {
 		log.Printf("[mcp] create_booking save failed error=%v", err)
 		if errors.Is(err, ErrGuestOrderLimitReached) {

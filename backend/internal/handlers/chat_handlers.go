@@ -61,6 +61,15 @@ func (h *Handler) GuestChat(c *gin.Context) {
 	}
 	auth.SetGuestIdentityCookie(c, h.Services.Config, identity.Token, int(h.Services.Config.GuestIdentityTTL.Seconds()))
 
+	// OptionalAuth may have authenticated this request. The guest cookie is
+	// still the session ownership proof (GuestCookieBound); the user ID only
+	// upgrades order attribution so a signed-in customer (password or Google)
+	// can create orders beyond the one-order guest limit from the chat.
+	chatCtx := services.ChatContext{SessionID: sessionID, GuestCookieBound: true}
+	if uid := currentUserID(c); uid != uuid.Nil {
+		chatCtx.UserID = &uid
+	}
+
 	// PERF-1: streaming path. The guest session cookie must be set BEFORE the
 	// first byte of the SSE body is written (headers cannot change after the
 	// body starts), so we pass a setCookie callback that streamChat invokes
@@ -70,13 +79,13 @@ func (h *Handler) GuestChat(c *gin.Context) {
 	// the next request resolves a fresh session (resolveGuestSession ignores
 	// an expired cookie value).
 	if req.Stream {
-		h.streamChat(c, services.ChatContext{SessionID: sessionID}, req, func() {
+		h.streamChat(c, chatCtx, req, func() {
 			auth.SetGuestSessionCookie(c, h.Services.Config, sessionID.String(), int(h.Services.Config.GuestSessionTTL.Seconds()))
 		})
 		return
 	}
 
-	res, err := h.Services.AI.Chat(c.Request.Context(), services.ChatContext{SessionID: sessionID}, req)
+	res, err := h.Services.AI.Chat(c.Request.Context(), chatCtx, req)
 	if err != nil {
 		if errors.Is(err, services.ErrChatSessionExpired) || errors.Is(err, services.ErrChatSessionNotFound) {
 			auth.ClearGuestSessionCookie(c, h.Services.Config)

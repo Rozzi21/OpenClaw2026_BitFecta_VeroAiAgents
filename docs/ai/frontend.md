@@ -26,7 +26,7 @@ Antarmuka chat AI untuk tamu, kini dengan auth opsional (login/register) untuk f
 
 | Komponen | Path | Tanggung jawab |
 |---|---|---|
-| `ChatInterface` | `frontend/src/components/chat/ChatInterface.tsx` | Inti aplikasi: kirim prompt ke `POST /api/v1/chat` (mode streaming SSE, PERF-1), simpan `session_id`, render pesan + caret saat stream + animasi mengetik untuk history, render kartu rekomendasi, panel detail paket |
+| `ChatInterface` | `frontend/src/components/chat/ChatInterface.tsx` | Inti aplikasi: kirim prompt ke `POST /api/v1/chat` (mode streaming SSE, PERF-1), render pesan + caret saat stream + animasi mengetik untuk history, render kartu rekomendasi, panel detail paket. Sebelum kirim, memanggil `ensureCustomerSession()` (27 Agu 2026) agar Bearer token valid terpasang — user login (password/Google) membuat order chat atas nama akunnya, bukan kena guest limit |
 | `RecommendationCard` | `frontend/src/components/cards/RecommendationCard.tsx` | Kartu paket rekomendasi inline di chat |
 | `TripPriceBlock` | `frontend/src/components/pricing/TripPriceBlock.tsx` | Blok harga paket (base/discount/child) |
 | `Sidebar` | `frontend/src/components/layout/Sidebar.tsx` | Navigasi kiri (sebagian link masih placeholder `href="#"`) |
@@ -38,7 +38,11 @@ TIDAK menyimpan entitlement di localStorage. `lib/api.ts` kini melempar
 `APIError` (status + `error.code`) sehingga halaman trip bereaksi pada
 `GUEST_ORDER_LIMIT_REACHED`: auth gate "Your guest order has already been used"
 + tombol Login/Create Account/**Continue with Google (aktif, 19 Agu 2026)**. Order sukses
-menampilkan Continue Tracking/Login/Register. Idempotency-Key dibuat per
+menampilkan Continue Tracking/Login/Register. Halaman trip dan `order/[id]` memakai
+`ensureCustomerSession()` (bukan cek token sinkron) sejak 27 Agu 2026 — access token
+15-menit yang kedaluwarsa diperbarui dari refresh cookie dulu, sehingga user login tidak
+jatuh ke jalur guest; setelah claim, `order/[id]` WAJIB memakai endpoint authenticated
+(`/bookings/:id`) karena `guest_session_id` sudah di-NULL-kan saat claim. Idempotency-Key dibuat per
 logical checkout (`crypto.randomUUID()`, di-ref hingga sukses). Setelah login,
 order di-claim backend dan tracking beralih ke `/api/v1/bookings/:id`.
 
@@ -75,7 +79,7 @@ Frontend hanya merender `PackageRecommendations` bila `show_recommendations === 
 
 | File | Fungsi |
 |---|---|
-| `frontend/src/lib/api.ts` | `apiFetch()` envelope-aware, memeriksa `Content-Type`, menangani respons HTML/proxy error, timeout 35 s via `AbortController`, serta `assetURL()` + tipe `TripPackage`. **`streamChat()` (PERF-1, 3 Agu 2026)** — konsumsi SSE chat streaming via `fetch` + `ReadableStream` reader + parser SSE manual (`parseSSEBlock`), dispatch `delta`/`done`/`error` ke callback; tidak pakai timeout 35s (stream wajar hidup lama, backend kunci via `AI_TIMEOUT_SECONDS` + ctx), `AbortController` tetap membatalkan stream di hulu. Base URL kosong di browser (proxy), `NEXT_PUBLIC_API_BASE_URL` di server |
+| `frontend/src/lib/api.ts` | `apiFetch()` envelope-aware, memeriksa `Content-Type`, menangani respons HTML/proxy error, timeout 35 s via `AbortController`, serta `assetURL()` + tipe `TripPackage`. **`streamChat()` (PERF-1, 3 Agu 2026)** — konsumsi SSE chat streaming via `fetch` + `ReadableStream` reader + parser SSE manual (`parseSSEBlock`), dispatch `delta`/`done`/`error` ke callback; tidak pakai timeout 35s (stream wajar hidup lama, backend kunci via `AI_TIMEOUT_SECONDS` + ctx), `AbortController` tetap membatalkan stream di hulu. Sejak 27 Agu 2026 menempelkan header `Authorization: Bearer` bila access token tersimpan (aturan sama seperti `apiFetch`) untuk `OptionalAuth` di `POST /chat`. Base URL kosong di browser (proxy), `NEXT_PUBLIC_API_BASE_URL` di server |
 | `frontend/src/lib/format.ts` | Format harga (`formatIDR`, `getDiscountMeta`, `getTripAdultPrice`/`getTripChildPrice`). `formatIDR` memformat angka termasuk `0` sebagai Rp 0; `"TBD"` hanya untuk `null`/`undefined`/`NaN` |
 | `frontend/src/lib/format-trip-pax.ts` | Format jumlah pax (dewasa/anak) |
 | `frontend/src/lib/utils.ts` | Util umum (mis. `cn()` untuk className) |

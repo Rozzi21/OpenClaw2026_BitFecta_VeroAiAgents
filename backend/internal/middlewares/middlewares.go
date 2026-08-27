@@ -242,6 +242,32 @@ func Auth(jwtService *auth.JWTService) gin.HandlerFunc {
 	}
 }
 
+// OptionalAuth authenticates the request when a valid Bearer access token is
+// present but NEVER rejects the request: missing/invalid/expired tokens simply
+// leave the context identity unset and the handler continues as anonymous.
+// Used on public endpoints that gain extra capabilities for signed-in users
+// (e.g. POST /chat, where an authenticated customer may create orders beyond
+// the one-order guest limit). The same access-audience validation as Auth
+// applies — a refresh token presented here is ignored, not accepted.
+func OptionalAuth(jwtService *auth.JWTService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		header := c.GetHeader("Authorization")
+		if header == "" || !strings.HasPrefix(header, "Bearer ") {
+			c.Next()
+			return
+		}
+		claims, err := jwtService.ParseWithAudience(strings.TrimPrefix(header, "Bearer "), auth.AudienceAccess)
+		if err != nil {
+			c.Next()
+			return
+		}
+		c.Set(ContextUserID, claims.UserID)
+		c.Set(ContextRole, claims.Role)
+		c.Set(ContextEmail, claims.Email)
+		c.Next()
+	}
+}
+
 func Role(allowed ...models.Role) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		value, exists := c.Get(ContextRole)

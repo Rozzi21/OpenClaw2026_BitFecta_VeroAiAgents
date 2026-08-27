@@ -284,6 +284,14 @@ export async function streamChat(
 ): Promise<void> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
+  // Attach the customer access token when present (same rule as apiFetch):
+  // POST /chat accepts an optional Bearer token (OptionalAuth) so a signed-in
+  // customer — password or Google — creates chat orders on their ACCOUNT,
+  // beyond the one-order guest limit. Callers should run
+  // ensureCustomerSession() first so an expired 15-minute token is renewed
+  // from the refresh cookie before the stream opens.
+  const accessToken = getCustomerAccessToken();
+  if (accessToken && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${accessToken}`);
 
   let response: Response;
   try {

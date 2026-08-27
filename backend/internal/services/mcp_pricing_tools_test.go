@@ -89,11 +89,29 @@ func (m *mockMCPRepo) ListToolCalls(_ context.Context, _ repositories.Repository
 }
 
 type mockBookingCreator struct {
-	createCalls int
+	createCalls      int
+	createGuestCalls int
+	lastUserID       uuid.UUID
+}
+
+func (b *mockBookingCreator) Create(_ context.Context, userID uuid.UUID, _ string, req dto.BookingRequest) (models.Booking, error) {
+	b.createCalls++
+	b.lastUserID = userID
+	return models.Booking{
+		BaseModel:     models.BaseModel{ID: uuid.New()},
+		UserID:        userID,
+		TripID:        req.TripID,
+		BookingStatus: models.BookingStatusPending,
+		PaymentStatus: models.PaymentStatusPendingAdminProcessing,
+		AdultPax:      req.AdultPax,
+		ChildPax:      req.ChildPax,
+		TotalPrice:    720000,
+	}, nil
 }
 
 func (b *mockBookingCreator) CreateGuest(_ context.Context, _, _ uuid.UUID, _ string, req dto.BookingRequest) (models.Booking, error) {
 	b.createCalls++
+	b.createGuestCalls++
 	return models.Booking{
 		BaseModel:     models.BaseModel{ID: uuid.New()},
 		TripID:        req.TripID,
@@ -217,7 +235,7 @@ func TestCalculateTripPriceMatchesBooking(t *testing.T) {
 	repo := &mockMCPRepo{trip: trip}
 	svc := newTestMCP(repo)
 
-	res, err := svc.Execute(context.Background(), uuid.New(), mcp.ToolCalculateTripPrice, map[string]interface{}{
+	res, err := svc.Execute(context.Background(), uuid.New(), nil, mcp.ToolCalculateTripPrice, map[string]interface{}{
 		"trip_id":   trip.ID.String(),
 		"adult_pax": 2,
 		"child_pax": 1,
@@ -246,7 +264,7 @@ func TestCalculateTripPriceMatchesBooking(t *testing.T) {
 func TestCalculateTripPriceAdultChildCombination(t *testing.T) {
 	trip := plainTrip()
 	svc := newTestMCP(&mockMCPRepo{trip: trip})
-	res, _ := svc.Execute(context.Background(), uuid.New(), mcp.ToolCalculateTripPrice, map[string]interface{}{
+	res, _ := svc.Execute(context.Background(), uuid.New(), nil, mcp.ToolCalculateTripPrice, map[string]interface{}{
 		"trip_id": trip.ID.String(), "adult_pax": 3, "child_pax": 2,
 	})
 	if getf(t, res.Data, "adult_subtotal") != 2000000*3 {
@@ -265,7 +283,7 @@ func TestCalculateTripPriceAdultChildCombination(t *testing.T) {
 func TestGetTripDetail(t *testing.T) {
 	trip := discountedTrip()
 	svc := newTestMCP(&mockMCPRepo{trip: trip})
-	res, _ := svc.Execute(context.Background(), uuid.New(), mcp.ToolGetTripDetail, map[string]interface{}{
+	res, _ := svc.Execute(context.Background(), uuid.New(), nil, mcp.ToolGetTripDetail, map[string]interface{}{
 		"trip_id": trip.ID.String(),
 	})
 	if res.Status != models.ToolResultStatusSuccess {
@@ -297,7 +315,7 @@ func TestCheckTripAvailabilityWindow(t *testing.T) {
 	trip := discountedTrip() // published, window 2026-09-01..2026-12-31, quota 10/5
 	svc := newTestMCP(&mockMCPRepo{trip: trip})
 	call := func(date string, adult, child int) map[string]interface{} {
-		res, _ := svc.Execute(context.Background(), uuid.New(), mcp.ToolCheckTripAvailability, map[string]interface{}{
+		res, _ := svc.Execute(context.Background(), uuid.New(), nil, mcp.ToolCheckTripAvailability, map[string]interface{}{
 			"trip_id": trip.ID.String(), "travel_date": date, "adult_pax": adult, "child_pax": child,
 		})
 		if res.Status != models.ToolResultStatusSuccess {
@@ -326,7 +344,7 @@ func TestCheckTripAvailabilityWindow(t *testing.T) {
 	draft := plainTrip()
 	draft.Status = "draft"
 	svcDraft := newTestMCP(&mockMCPRepo{trip: draft})
-	res, _ := svcDraft.Execute(context.Background(), uuid.New(), mcp.ToolCheckTripAvailability, map[string]interface{}{
+	res, _ := svcDraft.Execute(context.Background(), uuid.New(), nil, mcp.ToolCheckTripAvailability, map[string]interface{}{
 		"trip_id": draft.ID.String(), "travel_date": "2026-10-10", "adult_pax": 1, "child_pax": 0,
 	})
 	if res.Data["available"] != false {
@@ -340,7 +358,7 @@ func TestToolsTripNotFound(t *testing.T) {
 	svc := newTestMCP(&mockMCPRepo{tripErr: errors.New("record not found")})
 	tools := []string{mcp.ToolGetTripDetail, mcp.ToolCalculateTripPrice, mcp.ToolCheckTripAvailability}
 	for _, tool := range tools {
-		res, _ := svc.Execute(context.Background(), uuid.New(), tool, map[string]interface{}{
+		res, _ := svc.Execute(context.Background(), uuid.New(), nil, tool, map[string]interface{}{
 			"trip_id": uuid.New().String(), "travel_date": "2026-10-10", "adult_pax": 1, "child_pax": 0,
 		})
 		if res.Status != models.ToolResultStatusFailed {
@@ -351,7 +369,7 @@ func TestToolsTripNotFound(t *testing.T) {
 		}
 	}
 	// Invalid (non-UUID) trip_id.
-	res, _ := svc.Execute(context.Background(), uuid.New(), mcp.ToolGetTripDetail, map[string]interface{}{"trip_id": "not-a-uuid"})
+	res, _ := svc.Execute(context.Background(), uuid.New(), nil, mcp.ToolGetTripDetail, map[string]interface{}{"trip_id": "not-a-uuid"})
 	if res.Data["error"] != "invalid trip_id" {
 		t.Fatalf("expected 'invalid trip_id', got %#v", res.Data["error"])
 	}
@@ -361,7 +379,7 @@ func TestToolsTripNotFound(t *testing.T) {
 // AI can act on, not an availability guess.
 func TestCheckTripAvailabilityInvalidDate(t *testing.T) {
 	svc := newTestMCP(&mockMCPRepo{trip: discountedTrip()})
-	res, _ := svc.Execute(context.Background(), uuid.New(), mcp.ToolCheckTripAvailability, map[string]interface{}{
+	res, _ := svc.Execute(context.Background(), uuid.New(), nil, mcp.ToolCheckTripAvailability, map[string]interface{}{
 		"trip_id": discountedTrip().ID.String(), "travel_date": "bukan-tanggal", "adult_pax": 1,
 	})
 	if res.Status != models.ToolResultStatusFailed {
@@ -375,7 +393,7 @@ func TestCheckTripAvailabilityInvalidDate(t *testing.T) {
 func TestSearchTripsExposesPricing(t *testing.T) {
 	trip := discountedTrip()
 	svc := newTestMCP(&mockMCPRepo{trip: trip})
-	res, _ := svc.Execute(context.Background(), uuid.New(), mcp.ToolSearchTrips, map[string]interface{}{"query": "bali"})
+	res, _ := svc.Execute(context.Background(), uuid.New(), nil, mcp.ToolSearchTrips, map[string]interface{}{"query": "bali"})
 	if res.Status != models.ToolResultStatusSuccess {
 		t.Fatalf("search failed: %v", res.Data["error"])
 	}
@@ -403,7 +421,7 @@ func TestSearchTripsExposesPricing(t *testing.T) {
 // TestCheckOrderStatusEmpty: no marker -> order_exists=false.
 func TestCheckOrderStatusEmpty(t *testing.T) {
 	svc := newTestMCP(&mockMCPRepo{trip: discountedTrip()})
-	res, _ := svc.Execute(context.Background(), uuid.New(), mcp.ToolCheckOrderStatus, map[string]interface{}{})
+	res, _ := svc.Execute(context.Background(), uuid.New(), nil, mcp.ToolCheckOrderStatus, map[string]interface{}{})
 	if res.Status != models.ToolResultStatusSuccess {
 		t.Fatalf("expected success, got %v", res.Data["error"])
 	}
@@ -432,7 +450,7 @@ func TestCreateBookingThenCheckOrderStatus(t *testing.T) {
 	}
 
 	// First create_booking succeeds.
-	res1, _ := svc.Execute(context.Background(), sessionID, mcp.ToolCreateBooking, bookingPayload)
+	res1, _ := svc.Execute(context.Background(), sessionID, nil, mcp.ToolCreateBooking, bookingPayload)
 	if res1.Status != models.ToolResultStatusSuccess {
 		t.Fatalf("first create_booking failed: %v", res1.Data["error"])
 	}
@@ -445,7 +463,7 @@ func TestCreateBookingThenCheckOrderStatus(t *testing.T) {
 	}
 
 	// check_order_status reports the order with the same id.
-	st, _ := svc.Execute(context.Background(), sessionID, mcp.ToolCheckOrderStatus, map[string]interface{}{})
+	st, _ := svc.Execute(context.Background(), sessionID, nil, mcp.ToolCheckOrderStatus, map[string]interface{}{})
 	if st.Data["order_exists"] != true {
 		t.Fatalf("expected order_exists=true after booking, got %#v", st.Data)
 	}
@@ -454,7 +472,7 @@ func TestCreateBookingThenCheckOrderStatus(t *testing.T) {
 	}
 
 	// Second create_booking is blocked and does NOT create another booking.
-	res2, _ := svc.Execute(context.Background(), sessionID, mcp.ToolCreateBooking, bookingPayload)
+	res2, _ := svc.Execute(context.Background(), sessionID, nil, mcp.ToolCreateBooking, bookingPayload)
 	if res2.Status != models.ToolResultStatusFailed {
 		t.Fatalf("expected duplicate create_booking to be blocked, got %v", res2.Status)
 	}
@@ -466,5 +484,41 @@ func TestCreateBookingThenCheckOrderStatus(t *testing.T) {
 	}
 	if got, _ := res2.Data["order_id"].(string); got != orderID {
 		t.Fatalf("duplicate should return existing order_id %q, got %q", orderID, got)
+	}
+}
+
+// TestCreateBookingAuthenticatedUsesAccountPath: when the chat request carried
+// a valid Bearer token (OptionalAuth on POST /chat), create_booking attributes
+// the order to the ACCOUNT via BookingCreator.Create — the one-order guest
+// policy (CreateGuest) is bypassed entirely and the guest session is never
+// touched. This is what makes a Google-authenticated (or password) user
+// eligible for additional orders from the chat after their guest order.
+func TestCreateBookingAuthenticatedUsesAccountPath(t *testing.T) {
+	repo := &mockMCPRepo{trip: discountedTrip()}
+	creator := &mockBookingCreator{}
+	svc := &MCPService{repo: repo, bus: events.NewBus(), bookings: creator, auth: &mockGuestUser{}, audit: nil}
+	sessionID := uuid.New()
+	userID := uuid.New()
+	trip := discountedTrip()
+
+	res, _ := svc.Execute(context.Background(), sessionID, &userID, mcp.ToolCreateBooking, map[string]interface{}{
+		"trip_id":       trip.ID.String(),
+		"adult_pax":     2,
+		"child_pax":     0,
+		"travel_date":   "2026-10-10",
+		"contact_name":  "Ozi",
+		"contact_phone": "081755245245",
+	})
+	if res.Status != models.ToolResultStatusSuccess {
+		t.Fatalf("authenticated create_booking failed: %v", res.Data["error"])
+	}
+	if creator.createCalls != 1 {
+		t.Fatalf("expected 1 booking create call, got %d", creator.createCalls)
+	}
+	if creator.createGuestCalls != 0 {
+		t.Fatalf("authenticated order must not use the guest path, createGuestCalls=%d", creator.createGuestCalls)
+	}
+	if creator.lastUserID != userID {
+		t.Fatalf("order must belong to the authenticated user %s, got %s", userID, creator.lastUserID)
 	}
 }

@@ -2,17 +2,31 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { apiFetch, BookingOrder, getCustomerAccessToken } from "@/lib/api";
+import { apiFetch, BookingOrder, ensureCustomerSession } from "@/lib/api";
 
 export default function GuestOrderPage({ params }: { params: { id: string } }) {
   const [order, setOrder] = useState<BookingOrder | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-	const path = getCustomerAccessToken() ? `/api/v1/bookings/${params.id}` : `/api/v1/orders/${params.id}`;
-    apiFetch<BookingOrder>(path)
-      .then(setOrder)
-      .catch(() => setError("Order tidak ditemukan atau bukan milik sesi guest ini."));
+    let cancelled = false;
+    (async () => {
+      // Renew the access token from the refresh cookie first: after the guest
+      // order is CLAIMED to an account (login/Google), bookings.guest_session_id
+      // becomes NULL, so the guest endpoint can no longer see it — the
+      // authenticated endpoint is required.
+      const authenticated = (await ensureCustomerSession()) === "active";
+      const path = authenticated ? `/api/v1/bookings/${params.id}` : `/api/v1/orders/${params.id}`;
+      try {
+        const result = await apiFetch<BookingOrder>(path);
+        if (!cancelled) setOrder(result);
+      } catch {
+        if (!cancelled) setError("Order tidak ditemukan atau bukan milik sesi guest ini.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [params.id]);
 
   return (

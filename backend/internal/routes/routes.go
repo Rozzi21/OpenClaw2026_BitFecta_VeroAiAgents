@@ -24,7 +24,11 @@ func Register(router *gin.Engine, h *handlers.Handler, s *services.Services) {
 		api.GET("/packages/:id", h.GetPackage)
 		// SEC-13: expensive unauthenticated writes get a strict per-IP budget
 		// (5 req/min) so bulk fake-order spam / LLM-cost abuse is impractical.
-		api.POST("/chat", middlewares.PublicWriteRateLimit(), middlewares.RequestBodyLimit(64<<10), h.GuestChat)
+		// OptionalAuth: a valid Bearer access token upgrades the chat to an
+		// authenticated caller — create_booking then attributes the order to
+		// the account (no one-order guest limit). No token => pure guest,
+		// unchanged. The endpoint stays public; invalid tokens are ignored.
+		api.POST("/chat", middlewares.PublicWriteRateLimit(), middlewares.RequestBodyLimit(64<<10), middlewares.OptionalAuth(s.JWT), h.GuestChat)
 		api.GET("/chat/history", h.GuestHistory)
 		// Public manual order entry for the temporary AI-driven flow:
 		// Customer -> AI chat -> select package -> confirm -> order saved as pending.
