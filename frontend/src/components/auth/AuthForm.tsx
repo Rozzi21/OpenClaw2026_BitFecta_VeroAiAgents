@@ -9,9 +9,9 @@ type AuthFormProps = {
   error: string;
   footer: React.ReactNode;
   includeName?: boolean;
-  // google renders the "Continue with Google" OAuth button between the
-  // credential submit and the footer (optional so existing callers are
-  // unaffected).
+  // google renders the "Continue with Google" OAuth button ABOVE the
+  // credential inputs, with an "or" divider beneath it (optional so existing
+  // callers are unaffected).
   google?: React.ReactNode;
 };
 
