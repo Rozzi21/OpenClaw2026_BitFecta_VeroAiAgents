@@ -227,3 +227,27 @@ func NewGoogleClientOfflineForTest(clientID, clientSecret, redirectURI string) (
 		verifier: nil, // intentionally nil: no id_token verification offline
 	}, nil
 }
+
+// NewGoogleClientMockServerForTest builds a GoogleClient whose TOKEN endpoint
+// points at a caller-supplied URL (an httptest server impersonating Google)
+// and whose id_token verifier trusts a static key set (throwaway test RSA key).
+// This lets tests drive the FULL exchange + verification path — including
+// invalid-provider-response cases — with zero network and zero real Google
+// credentials. The issuer stays pinned to googleIssuer, so the mocked
+// id_tokens must still claim iss=https://accounts.google.com. Production code
+// must use NewGoogleClient (real discovery + JWKS verification).
+func NewGoogleClientMockServerForTest(clientID, clientSecret, redirectURI, tokenURL string, keySet oidc.KeySet) *GoogleClient {
+	return &GoogleClient{
+		oauthConfig: oauth2.Config{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			RedirectURL:  redirectURI,
+			Endpoint: oauth2.Endpoint{
+				AuthURL:  "https://accounts.google.com/o/oauth2/v2/auth",
+				TokenURL: tokenURL,
+			},
+			Scopes: googleScopes,
+		},
+		verifier: oidc.NewVerifier(googleIssuer, keySet, &oidc.Config{ClientID: clientID}),
+	}
+}

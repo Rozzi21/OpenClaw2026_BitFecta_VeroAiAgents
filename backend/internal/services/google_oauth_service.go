@@ -109,6 +109,16 @@ func NewGoogleOAuthService(cfg config.Config, repo GoogleOAuthRepository, issuer
 	return s
 }
 
+// NewGoogleOAuthServiceForTest builds an ENABLED service around an injected
+// (mocked) Google client — no OIDC discovery, no network, no real Google
+// credentials. Mirrors auth.NewGoogleClientOfflineForTest /
+// auth.NewGoogleClientMockServerForTest: lets tests drive StartLogin/Callback
+// end-to-end against a fake Google token endpoint. Production wiring must use
+// NewGoogleOAuthService.
+func NewGoogleOAuthServiceForTest(cfg config.Config, repo GoogleOAuthRepository, issuer *AuthService, client *auth.GoogleClient) *GoogleOAuthService {
+	return &GoogleOAuthService{repo: repo, issuer: issuer, google: client, cfg: cfg, enabled: true}
+}
+
 // Enabled reports whether Google OAuth is active (drives the 404 guard).
 func (s *GoogleOAuthService) Enabled() bool { return s.enabled && s.google != nil }
 

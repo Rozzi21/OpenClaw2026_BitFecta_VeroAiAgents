@@ -7,6 +7,10 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,5 +146,88 @@ func TestGoogleClaims_JSONTags(t *testing.T) {
 	}
 	if c.Email != "a@b.c" || !c.EmailVerified || c.Name != "N" || c.Picture != "P" || c.Nonce != "X" {
 		t.Errorf("claims mapping broken: %+v", c)
+	}
+}
+
+// --- Token-exchange tests against a MOCKED Google token endpoint ---
+// (httptest server, throwaway RSA key — no network, no real credentials).
+
+// newExchangeClient builds a client whose token endpoint is a local mock
+// server and whose verifier trusts the throwaway key.
+func newExchangeClient(t *testing.T, key *rsa.PrivateKey, clientID, clientSecret, tokenURL string) *GoogleClient {
+	t.Helper()
+	keySet := &oidc.StaticKeySet{PublicKeys: []crypto.PublicKey{&key.PublicKey}}
+	return NewGoogleClientMockServerForTest(clientID, clientSecret, "http://localhost/cb", tokenURL, keySet)
+}
+
+// fakeTokenServer impersonates Google's token endpoint with a fixed response.
+func fakeTokenServer(t *testing.T, status int, body string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestExchange_ProviderErrorResponse: the provider rejecting the code exchange
+// (HTTP error, e.g. invalid_grant) must surface ErrGoogleExchangeFailed. The
+// wrapped error must NEVER embed the client secret (SEC: secret hygiene).
+func TestExchange_ProviderErrorResponse(t *testing.T) {
+	key := genKey(t)
+	const secret = "test-client-secret-LEAK-MARKER"
+	srv := fakeTokenServer(t, http.StatusBadRequest, `{"error":"invalid_grant","error_description":"mock provider rejection"}`)
+	client := newExchangeClient(t, key, "cid", secret, srv.URL)
+
+	_, err := client.Exchange(context.Background(), "bad-code", "nonce-1", "verifier")
+	if !errors.Is(err, ErrGoogleExchangeFailed) {
+		t.Fatalf("expected ErrGoogleExchangeFailed, got %v", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Error("exchange error leaks client secret")
+	}
+}
+
+// TestExchange_MissingIDToken: a 200 token response WITHOUT id_token is an
+// invalid provider response for the OIDC flow → ErrGoogleMissingIDToken.
+func TestExchange_MissingIDToken(t *testing.T) {
+	key := genKey(t)
+	srv := fakeTokenServer(t, http.StatusOK, `{"access_token":"ya29.mock-access","token_type":"Bearer","expires_in":3600}`)
+	client := newExchangeClient(t, key, "cid", "secret", srv.URL)
+
+	if _, err := client.Exchange(context.Background(), "code", "nonce-1", "verifier"); !errors.Is(err, ErrGoogleMissingIDToken) {
+		t.Fatalf("expected ErrGoogleMissingIDToken, got %v", err)
+	}
+}
+
+// TestExchange_MalformedIDToken: a syntactically invalid id_token from the
+// provider must be rejected as ErrGoogleInvalidIDToken.
+func TestExchange_MalformedIDToken(t *testing.T) {
+	key := genKey(t)
+	srv := fakeTokenServer(t, http.StatusOK, `{"access_token":"ya29.mock-access","token_type":"Bearer","id_token":"not-a-jwt"}`)
+	client := newExchangeClient(t, key, "cid", "secret", srv.URL)
+
+	if _, err := client.Exchange(context.Background(), "code", "nonce-1", "verifier"); !errors.Is(err, ErrGoogleInvalidIDToken) {
+		t.Fatalf("expected ErrGoogleInvalidIDToken, got %v", err)
+	}
+}
+
+// TestExchange_ValidAgainstMockProvider: end-to-end happy path of the client —
+// code exchange against the mock endpoint + full id_token verification
+// (signature via static key set, pinned issuer, audience, expiry, nonce).
+func TestExchange_ValidAgainstMockProvider(t *testing.T) {
+	key := genKey(t)
+	raw := signTestIDToken(t, key, baseClaims("cid", "nonce-1"))
+	srv := fakeTokenServer(t, http.StatusOK, `{"access_token":"ya29.mock-access","token_type":"Bearer","id_token":`+strconv.Quote(raw)+`}`)
+	client := newExchangeClient(t, key, "cid", "secret", srv.URL)
+
+	id, err := client.Exchange(context.Background(), "code", "nonce-1", "verifier")
+	if err != nil {
+		t.Fatalf("valid mocked exchange rejected: %v", err)
+	}
+	if id.Subject != "google-sub-123" || id.Email != "user@gmail.com" || !id.EmailVerified {
+		t.Errorf("unexpected identity: %+v", id)
 	}
 }
