@@ -118,7 +118,7 @@ Provider tambahan; **bukan** envelope JSON — kedua endpoint di atas adalah ful
 - Login flow dan link flow memakai redirect URI berbeda (`GOOGLE_REDIRECT_URI` vs `GOOGLE_LINK_REDIRECT_URI`, derive otomatis `…/google/callback` → `…/google/link/callback`, 24 Agu 2026); keduanya harus terdaftar di Google Cloud Console.
 - Callback me-claim order guest ke akun (seperti login/register password).
 - Access token dikirim ke FE lewat **URL fragment** (`#access_token=`) agar tidak masuk access log / tidak dikirim balik sebagai query param. FE membaca fragment via `OAuthReceiver.tsx` → `setCustomerAccessToken`.
-- Rencana + keputusan keamanan lengkap: [../GOOGLE_OAUTH_PLAN.md](../GOOGLE_OAUTH_PLAN.md). Batasan/feature-flag: `known-issues.md` A.14.
+- Rencana + keputusan keamanan lengkap: [../GOOGLE_OAUTH_PLAN.md](../GOOGLE_OAUTH_PLAN.md). Dokumentasi implementasi lengkap (arsitektur, alur, config Console, deploy, troubleshooting): [../GOOGLE_OAUTH.md](../GOOGLE_OAUTH.md). Batasan/feature-flag: `known-issues.md` A.14.
 
 > Grup `/auth` memakai rate limit per-IP lebih ketat (`AuthRateLimit`, ~5 req/detik) untuk meredam brute force (SEC-7).
 
