@@ -1,3 +1,11 @@
+// Token storage lives in ./authToken (validated, expiry-aware). Re-exported
+// below so existing callers keep working unchanged.
+import {
+  clearCustomerAccessToken,
+  getCustomerAccessToken,
+  setCustomerAccessToken,
+} from "./authToken.ts";
+
 const SERVER_API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
@@ -92,24 +100,13 @@ export class APIError extends Error {
   }
 }
 
-const CUSTOMER_TOKEN_KEY = "vero_customer_access_token";
+export {
+  clearCustomerAccessToken,
+  getCustomerAccessToken,
+  setCustomerAccessToken,
+} from "./authToken.ts";
 
-export function setCustomerAccessToken(token: string) {
-  if (typeof window !== "undefined") window.localStorage.setItem(CUSTOMER_TOKEN_KEY, token);
-}
-
-export function getCustomerAccessToken() {
-  return typeof window !== "undefined" ? window.localStorage.getItem(CUSTOMER_TOKEN_KEY) : null;
-}
-
-// Remove the stored access token WITHOUT touching the server session. Pair with
-// customerLogout() for a real sign-out (which also revokes the refresh session);
-// this alone only forgets the token locally.
-export function clearCustomerAccessToken() {
-  if (typeof window !== "undefined") window.localStorage.removeItem(CUSTOMER_TOKEN_KEY);
-}
-
-type RefreshResponse = { access_token: string };
+type RefreshResponse = { access_token: string; expires_in?: number };
 
 // Refresh outcome. The Google session is a NORMAL Vero session, so the same
 // refresh cookie + rotation machinery applies identically to password logins.
@@ -136,13 +133,18 @@ export function ensureCustomerSession(): Promise<CustomerSessionState> {
   refreshInFlight = (async (): Promise<CustomerSessionState> => {
     try {
       const result = await apiFetch<RefreshResponse>("/api/v1/auth/refresh", { method: "POST" });
-      if (result && result.access_token) {
-        setCustomerAccessToken(result.access_token);
+      if (result && result.access_token && setCustomerAccessToken(result.access_token, result.expires_in)) {
         return "active";
       }
       return "anonymous";
-    } catch {
-      // 401 (revoked/expired/reused) or network — no usable session.
+    } catch (err) {
+      // 401 means the refresh session is gone (revoked/expired/reuse-detected):
+      // drop any stale stored token so the client logs out safely instead of
+      // keeping a dead Bearer token around. Network failures keep the token —
+      // the session may still be valid once connectivity returns.
+      if (err instanceof APIError && err.status === 401) {
+        clearCustomerAccessToken();
+      }
       return "anonymous";
     } finally {
       refreshInFlight = null;
@@ -178,11 +180,14 @@ async function parseJsonEnvelope<T>(response: Response): Promise<Envelope<T>> {
   // Detect that early and surface a clearer message instead of "invalid JSON".
   const raw = await response.text();
   if (!contentType.includes("application/json") || !raw.trim().startsWith("{")) {
+    // SECURITY: never log the response BODY. Auth endpoints (/auth/login,
+    // /auth/refresh) return the access token in the body, and console output
+    // is captured by error-reporting tooling. Log metadata only.
     // eslint-disable-next-line no-console
     console.error("[api] non-JSON response", {
       status: response.status,
       contentType,
-      preview: raw.slice(0, 200),
+      bodyLength: raw.length,
     });
     if (!response.ok) {
       throw new Error(
@@ -194,11 +199,13 @@ async function parseJsonEnvelope<T>(response: Response): Promise<Envelope<T>> {
   try {
     return JSON.parse(raw) as Envelope<T>;
   } catch (err) {
+    // SECURITY: same rule as above — the raw body may carry an access token
+    // (malformed auth responses), so only metadata is logged.
     // eslint-disable-next-line no-console
     console.error("[api] failed to parse JSON response", {
       status: response.status,
-      preview: raw.slice(0, 200),
-      error: err,
+      bodyLength: raw.length,
+      error: err instanceof Error ? err.message : String(err),
     });
     throw new Error("Gagal membaca respons dari server. Coba refresh halaman.");
   }

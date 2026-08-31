@@ -7,7 +7,7 @@ import { AuthForm } from "@/components/auth/AuthForm";
 import { GoogleButton } from "@/components/auth/GoogleButton";
 import { OAuthReceiver } from "@/components/auth/OAuthReceiver";
 
-type AuthResponse = { access_token: string };
+type AuthResponse = { access_token: string; expires_in?: number };
 
 export default function LoginPage() {
   const [error, setError] = useState("");
@@ -21,7 +21,7 @@ export default function LoginPage() {
         method: "POST",
         body: JSON.stringify({ email: form.get("email"), password: form.get("password") }),
       });
-      setCustomerAccessToken(result.access_token);
+      setCustomerAccessToken(result.access_token, result.expires_in);
       window.location.href = "/";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login gagal");

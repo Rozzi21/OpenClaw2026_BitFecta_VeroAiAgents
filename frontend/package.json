@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "node --experimental-transform-types --no-warnings --test src/lib/authToken.test.ts src/lib/api.test.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",

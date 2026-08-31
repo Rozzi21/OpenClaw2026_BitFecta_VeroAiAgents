@@ -474,8 +474,11 @@ Callback login memanggil **`AuthService.issueSession(user)`** yang sama dengan
 
 ### 8.3 Helper frontend (`frontend/src/lib/api.ts`)
 
-- `setCustomerAccessToken(token)` / `getCustomerAccessToken()` /
-  `clearCustomerAccessToken()` — kelola token di localStorage.
+- `setCustomerAccessToken(token, expiresIn?)` / `getCustomerAccessToken()` /
+  `clearCustomerAccessToken()` — kelola token di localStorage. Sejak 31 Agu 2026
+  diimplementasikan di `frontend/src/lib/authToken.ts` (di-re-export oleh `api.ts`):
+  tervalidasi bentuk-JWT + expiry-aware (marker `..._expires_at`, skew 30 dtk) —
+  lihat bagian 9.4.
 - **`ensureCustomerSession()`** — menjamin ada access token yang valid sebelum memanggil
   API customer: token sudah ada → langsung `active`; belum ada → pertukarkan cookie
   refresh via `POST /auth/refresh` sekali (**dedup in-flight** `refreshInFlight` agar
@@ -539,6 +542,69 @@ Dipancarkan dari `google_oauth_service.go` via `auth.LogSecurity`:
 - `OAuthReceiver` membersihkan fragment URL agar token tidak tersisa di history/share.
 - `ensureCustomerSession` memastikan token kedaluwarsa diperbarui dari cookie (login
   tidak pernah "sok login" dengan token mati).
+
+### 9.4 Arsitektur token-storage & hardening (31 Agu 2026)
+
+**Keputusan (evaluasi Option A–D): TETAP localStorage + hardening (Option D), di atas
+fondasi Option C yang sudah ada** (access token 15 menit + refresh cookie HttpOnly +
+rotasi). Alasan penolakan alternatif:
+
+- **Option A (HttpOnly access cookie)**: menambah permukaan CSRF ke SEMUA endpoint dan
+  mengubah middleware auth + CORS/credentials — rewrite auth terselubung. Benefit kecil:
+  token hanya hidup 15 menit dan refresh token sudah HttpOnly.
+- **Option B (BFF)**: mem-proxy semua API termasuk SSE lewat route handler Next.js —
+  kompleksitas besar tanpa benefit keamanan yang jelas pada arsitektur ini.
+- **Option D dipilih** karena ancaman utama (pencurian token via XSS) lebih tepat
+  dimitigasi dengan memperkecil window + blast radius, bukan mengganti arsitektur.
+
+**Threat model (jujur):** localStorage TIDAK aman terhadap XSS. Bila attacker
+menjalankan JS di origin FE, token 15-menit bisa dicuri selama ia masih valid.
+Hardening di bawah memperkecil exposure; pertahanan utama terhadap XSS adalah CSP
+(`frontend/next.config.mjs`) + absennya script pihak ketiga di halaman authenticated.
+
+**Hardening yang diterapkan** (semua di `frontend/src/lib/authToken.ts` +
+`api.ts` + `OAuthReceiver.tsx`):
+
+1. **Validasi bentuk token.** Token divalidasi sebagai compact-JWT (3 segmen
+   base64url, cap 8 KiB) SEBELUM disimpan dan SEBELUM dipakai. Nilai crafted di
+   fragment URL atau localStorage (tampering/XSS) tidak pernah tersimpan atau
+   terkirim sebagai Bearer — ia dibuang.
+2. **Expiry ditegakkan client-side.** Token disimpan dengan marker
+   `vero_customer_access_token_expires_at` (dari `expires_in` backend, fallback ke
+   claim `exp` JWT — dibaca TANPA verifikasi signature, hanya petunjuk kapan refresh;
+   keputusan trust tetap server-side). Token kedaluwarsa (dengan skew 30 detik)
+   dianggap tidak ada dan dibersihkan, sehingga `ensureCustomerSession()` selalu
+   refresh via cookie HttpOnly alih-alih mengirim token mati.
+3. **Fragment cleanup total.** `consumeOAuthFragment()` (pure, teruji) membedakan
+   `none`/`token`/`invalid`; fragment yang membawa key `access_token` SELALU
+   di-strip dari URL via `history.replaceState` bahkan bila nilainya invalid.
+   Query `?auth_error` juga di-strip setelah ditampilkan.
+4. **Token tidak pernah di-log.** `parseJsonEnvelope` tidak lagi me-log preview body
+   respons (body `/auth/login` & `/auth/refresh` memuat access token; output console
+   bisa tertangkap error-reporting tooling) — hanya status/contentType/panjang.
+5. **Refresh gagal = logout aman.** `POST /auth/refresh` berbalas 401
+   (revoke/expired/reuse-detected) → token lokal dibersihkan; kegagalan jaringan
+   TIDAK membersihkan token (sesi mungkin masih valid).
+6. **Multi-tab.** localStorage shared per-origin: token baru hasil refresh langsung
+   terlihat tab lain; logout di satu tab menghilangkan token untuk semua tab pada
+   pembacaan berikutnya. Dedup `refreshInFlight` mencegah race rotasi single-use
+   dalam satu tab.
+
+**Yang TIDAK berubah:** kontrak API (`AuthResponse.access_token/expires_in`,
+fragment `#access_token`), refresh rotation + reuse detection, cookie HttpOnly,
+alur login/register/logout/revoke, chat/booking/streaming, transisi guest →
+authenticated.
+
+**Test:** `frontend/src/lib/authToken.test.ts` + `api.test.ts` (26 test, runner
+bawaan Node — `npm test` di `frontend/`): cleanup fragment, nilai fragment jahat,
+token tidak pernah di-log, logout menghapus token, token kedaluwarsa memicu
+refresh, refresh 401 logout aman, dedup multi-tab, dan Bearer tidak pernah masuk
+URL.
+
+**Sisa risiko:** XSS yang berhasil tetap bisa mencuri token yang sedang valid
+(≤15 menit) — mitigasi lanjutan: perketat CSP produksi (hapus `unsafe-eval`),
+audit dependency frontend, dan pertimbangkan token binding. Lihat
+`docs/GOOGLE_OAUTH_SECURITY_AUDIT.md` untuk audit lengkap.
 
 ## 10. Local Development
 

@@ -53,6 +53,8 @@ Batasan diketahui:
 
 Karena sesi Google diterbitkan lewat `AuthService.issueSession` yang sama, ketiga helper bekerja identik untuk login Google DAN password — user Google kini bisa refresh session, logout, dan revoke seperti user password.
 
+**Hardening (31 Agu 2026):** storage token pindah ke `frontend/src/lib/authToken.ts` — validasi bentuk JWT + cap ukuran, marker expiry dengan skew 30 dtk (token mati dibuang → refresh via cookie), refresh 401 membersihkan token lokal, body respons tidak pernah di-log, fragment OAuth selalu di-strip walau invalid. Keputusan tetap localStorage (bukan cookie/BFF) + threat model: `docs/GOOGLE_OAUTH.md` bagian 9.4. Catatan: localStorage TETAP tidak aman terhadap XSS; hardening hanya memperkecil window (≤15 mnt) dan blast radius.
+
 **Batasan tersisa:** helper belum dipasang ke UI (belum ada tombol "Logout" / auto-refresh proaktif di halaman customer). Untuk mengaktifkan: panggil `ensureCustomerSession()` sebelum aksi authenticated (atau saat mount halaman akun) dan `customerLogout()` dari tombol logout. UI wiring diserahkan ke task frontend terpisah.
 
 ---

@@ -66,6 +66,8 @@ Setelah token tersimpan, flow existing berjalan normal: `apiFetch` menyertakan B
 
 Sebelumnya customer frontend hanya menyimpan access token dan TIDAK pernah memanggil `/auth/refresh` atau `/auth/logout` — token mati setelah 15 menit tanpa perpanjangan dan tidak ada cara client me-revoke sesi. Helper ini menutup gap itu sehingga user Google (dan password) bisa refresh session + logout + revoke seperti fitur authenticated normal.
 
+**Hardening token storage (31 Agu 2026).** Helper token dipindah ke `frontend/src/lib/authToken.ts` (tetap di-re-export oleh `api.ts`): token divalidasi bentuk compact-JWT + cap 8 KiB sebelum disimpan/dipakai, disimpan dengan marker expiry (`vero_customer_access_token_expires_at` dari `expires_in` backend / claim `exp`, skew 30 dtk) sehingga token kedaluwarsa dibuang dan selalu memicu refresh, refresh 401 membersihkan token lokal (logout aman), dan `parseJsonEnvelope` tidak lagi me-log body respons (body auth memuat access token). `OAuthReceiver` kini memakai `consumeOAuthFragment()` (pure): fragment ber-`access_token` selalu di-strip walau invalid, dan `?auth_error` dibersihkan dari history. Unit test: `frontend/src/lib/authToken.test.ts` + `api.test.ts` (`npm test`, runner bawaan Node). Rincian keputusan & threat model: `docs/GOOGLE_OAUTH.md` bagian 9.4.
+
 ### Mekanisme Rekomendasi
 
 Response `POST /api/v1/chat` sekarang mengandung field:
