@@ -141,6 +141,39 @@ audit `guest_order_linked`). Audit tambahan: `guest_order_created`,
 `guest_order_limit_reached`, `guest_order_auth_required` — hanya safe IDs, tanpa
 raw token. Detail: [GUEST_ORDER_LIMIT.md](../GUEST_ORDER_LIMIT.md).
 
+**Claim aman + idempoten (GO-P1-3 / GO-P3-3, 4 Sep 2026).**
+`ClaimOrder(ctx, token, userID) (GuestOrderClaimResult, error)` kini melaporkan
+hasil, bukan hanya error. Bukti kepemilikan HANYA cookie `vero_guest_session`
+(hash-nya me-resolve baris guest session yang order-nya di-anchor); booking id
+tidak pernah jadi input, dan email/kontak tidak pernah dibaca — tidak ada
+auto-claim by email. Outcome yang bisa dibedakan pemanggil:
+
+| Hasil | Arti |
+|---|---|
+| `Transferred=true`, err nil | kepemilikan berpindah di call ini (audit `guest_order_linked`) |
+| `Transferred=false`, err nil | replay idempoten: akun ini SUDAH pemiliknya, tidak ada tulisan (audit `guest_order_claim_replayed`) |
+| `ErrGuestOrderNothingToClaim` | no-op normal: tanpa cookie, session tak dikenal/kedaluwarsa, atau belum pernah order |
+| `ErrGuestOrderClaimConflict` | order milik AKUN LAIN → ditolak, tidak pernah dipindah diam-diam (audit `guest_order_claim_conflict`) |
+| `ErrGuestOrderClaimUnauthenticated` | `userID == uuid.Nil` → ditolak sebelum menyentuh DB |
+| error lain | kegagalan repository (audit `guest_order_claim_failed` + `reason` kategori) |
+
+Repository `ClaimGuestOrder` mengembalikan `repositories.GuestOrderClaim{BookingID,
+OwnerID, Transferred}` — fakta DB; policy (replay vs penolakan) tetap di service.
+Satu transaksi: lock baris guest `FOR UPDATE` → baca marker `claimed_user_id`
+SEBELUM menulis apa pun (kalau sudah ada, kepemilikan tidak pernah dihitung
+ulang) → conditional UPDATE booking (`WHERE id = ? AND guest_session_id = ?`,
+`RowsAffected == 1`) → UPDATE marker (`WHERE claimed_user_id IS NULL`); marker
+gagal ⇒ transaksi rollback, jadi tidak ada booking ter-claim tanpa claimant
+tercatat. Bila marker masih NULL tapi booking sudah keluar dari jalur guest
+(claim pra-migrasi), pemilik AKTUAL dibaca dari baris booking dan dilaporkan —
+bukan ditimpa. Handler (`handlers/helpers.go: claimGuestOrder`) memakai satu jalur
+untuk Register/Login/Google callback dan tetap non-fatal terhadap penerbitan
+sesi; yang berubah: kegagalan dan penolakan tidak lagi menyatu jadi satu baris
+log generik. Regresi dikunci `internal/services/guest_order_claim_test.go`
+(valid claim, identitas guest invalid, guest salah, user salah, duplikat,
+konkuren, order sudah di-claim tanpa marker, serangan email-only).
+
+
 **Jangkar kontak (GO-P0-1, 4 Sep 2026).** `Resolve()` tetap boleh mencetak
 identitas baru saat cookie hilang (memutus itu akan mematahkan pengunjung baru
 yang sah), jadi `guest_sessions.order_count` sendirian berarti "satu order per

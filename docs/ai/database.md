@@ -65,6 +65,21 @@ pernah disimpan — hanya hash-nya. Relasi balik: `ChatSession.GuestSessionID`
 (link chat→guest) dan `Booking.GuestSessionID` (ownership + policy). Detail
 lengkap: [GUEST_ORDER_LIMIT.md](../GUEST_ORDER_LIMIT.md).
 
+**Marker claim (`ClaimedUserID` + `ClaimedAt`, GO-P3-3 — 4 Sep 2026).** Dua
+kolom nullable (`claimed_user_id uuid`, index; `claimed_at timestamptz`) yang
+mencatat bahwa `FirstOrderID` sudah dipindah ke akun. Sebelumnya status claim
+hanya bisa DISIMPULKAN dari `bookings.guest_session_id` yang menjadi NULL,
+sehingga claim kedua selalu jadi `record not found` yang ambigu: "belum pernah
+di-claim", "sudah milik akun ini" (retry idempoten) dan "sudah milik akun lain"
+(harus DITOLAK) tak terbedakan. Marker ditulis di transaksi yang sama dengan
+transfer kepemilikan (`ClaimGuestOrder`), jadi kepemilikan diputuskan tepat
+sekali dan percobaan berikutnya dijawab dari marker — bukan dari lomba baru ke
+baris booking. `claimed_user_id` `json:"-"` (identifier internal tidak keluar
+API, GO-P3-5). Migrasi versioned:
+`backend/migrations/20260904_guest_order_claim_marker.sql`; backfill untuk order
+yang sudah di-claim sebelum kolom ini ada dijalankan `migrateGuestOrderClaimMarker()`
+di `AutoMigrate`.
+
 ### GuestOrderEntitlement ([models.go](../../backend/internal/models/models.go))
 Jangkar KEDUA untuk kebijakan "satu order per guest" (GO-P0-1, 4 Sep 2026).
 `GuestSession.OrderCount` bergantung pada cookie `vero_guest_session` yang
@@ -157,6 +172,9 @@ erDiagram
 
 
 Setelah AutoMigrate, `MigrateGuestChatSessions()` menormalisasi session lama yang masih menunjuk `guest@vero.local` menjadi `UserID=NULL` dan mengisi expiry legacy dari timestamp aktivitas.
+
+### Migrasi marker claim guest order (GO-P3-3, 4 Sep 2026)
+`migrateGuestOrderClaimMarker()` dipanggil di `AutoMigrate()` (setelah `migrateGoogleOAuth`). AutoMigrate menambah kolom `guest_sessions.claimed_user_id` / `claimed_at`, tapi tidak bisa mengisinya untuk order yang sudah di-claim sebelum kolom ada; fungsi ini mem-backfill lewat satu `UPDATE ... FROM bookings` idempoten (`WHERE gs.first_order_id = b.id AND b.guest_session_id IS NULL AND gs.claimed_user_id IS NULL`). Tidak ada fakta baru yang dibuat — order guest yang booking-nya tidak lagi menunjuk guest session MEMANG sudah di-claim, dan `bookings.user_id` adalah pemiliknya — sehingga migrasi ini tidak pernah bisa mengubah keputusan kepemilikan. SQL versioned yang setara: `backend/migrations/20260904_guest_order_claim_marker.sql`. Jalur claim tetap aman tanpa backfill: bila marker masih NULL, `ClaimGuestOrder` membaca pemilik aktual dari baris booking (lihat backend.md).
 
 > ⚠️ **Catatan (ditemukan 25 Jul 2026):** cleanup expired (`Repository.DeleteExpiredChatSessions`, dipicu ticker di `main.go`) hanya **soft-delete** `ChatSession` — child `ChatMessage`, `ToolCall`, dan `AILog` TIDAK ikut terhapus dan menjadi orphan. Lihat `known-issues.md` #19 untuk dampak + rencana perbaikan.
 

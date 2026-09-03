@@ -115,9 +115,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	// Claim any guest order to the now-authenticated account, mirroring the
 	// password login/register handlers.
 	if user, ok := result.Issue.Response.User.(models.User); ok {
-		if err := h.Services.Guests.ClaimOrder(c.Request.Context(), auth.GetGuestIdentityCookie(c), user.ID); err != nil {
-			log.Printf("[google-callback] guest order claim failed user=%s: %v", user.ID, err)
-		}
+		h.claimGuestOrder(c, user.ID, "google-callback")
 	}
 
 	// Issue the normal Vero session: refresh cookie on the 302 response,

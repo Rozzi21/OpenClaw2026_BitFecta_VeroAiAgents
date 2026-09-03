@@ -112,14 +112,49 @@ func (r *Repository) FindBookingForGuest(ctx context.Context, id, guestID uuid.U
 	return booking, err
 }
 
+// GuestOrderClaim is the factual outcome of a claim attempt. The repository
+// reports WHAT the database now holds; the service decides what that means for
+// the caller (idempotent replay vs refusal) — policy stays in the service layer.
+//
+//   - BookingID: the guest order the guest session is anchored to.
+//   - OwnerID:   the account that owns that booking AFTER this call. For an
+//     already-claimed order this is the first winner, never the current
+//     caller, which is what makes a silent transfer impossible.
+//   - Transferred: true only when THIS call moved ownership. False means the
+//     call was a no-op (the order had already been claimed).
+type GuestOrderClaim struct {
+	BookingID   uuid.UUID
+	OwnerID     uuid.UUID
+	Transferred bool
+}
+
 // ClaimGuestOrder atomically transfers a guest booking to an authenticated
-// account. The booking must still reference the exact guest session and may
-// only be claimed once (guest_session_id becomes NULL in the same statement).
-// Locking the guest row serializes two simultaneous claim attempts; the
-// conditional UPDATE (RowsAffected==1) then decides the winner, so a lost race
-// surfaces as record-not-found rather than double-linking.
-func (r *Repository) ClaimGuestOrder(ctx context.Context, guestID, userID uuid.UUID) (uuid.UUID, error) {
-	var bookingID uuid.UUID
+// account, exactly once, inside a single transaction.
+//
+// Ownership proof is the guest session row itself (resolved from the HttpOnly
+// cookie token hash by the caller): the booking is derived from
+// guest_sessions.first_order_id and the UPDATE still requires the booking to
+// reference that exact guest session. A booking id supplied from outside, a
+// different guest session, or a matching contact email are therefore never
+// sufficient — none of them can move a booking.
+//
+// Sequence and why each step is needed:
+//  1. SELECT ... FOR UPDATE on the guest row serializes two simultaneous claim
+//     attempts (Postgres re-evaluates the predicate after the wait).
+//  2. The claim marker (claimed_user_id) is read BEFORE any write. If it is
+//     set, ownership was already decided: return the existing owner and
+//     transfer nothing. Two claims can therefore never disagree about who owns
+//     the order, no matter who runs second.
+//  3. The conditional UPDATE (guest_session_id must still match) performs the
+//     transfer and closes the guest path in the same statement.
+//  4. The marker UPDATE (claimed_user_id IS NULL) is the second gate; a
+//     RowsAffected mismatch aborts the transaction, rolling the transfer back.
+//
+// Rows whose marker predates these columns (claimed before the migration, or
+// filled by an out-of-band owner change) hit step 3 with RowsAffected == 0; the
+// current owner is then read from the booking instead of being overwritten.
+func (r *Repository) ClaimGuestOrder(ctx context.Context, guestID, userID uuid.UUID) (GuestOrderClaim, error) {
+	var claim GuestOrderClaim
 	err := r.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var guest models.GuestSession
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&guest, "id = ? AND expires_at > ?", guestID, time.Now()).Error; err != nil {
@@ -128,16 +163,57 @@ func (r *Repository) ClaimGuestOrder(ctx context.Context, guestID, userID uuid.U
 		if guest.FirstOrderID == nil {
 			return gorm.ErrRecordNotFound
 		}
-		result := tx.Model(&models.Booking{}).Where("id = ? AND guest_session_id = ?", *guest.FirstOrderID, guestID).
+		bookingID := *guest.FirstOrderID
+		if guest.ClaimedUserID != nil {
+			claim = GuestOrderClaim{BookingID: bookingID, OwnerID: *guest.ClaimedUserID}
+			return nil
+		}
+		result := tx.Model(&models.Booking{}).Where("id = ? AND guest_session_id = ?", bookingID, guestID).
 			Updates(map[string]interface{}{"user_id": userID, "guest_session_id": nil})
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
+			return r.resolveUnmarkedGuestOrderClaim(tx, bookingID, &claim)
+		}
+		now := time.Now()
+		marker := tx.Model(&models.GuestSession{}).Where("id = ? AND claimed_user_id IS NULL", guestID).
+			Updates(map[string]interface{}{"claimed_user_id": userID, "claimed_at": now})
+		if marker.Error != nil {
+			return marker.Error
+		}
+		if marker.RowsAffected != 1 {
+			// Marker lost its own race: refuse and roll the transfer back rather
+			// than leaving a claimed booking without a recorded claimant.
 			return gorm.ErrRecordNotFound
 		}
-		bookingID = *guest.FirstOrderID
+		claim = GuestOrderClaim{BookingID: bookingID, OwnerID: userID, Transferred: true}
 		return nil
 	})
-	return bookingID, err
+	if err != nil {
+		return GuestOrderClaim{}, err
+	}
+	return claim, nil
+}
+
+// resolveUnmarkedGuestOrderClaim reports the current owner of a guest order that
+// the conditional UPDATE could not move while no claim marker was present.
+//
+// The booking still belonging to a guest session means first_order_id points at
+// somebody else's order: the pointer alone is not ownership, so this fails
+// closed as "nothing to claim" instead of naming an owner. Otherwise the order
+// already left the guest path (a pre-migration claim) and its current user_id is
+// the authoritative owner — reported, never overwritten.
+func (r *Repository) resolveUnmarkedGuestOrderClaim(tx *gorm.DB, bookingID uuid.UUID, claim *GuestOrderClaim) error {
+	var existing models.Booking
+	if err := tx.Select("id", "user_id", "guest_session_id").First(&existing, "id = ?", bookingID).Error; err != nil {
+		return err
+	}
+	if existing.GuestSessionID != nil {
+		// Still guest-owned while the matching-guest UPDATE affected no row:
+		// first_order_id points at a booking of a DIFFERENT guest session.
+		return gorm.ErrRecordNotFound
+	}
+	*claim = GuestOrderClaim{BookingID: bookingID, OwnerID: existing.UserID}
+	return nil
 }

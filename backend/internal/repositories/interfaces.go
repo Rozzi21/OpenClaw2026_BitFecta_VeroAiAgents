@@ -98,7 +98,7 @@ type GuestRepository interface {
 	FindGuestSessionByTokenHash(ctx context.Context, hash string) (models.GuestSession, error)
 	FindGuestSession(ctx context.Context, id uuid.UUID) (models.GuestSession, error)
 	UpdateChatSessionGuest(ctx context.Context, chatID, guestID uuid.UUID) error
-	ClaimGuestOrder(ctx context.Context, guestID, userID uuid.UUID) (uuid.UUID, error)
+	ClaimGuestOrder(ctx context.Context, guestID, userID uuid.UUID) (GuestOrderClaim, error)
 }
 
 // BookingTransactionRepository is implemented by Repository both normally and

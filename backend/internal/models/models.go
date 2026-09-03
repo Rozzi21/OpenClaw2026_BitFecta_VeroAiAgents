@@ -218,6 +218,17 @@ type GuestSession struct {
 	FirstOrderID *uuid.UUID `json:"first_order_id,omitempty" gorm:"type:uuid;index"`
 	OrderCount   int        `json:"order_count" gorm:"not null;default:0"`
 	ExpiresAt    time.Time  `json:"expires_at" gorm:"index;not null"`
+	// ClaimedUserID / ClaimedAt record that FirstOrderID has already been
+	// transferred to an account (GO-P3-3). Before these columns the claim state
+	// could only be INFERRED from bookings.guest_session_id turning NULL, which
+	// made a second claim an ambiguous "record not found": impossible to tell
+	// "never claimed" from "already claimed", and impossible to tell "already
+	// yours" (an idempotent replay) from "already someone else's" (a refusal).
+	// The marker is written in the same transaction as the ownership transfer,
+	// so ownership is decided exactly once and a re-claim never re-decides it.
+	// Internal identifiers stay out of JSON (GO-P3-5).
+	ClaimedUserID *uuid.UUID `json:"-" gorm:"type:uuid;index"`
+	ClaimedAt     *time.Time `json:"claimed_at,omitempty"`
 }
 
 // GuestOrderEntitlement is the durable, contact-anchored record that one

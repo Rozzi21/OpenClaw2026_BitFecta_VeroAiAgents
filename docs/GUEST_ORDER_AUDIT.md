@@ -9,6 +9,21 @@
 > Verifikasi: `go build ./...` OK; `go test ./internal/services -run
 > 'Guest|Idempotent|Concurrent|Authenticated' -race -count=1` OK.
 
+> **Status perbaikan (diperbarui 4 Sep 2026 — dokumen audit tetap apa adanya):**
+> **GO-P0-1 FIXED** (jangkar kontak `guest_order_entitlements`).
+> **GO-P3-3 FIXED** + **GO-P1-3 SEBAGIAN**: `guest_sessions.claimed_user_id` /
+> `claimed_at` ditulis dalam transaksi claim, `GuestService.ClaimOrder`
+> mengembalikan `(GuestOrderClaimResult, error)` dengan sentinel
+> `ErrGuestOrderNothingToClaim` / `ErrGuestOrderClaimConflict` /
+> `ErrGuestOrderClaimUnauthenticated` plus audit event terpisah
+> (`guest_order_claim_replayed` / `_conflict` / `_failed`); claim ulang oleh akun
+> yang sama = no-op sukses, akun lain = penolakan eksplisit. Sifat "kepemilikan
+> diputuskan sekali" TIDAK dilonggarkan (§7 aturan sekuensing tetap dipatuhi):
+> yang jadi idempoten adalah HASIL panggilan, bukan transfernya. **Belum
+> dikerjakan** dari GO-P1-3: jalur retry claim (endpoint/hook re-claim). Detail:
+> `docs/GUEST_ORDER_LIMIT.md` §"Claim order guest",
+> `docs/ai/known-issues.md` A.18.
+
 ---
 
 ## 1. Ruang Lingkup

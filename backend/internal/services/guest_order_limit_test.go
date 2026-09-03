@@ -247,20 +247,27 @@ func TestGuestOrderClaimTransitionsToAccountOnce(t *testing.T) {
 	}
 	account := models.User{Name: "Account", Email: "acct-" + uuid.NewString() + "@example.com", Password: "x", Role: models.RoleUser}
 	repo.DB.Create(&account)
-	claimedID, err := repo.ClaimGuestOrder(ctx, guest.ID, account.ID)
+	claim, err := repo.ClaimGuestOrder(ctx, guest.ID, account.ID)
 	if err != nil {
 		t.Fatalf("claim should succeed: %v", err)
 	}
-	if claimedID != booking.ID {
-		t.Fatalf("claimed wrong booking: %s", claimedID)
+	if claim.BookingID != booking.ID || claim.OwnerID != account.ID || !claim.Transferred {
+		t.Fatalf("claim reported wrong outcome: %+v", claim)
 	}
 	var fresh models.Booking
 	repo.DB.First(&fresh, "id = ?", booking.ID)
 	if fresh.UserID != account.ID || fresh.GuestSessionID != nil {
 		t.Fatalf("claim did not transfer ownership safely: user=%s guest=%v", fresh.UserID, fresh.GuestSessionID)
 	}
-	if _, err := repo.ClaimGuestOrder(ctx, guest.ID, account.ID); err == nil {
-		t.Fatal("second claim should fail because order was already claimed")
+	// The ownership transition still happens exactly once. A repeat by the SAME
+	// account is now an explicit no-op (Transferred=false) instead of an
+	// ambiguous record-not-found, so a retry cannot re-link anything.
+	replay, err := repo.ClaimGuestOrder(ctx, guest.ID, account.ID)
+	if err != nil {
+		t.Fatalf("repeat claim by the same account must be idempotent: %v", err)
+	}
+	if replay.Transferred || replay.BookingID != booking.ID || replay.OwnerID != account.ID {
+		t.Fatalf("second claim re-decided ownership: %+v", replay)
 	}
 	if _, err := svc.Find(ctx, booking.ID, account.ID, false); err != nil {
 		t.Fatalf("account should access claimed order: %v", err)

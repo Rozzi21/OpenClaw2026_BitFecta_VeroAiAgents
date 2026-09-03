@@ -75,6 +75,9 @@ func (d *Database) AutoMigrate() error {
 	if err := d.migrateGoogleOAuth(); err != nil {
 		return err
 	}
+	if err := d.migrateGuestOrderClaimMarker(); err != nil {
+		return err
+	}
 	return d.migrateTripSearchIndexes()
 }
 
@@ -87,6 +90,29 @@ func (d *Database) migrateGoogleOAuth() error {
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub
 		ON users (google_sub)
 		WHERE google_sub IS NOT NULL
+	`).Error
+}
+
+// migrateGuestOrderClaimMarker backfills guest_sessions.claimed_user_id /
+// claimed_at for orders that were already claimed before those columns existed
+// (GO-P3-3). AutoMigrate adds the columns but cannot fill them, and the claim
+// path would otherwise have to infer the owner from the booking row on every
+// attempt for those sessions.
+//
+// It records nothing new: a guest order whose booking no longer references a
+// guest session HAS been claimed, and bookings.user_id is its owner. The
+// statement only touches rows whose marker is still NULL, so it is idempotent
+// and can never change an ownership decision. Same raw-DDL/data pattern as
+// migrateGoogleOAuth / migrateLegacySlots.
+func (d *Database) migrateGuestOrderClaimMarker() error {
+	return d.DB.Exec(`
+		UPDATE guest_sessions gs
+		SET claimed_user_id = b.user_id,
+			claimed_at = COALESCE(b.updated_at, gs.updated_at)
+		FROM bookings b
+		WHERE gs.first_order_id = b.id
+		  AND b.guest_session_id IS NULL
+		  AND gs.claimed_user_id IS NULL
 	`).Error
 }
 

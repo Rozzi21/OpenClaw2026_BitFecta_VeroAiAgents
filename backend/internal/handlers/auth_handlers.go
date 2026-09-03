@@ -27,9 +27,7 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 	if user, ok := result.Response.User.(models.User); ok {
-		if err := h.Services.Guests.ClaimOrder(c.Request.Context(), auth.GetGuestIdentityCookie(c), user.ID); err != nil {
-			log.Printf("[register] guest order claim failed user=%s: %v", user.ID, err)
-		}
+		h.claimGuestOrder(c, user.ID, "register")
 	}
 	respondAuthIssue(c, h.Services.Config, http.StatusCreated, "Registered", result)
 }
@@ -45,9 +43,7 @@ func (h *Handler) Login(c *gin.Context) {
 		return
 	}
 	if user, ok := result.Response.User.(models.User); ok {
-		if err := h.Services.Guests.ClaimOrder(c.Request.Context(), auth.GetGuestIdentityCookie(c), user.ID); err != nil {
-			log.Printf("[login] guest order claim failed user=%s: %v", user.ID, err)
-		}
+		h.claimGuestOrder(c, user.ID, "login")
 	}
 	respondAuthIssue(c, h.Services.Config, http.StatusOK, "Logged in", result)
 }

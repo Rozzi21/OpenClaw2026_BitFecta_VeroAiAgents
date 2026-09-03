@@ -34,9 +34,11 @@ dinormalisasi, sehingga menghapus cookie tidak lagi mereset allowance
    `guest_order_entitlements` per channel kontak) — semuanya atomik.
 4. Tracking order: `GET /api/v1/orders/:id` memverifikasi cookie guest dan
    `bookings.guest_session_id` cocok. UUID saja tidak cukup.
-5. Setelah login/register, handler meng-claim order guest ke akun (best-effort,
-   single-use, terverifikasi cookie) lalu tracking lanjut lewat
-   `GET /api/v1/bookings/:id` (owner user).
+5. Setelah login/register (password maupun Google), handler meng-claim order
+   guest ke akun lewat satu helper `claimGuestOrder` (terverifikasi cookie,
+   transfer sekali, **idempoten**, non-fatal terhadap penerbitan sesi) lalu
+   tracking lanjut lewat `GET /api/v1/bookings/:id` (owner user). Lihat
+   §"Claim order guest".
 
 ## Authenticated flow
 
@@ -140,17 +142,62 @@ dipakai untuk order, dinormalisasi lalu di-hash.
 - Booking guest memakai user guest terisolasi (`guest-<uuid>@vero.local`) per
   guest session — tidak ada shared guest account antar order.
 - Claim order: cookie token valid + order masih `guest_session_id` match +
-  account valid + belum pernah di-claim; conditional UPDATE single-statement
-  (single-use). TIDAK ada auto-claim berbasis email.
+  account valid + belum pernah di-claim (marker `claimed_user_id`); conditional
+  UPDATE single-statement (transfer sekali). Claim ulang oleh akun yang sama =
+  no-op sukses; order milik akun lain DITOLAK. TIDAK ada auto-claim berbasis
+  email. Detail: §"Claim order guest".
 - Rate limit abuse: `PublicWriteRateLimit` 5 req/menit per-IP di `/orders` dan
   `/chat` (SEC-13) + global 20 req/s. IP bukan business rule — hanya abuse
   control.
 - Audit aman: `guest_order_created`, `guest_order_limit_reached`,
-  `guest_order_linked`, `guest_order_auth_required` — hanya safe IDs; tidak ada
+  `guest_order_linked`, `guest_order_claim_replayed`,
+  `guest_order_claim_conflict`, `guest_order_claim_failed`,
+  `guest_order_auth_required` — hanya safe IDs; tidak ada
   raw guest token/JWT/PII kontak. `guest_order_limit_reached` membawa `reason`
   kategori (`guest_session_spent` | `contact_already_used`) plus
   `matched_guest_session_id` bila jangkar kontak yang menahan — cukup untuk
   mendeteksi farming cookie tanpa pernah me-log kontak maupun hash-nya.
+  `guest_order_claim_failed` membawa `reason` kategori
+  (`no_authenticated_account` | `guest_identity_invalid` | `repository_error`).
+
+## Claim order guest (GO-P1-3 / GO-P3-3, 4 Sep 2026)
+
+`GuestService.ClaimOrder(ctx, token, userID) (GuestOrderClaimResult, error)`.
+Satu-satunya bukti kepemilikan adalah cookie `vero_guest_session`: hash-nya
+me-resolve baris `guest_sessions`, dan target order diambil dari
+`first_order_id` baris itu. Yang **bukan** bukti: booking id (tidak pernah jadi
+parameter), email/telepon yang sama dengan kontak order (tidak pernah dibaca di
+jalur claim), dan status "sudah login" (user tanpa cookie tidak meng-claim
+apa pun).
+
+Transaksi `Repository.ClaimGuestOrder`:
+
+1. `SELECT ... FOR UPDATE` baris guest (serialisasi dua claim bersamaan).
+2. Baca marker `claimed_user_id` **sebelum menulis apa pun**. Sudah terisi ⇒
+   kepemilikan tidak pernah dihitung ulang; pemilik pertama yang dilaporkan.
+3. Conditional UPDATE booking `WHERE id = ? AND guest_session_id = ?` →
+   `user_id = <akun>`, `guest_session_id = NULL` (`RowsAffected == 1`).
+4. UPDATE marker `WHERE claimed_user_id IS NULL` → `claimed_user_id`,
+   `claimed_at`. Gagal ⇒ transaksi rollback (tidak ada order ter-claim tanpa
+   claimant tercatat).
+
+Marker masih NULL tapi booking sudah lepas dari jalur guest (claim pra-migrasi):
+pemilik AKTUAL dibaca dari baris booking dan dilaporkan, tidak ditimpa.
+
+| Kondisi | Hasil |
+|---|---|
+| Cookie valid, order belum di-claim | `Transferred=true` (audit `guest_order_linked`) |
+| Akun yang sama meng-claim ulang | sukses, `Transferred=false` (audit `guest_order_claim_replayed`) |
+| Tanpa cookie / cookie tak dikenal / session kedaluwarsa / belum pernah order | `ErrGuestOrderNothingToClaim` |
+| Order sudah milik AKUN LAIN | `ErrGuestOrderClaimConflict` — ditolak, tidak dipindah (audit `guest_order_claim_conflict`) |
+| `userID == uuid.Nil` | `ErrGuestOrderClaimUnauthenticated` (ditolak sebelum sentuh DB) |
+| Kegagalan DB | error asli + audit `guest_order_claim_failed` (`reason` kategori) |
+
+Handler (`handlers/helpers.go: claimGuestOrder`, dipakai Register, Login,
+GoogleCallback) tetap TIDAK memfatalkan penerbitan sesi — cookie guest yang
+tidak ada adalah kasus normal, dan penolakan tidak boleh membatalkan login.
+Batas yang masih ada: belum ada jalur retry claim (tidak ada
+`POST /api/v1/orders/claim` maupun re-claim di `/auth/me`/`/auth/refresh`).
 
 ## Error codes
 
@@ -188,7 +235,9 @@ dipakai untuk order, dinormalisasi lalu di-hash.
   Contact*/TravelDate/TotalPrice/Payments` tidak berubah.
 - Setelah claim: `guest_session_id` di-NULL-kan dan `user_id` diubah ke akun
   dalam satu conditional UPDATE — order pindah ke ownership user, path
-  `FindBookingForUser` existing langsung berlaku.
+  `FindBookingForUser` existing langsung berlaku. Marker
+  `guest_sessions.claimed_user_id`/`claimed_at` ditulis di transaksi yang sama
+  agar kepemilikan hanya diputuskan sekali (lihat §"Claim order guest").
 
 ## Concurrency handling
 
@@ -228,8 +277,8 @@ menurunkan key deterministik dari session+payload.
 4. Race 8 goroutine → tepat 1 order (12,13) — diverifikasi `go test -race`.
 5. Retry idempotency key sama → booking sama, tanpa duplikat (14).
 6. Authenticated user tidak dibatasi guest limit; 2 order sukses (15,16).
-7. Claim single-use: transfer ke akun, claim kedua gagal, owner baru bisa
-   akses (linking security).
+7. Claim: transfer ke akun sekali, claim kedua oleh akun yang sama = no-op
+   sukses (`Transferred=false`), owner baru bisa akses (linking security).
 
 MCP second-booking mengembalikan `code=GUEST_ORDER_LIMIT_REACHED` terstruktur
 (18) dan enforcement tetap di BookingService (19). AI system prompt kini
@@ -272,6 +321,34 @@ Jangkar kontak (4 Sep 2026) ditutup dua file test baru:
 normalisasi: varian email (trim/case/`+tag`/titik dipertahankan/malformed) dan
 telepon (`0`/`+62`/`00`/pemisah/tanpa digit), serta derivasi anchor
 (email ≠ phone key, ejaan ekuivalen → key sama, kontak beda → key beda).
+
+Claim pasca-autentikasi (4 Sep 2026) ditutup
+`backend/internal/services/guest_order_claim_test.go` (SQLite in-memory, fixture
+yang sama):
+
+1. `TestGuestOrderClaimValidCookie` — cookie valid → transfer, marker terisi,
+   akun bisa akses lewat `FindBookingForUser`, jalur guest tertutup.
+2. `TestGuestOrderClaimInvalidGuestIdentity` — cookie kosong / token asing /
+   hash disodorkan sebagai token / session kedaluwarsa → `ErrGuestOrderNothingToClaim`
+   dan booking tidak bergerak; `uuid.Nil` → `ErrGuestOrderClaimUnauthenticated`.
+3. `TestGuestOrderClaimWrongGuest` — guest B tidak bisa meng-claim order guest A,
+   termasuk saat `first_order_id` B diarahkan ke booking A (kasus "saya tahu
+   order id"); order B sendiri tetap bisa di-claim.
+4. `TestGuestOrderClaimWrongAuthenticatedUser` — akun kedua di belakang cookie
+   yang sama → `ErrGuestOrderClaimConflict`, order tetap milik akun pertama,
+   marker tidak ditimpa, akun kedua tidak bisa membaca order.
+5. `TestGuestOrderClaimDuplicateIsIdempotent` — tiga claim ulang oleh akun yang
+   sama: sukses tanpa transfer, `claimed_at` tidak ditulis ulang, jumlah booking
+   milik akun tetap 1.
+6. `TestGuestOrderConcurrentClaimsTransferOnce` — 4 akun × 2 percobaan paralel:
+   tepat satu transfer, sisanya replay (akun pemenang) atau konflik, owner
+   tersimpan = pemenang (diverifikasi `go test -race`).
+7. `TestGuestOrderClaimAlreadyClaimedWithoutMarker` — order yang di-claim
+   sebelum kolom marker ada: pemilik sah dapat sukses idempoten, akun lain
+   ditolak (backfill migrasi bukan batas keamanannya).
+8. `TestGuestOrderClaimIgnoresMatchingEmail` — akun dengan email sama seperti
+   kontak order tidak mendapat order maupun akses; cookie tetap satu-satunya
+   bukti.
 
 ## Batasan yang tersisa
 

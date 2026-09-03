@@ -23,6 +23,7 @@ import (
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/auth"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/config"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/models"
+	"github.com/rozzi/vero-ai-travel-agents/backend/internal/repositories"
 	"gorm.io/gorm"
 )
 
@@ -509,9 +510,9 @@ func (m *mockGuestRepo) FindGuestSession(_ context.Context, id uuid.UUID) (model
 	return m.session, nil
 }
 func (m *mockGuestRepo) UpdateChatSessionGuest(_ context.Context, _, _ uuid.UUID) error { return nil }
-func (m *mockGuestRepo) ClaimGuestOrder(_ context.Context, guestID, userID uuid.UUID) (uuid.UUID, error) {
+func (m *mockGuestRepo) ClaimGuestOrder(_ context.Context, guestID, userID uuid.UUID) (repositories.GuestOrderClaim, error) {
 	m.claimed, m.claimGuestID, m.claimUserID = true, guestID, userID
-	return m.claimBooking, nil
+	return repositories.GuestOrderClaim{BookingID: m.claimBooking, OwnerID: userID, Transferred: true}, nil
 }
 
 // TestGoogleLogin_ClaimsGuestOrder: after a Google login the pre-existing
@@ -536,6 +537,7 @@ func TestGoogleLogin_ClaimsGuestOrder(t *testing.T) {
 	// Guest session with a pending first order (the handler passes the raw
 	// cookie token; Authenticate resolves it by hash).
 	orderID := uuid.New()
+	grepo.claimBooking = orderID
 	grepo.session = models.GuestSession{
 		TokenHash:    "hash-of-cookie-token",
 		UserID:       uuid.New(),
@@ -545,8 +547,12 @@ func TestGoogleLogin_ClaimsGuestOrder(t *testing.T) {
 	grepo.session.ID = uuid.New()
 	grepo.hasSession = true
 
-	if err := guests.ClaimOrder(context.Background(), "cookie-token", user.ID); err != nil {
+	claim, err := guests.ClaimOrder(context.Background(), "cookie-token", user.ID)
+	if err != nil {
 		t.Fatalf("ClaimOrder err: %v", err)
+	}
+	if !claim.Transferred || claim.BookingID != grepo.claimBooking {
+		t.Errorf("claim result not reported: %+v", claim)
 	}
 	if !grepo.claimed {
 		t.Fatal("guest order not claimed after Google login")
@@ -555,11 +561,12 @@ func TestGoogleLogin_ClaimsGuestOrder(t *testing.T) {
 		t.Errorf("claimed to wrong target: user=%v guest=%v", grepo.claimUserID, grepo.claimGuestID)
 	}
 
-	// No guest cookie → no-op, no error, no claim.
+	// No guest cookie → no-op: reported as ErrGuestOrderNothingToClaim (not a
+	// failure) and no claim attempt reaches the repository.
 	grepo2 := &mockGuestRepo{}
 	guests2 := &GuestService{repo: grepo2, cfg: env.cfg, users: env.issuer}
-	if err := guests2.ClaimOrder(context.Background(), "", user.ID); err != nil {
-		t.Fatalf("ClaimOrder without cookie must be a no-op, got %v", err)
+	if _, err := guests2.ClaimOrder(context.Background(), "", user.ID); !errors.Is(err, ErrGuestOrderNothingToClaim) {
+		t.Fatalf("ClaimOrder without cookie must report nothing-to-claim, got %v", err)
 	}
 	if grepo2.claimed {
 		t.Error("claim happened without a guest session")
