@@ -14,7 +14,73 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit dead-code + clean-code backend: 14 Agu 2026 — dicatat di bagian A.12. Hanya kandidat yang terbukti aman yang dihapus; sisanya didokumentasikan sebagai "Potential dead code" (tidak dihapus karena ambigu/di-keep sengaja).
 
+> Audit Google OAuth (read-only): 31 Agu 2026 — 0 P0, 2 P1, 5 P2, 9 P3. Laporan: `docs/GOOGLE_OAUTH_SECURITY_AUDIT.md`. **Belum diperbaiki.**
+
+> Audit guest order system (read-only): 3 Sep 2026 — **1 P0**, 3 P1, 10 P2, 7 P3. Dicatat di bagian A.18. Laporan + urutan implementasi: `docs/GUEST_ORDER_AUDIT.md`. **Belum diperbaiki.**
+
 ---
+
+## A.18 Audit Guest Order System (3 Sep 2026) — READ-ONLY, BELUM DIPERBAIKI
+
+Audit menyeluruh sistem guest order (guest session, ChatSession, Booking,
+BookingService, AuthService, `create_booking`, MCP booking tools, Google OAuth
+callback, guest order claim, order ownership, `resolveUser`, skema + migrasi).
+Laporan lengkap dengan skenario reproduksi, dampak, rekomendasi, dan **urutan
+implementasi**: `docs/GUEST_ORDER_AUDIT.md`. Commit yang diaudit: `5b46a32`.
+**Tidak ada kode yang diubah** — semua item di bawah masih terbuka.
+
+- **Penegakan limit sudah benar; identitasnya yang tidak.** Satu transaksi +
+  `FOR UPDATE` + `UPDATE ... WHERE order_count = 0` sudah atomik dan tahan
+  refresh browser, localStorage, multi-tab, chat session baru, serta request
+  konkuren. Yang bocor: `GuestService.Resolve` **mencetak identitas baru
+  (allowance baru) secara senyap** setiap kali request datang tanpa cookie
+  `vero_guest_session` yang valid, tanpa jangkar sekunder (IP/kontak/device) dan
+  tanpa dedup order. Efektif: "satu order per cookie", bukan per pengunjung
+  (**GO-P0-1**, Critical). Hapus cookie / `curl` tanpa cookie jar = allowance
+  segar; satu-satunya rem tersisa adalah `PublicWriteRateLimit` per-IP in-memory.
+- **`Authorization` dibuang proxy SSE** (`frontend/src/app/api/v1/chat/route.ts`
+  hanya meneruskan `Content-Type`, `Cookie`, `X-Request-ID`), padahal
+  `streamChat` sudah memasangnya. Akibatnya pelanggan yang SUDAH login tetap
+  masuk jalur `CreateGuest` dari chat → kena `GUEST_ORDER_LIMIT_REACHED`; upgrade
+  eligibility yang dicatat di A.14/27 Agu 2026 **mati di praktiknya** untuk jalur
+  chat (jalur trip page tetap benar) (**GO-P1-1**).
+- **TTL cookie di-slide, `guest_sessions.expires_at` tidak** → identitas berotasi
+  tiap 30 hari: allowance kembali segar dan order lama kehilangan jalur akses
+  guest (**GO-P1-2**). **Kegagalan `ClaimOrder` ditelan** (hanya `log.Printf` di
+  Register/Login/Google callback) dan tidak punya jalur retry → order bisa
+  tertinggal permanen pada user guest sekali-pakai sementara `order_count` tetap
+  1 (**GO-P1-3**).
+- **P2 penting**: tidak ada cleanup `guest_sessions` maupun user guest (satu baris
+  `users` + bcrypt cost 10 per identitas); `migrations/20260818_guest_order_limit.sql`
+  **tidak** dipanggil dari `AutoMigrate` (partial unique index + `CHECK
+  order_count >= 0` absen di DB baru — GORM membuat unique index penuh);
+  idempotency tidak concurrency-safe (race key identik → HTTP 500, bukan replay)
+  dan hash-nya bergeser saat claim (`guest:` → `user:`); guard duplikat MCP
+  bersandar pada marker di riwayat chat dengan window 200 pesan;
+  `GUEST_COOKIE_SAME_SITE` salah tulis jatuh ke `Strict` di `parseSameSite` dan
+  mematikan claim Google secara senyap; `UpdateChatSessionGuest` menimpa
+  `chat_sessions.guest_session_id` tanpa cek kepemilikan; event guest order tanpa
+  `ip`/`user_agent`/`request_id` dan tanpa event saat identitas dicetak.
+- **P1-H1 (`resolveUser` TOCTOU) punya dampak guest-order yang belum tercatat**:
+  callback Google memanggil `Guests.ClaimOrder` dengan cookie browser pemanggil
+  **setelah** `resolveUser`, sehingga pemenang race bisa (a) menyuntikkan order
+  guest miliknya ke akun korban (masuk antrean `pending_admin_processing`), dan
+  (b) melewati limit guest lewat account takeover ke jalur `POST /bookings` yang
+  tanpa limit. Naikkan prioritasnya. Kontras pola: fallback `GuestService.Resolve`
+  benar karena resolve ulang lewat **kunci identitas yang sama** (token hash),
+  bukan atribut sekunder — pakai itu sebagai rujukan saat memperbaiki
+  `resolveUser`.
+- **Catatan test**: `guest_order_limit_test.go` memakai SQLite in-memory dengan
+  `SetMaxOpenConns(1)`, jadi `SELECT ... FOR UPDATE` tidak pernah benar-benar
+  diuji; jaminan konkurensi bersandar pada conditional `ConsumeGuestOrder` (yang
+  memang cukup di Postgres READ COMMITTED).
+
+Sebelum menyentuh area ini, baca `docs/GUEST_ORDER_AUDIT.md` §7 — urutannya
+sengaja **tidak** memulai dari P0 (butuh telemetri GO-P2-8 dan perbaikan jalur
+pengguna sah lebih dulu agar pengetatan tidak salah menghukum pelanggan asli).
+
+---
+
 
 ## A.14 Google OAuth "Continue with Google" (19 Agu 2026) — FITUR AKTIF (feature-flag), BUKAN TECH DEBT
 
