@@ -58,6 +58,42 @@ func (r *Repository) ConsumeGuestOrder(ctx context.Context, guestID, bookingID u
 	return nil
 }
 
+// FindGuestOrderEntitlement resolves the first guest order already anchored to
+// any of the given contact keys (GO-P0-1). A hit means some visitor — possibly
+// the same person behind a freshly minted guest identity — already spent the
+// single guest order, so the caller must refuse instead of handing out another.
+// A miss is reported as gorm.ErrRecordNotFound, matching the repository's
+// existing lookup convention.
+func (r *Repository) FindGuestOrderEntitlement(ctx context.Context, contactKeys []string) (models.GuestOrderEntitlement, error) {
+	var entitlement models.GuestOrderEntitlement
+	if len(contactKeys) == 0 {
+		return entitlement, gorm.ErrRecordNotFound
+	}
+	err := r.DB.WithContext(ctx).First(&entitlement, "contact_key IN ?", contactKeys).Error
+	return entitlement, err
+}
+
+// ConsumeGuestOrderEntitlements records the contact anchors of a successful
+// guest order (GO-P0-1). The unique index on contact_key — not this Go code —
+// is the authoritative gate: the INSERT is emitted with ON CONFLICT DO NOTHING,
+// so a key that is already taken affects zero rows and surfaces as
+// gorm.ErrDuplicatedKey instead of aborting the surrounding transaction. The
+// caller maps that to the guest-order-limit error, which rolls the booking
+// INSERT back as well, so a rejected attempt never leaves a half-consumed
+// entitlement behind.
+func (r *Repository) ConsumeGuestOrderEntitlements(ctx context.Context, entitlements []models.GuestOrderEntitlement) error {
+	for i := range entitlements {
+		result := r.DB.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&entitlements[i])
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrDuplicatedKey
+		}
+	}
+	return nil
+}
+
 func (r *Repository) FindBookingByIdempotency(ctx context.Context, ownerID uuid.UUID, guest bool, hash string) (models.Booking, error) {
 	var booking models.Booking
 	q := r.DB.WithContext(ctx).Preload("Trip").Where("idempotency_key_hash = ?", hash)

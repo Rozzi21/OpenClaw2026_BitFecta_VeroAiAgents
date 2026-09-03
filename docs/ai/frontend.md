@@ -15,7 +15,7 @@ Antarmuka chat AI untuk tamu, kini dengan auth opsional (login/register) untuk f
 | Route | File | Fungsi |
 |---|---|---|
 | `/` | `frontend/src/app/page.tsx` | Halaman utama, me-render `ChatInterface` |
-| `/trip/[id]` | `frontend/src/app/trip/[id]/page.tsx` | Detail paket trip (memanggil `GET /api/v1/packages/:id`) |
+| `/trip/[id]` | `frontend/src/app/trip/[id]/page.tsx` | Detail paket trip (memanggil `GET /api/v1/packages/:id`) + kotak order: input **Email or phone number** (wajib, 4 Sep 2026 — dikirim sebagai `contact_email`/`contact_phone`; backend menjangkar entitlement guest ke kontak itu), tombol Confirm & Create Order, guest-gate `GUEST_ORDER_LIMIT_REACHED` |
 | layout root | `frontend/src/app/layout.tsx` | Layout global, font, metadata |
 | `/login` | `frontend/src/app/login/page.tsx` | Login customer (access token di localStorage, refresh via cookie) |
 | `/register` | `frontend/src/app/register/page.tsx` | Register customer |

@@ -16,28 +16,56 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit Google OAuth (read-only): 31 Agu 2026 — 0 P0, 2 P1, 5 P2, 9 P3. Laporan: `docs/GOOGLE_OAUTH_SECURITY_AUDIT.md`. **Belum diperbaiki.**
 
-> Audit guest order system (read-only): 3 Sep 2026 — **1 P0**, 3 P1, 10 P2, 7 P3. Dicatat di bagian A.18. Laporan + urutan implementasi: `docs/GUEST_ORDER_AUDIT.md`. **Belum diperbaiki.**
+> Audit guest order system (read-only): 3 Sep 2026 — **1 P0**, 3 P1, 10 P2, 7 P3. Dicatat di bagian A.18. Laporan + urutan implementasi: `docs/GUEST_ORDER_AUDIT.md`. **GO-P0-1 (enforcement satu order per guest) SUDAH DIPERBAIKI 4 Sep 2026** — jangkar kontak di DB; sisa temuan (P1/P2/P3) masih terbuka.
 
 ---
 
-## A.18 Audit Guest Order System (3 Sep 2026) — READ-ONLY, BELUM DIPERBAIKI
+## A.18 Audit Guest Order System (3 Sep 2026) — GO-P0-1 FIXED (4 Sep 2026), SISANYA BELUM
 
 Audit menyeluruh sistem guest order (guest session, ChatSession, Booking,
 BookingService, AuthService, `create_booking`, MCP booking tools, Google OAuth
 callback, guest order claim, order ownership, `resolveUser`, skema + migrasi).
 Laporan lengkap dengan skenario reproduksi, dampak, rekomendasi, dan **urutan
 implementasi**: `docs/GUEST_ORDER_AUDIT.md`. Commit yang diaudit: `5b46a32`.
-**Tidak ada kode yang diubah** — semua item di bawah masih terbuka.
+Hanya **GO-P0-1** yang sudah dikerjakan (4 Sep 2026, lihat bullet pertama);
+semua item lain di bawah masih terbuka.
 
-- **Penegakan limit sudah benar; identitasnya yang tidak.** Satu transaksi +
-  `FOR UPDATE` + `UPDATE ... WHERE order_count = 0` sudah atomik dan tahan
-  refresh browser, localStorage, multi-tab, chat session baru, serta request
-  konkuren. Yang bocor: `GuestService.Resolve` **mencetak identitas baru
-  (allowance baru) secara senyap** setiap kali request datang tanpa cookie
-  `vero_guest_session` yang valid, tanpa jangkar sekunder (IP/kontak/device) dan
-  tanpa dedup order. Efektif: "satu order per cookie", bukan per pengunjung
-  (**GO-P0-1**, Critical). Hapus cookie / `curl` tanpa cookie jar = allowance
-  segar; satu-satunya rem tersisa adalah `PublicWriteRateLimit` per-IP in-memory.
+- **✅ GO-P0-1 (FIXED 4 Sep 2026) — enforcement satu order per guest kini
+  authoritative di DB.** Sebelumnya penegakan sudah atomik (`FOR UPDATE` +
+  `UPDATE ... WHERE order_count = 0`) tetapi **kuncinya dipilih klien**:
+  `GuestService.Resolve` mencetak identitas baru (allowance baru) setiap request
+  tanpa cookie `vero_guest_session` valid, jadi efektifnya "satu order per
+  cookie". Perbaikan menambah **jangkar kedua yang tidak dipilih klien**: tabel
+  `guest_order_entitlements` dengan `contact_key` **unique** =
+  `sha256("<channel>:<kontak ternormalisasi>")` (channel `email`|`phone`),
+  dikonsumsi di **transaksi booking yang sama** (`BookingService.create`, jalur
+  guest saja) setelah `ConsumeGuestOrder`. Normalisasi di
+  `internal/services/guest_entitlement.go`: email trim+lowercase+buang `+tag`
+  (titik TIDAK dibuang — khas Gmail), telepon digit-saja + prefix `00`/`0`
+  dilipat ke `62`. Order guest WAJIB punya kontak yang bisa dijadikan jangkar;
+  bila tidak → `ErrBookingContactRequired` (400 `BOOKING_VALIDATION_FAILED`,
+  tidak mengonsumsi apa pun) agar aturan tidak diam-diam kembali bergantung pada
+  cookie. Konsekuensi: hapus cookie / mode privat / `curl` tanpa cookie jar /
+  rotasi identitas 30 hari (GO-P1-2) **tidak lagi** mereset allowance; unique
+  index yang menentukan pemenang saat dua identitas berbeda dengan kontak sama
+  request bersamaan (yang kalah: booking + `order_count` di-rollback). Kontrak
+  error TIDAK berubah (403 `GUEST_ORDER_LIMIT_REACHED`), jadi frontend tidak
+  disentuh; `guest_order_limit_reached` sekarang membawa `reason`
+  (`guest_session_spent`|`contact_already_used`) + `matched_guest_session_id`.
+  **Sisa celah (disengaja):** pengunjung dengan email DAN telepon yang
+  benar-benar berbeda tetap dapat satu order (butuh OTP — keputusan produk); order
+  guest yang dibuat sebelum 4 Sep 2026 tidak punya baris jangkar (tanpa backfill,
+  karena normalisasi Go tak aman direplikasi di SQL); kuota per-IP sengaja tidak
+  dipakai sebagai business rule. Test: `guest_order_contact_entitlement_test.go`
+  (8 test, termasuk konflik unique index di level repository) +
+  `guest_entitlement_test.go` (normalisasi). Perubahan pendamping: MCP
+  `create_booking` memetakan `ErrBookingContactRequired` ke pesan tool yang jelas
+  (LLM diminta kontak asli, bukan placeholder) + deskripsi tool diperjelas; dan
+  SATU perubahan frontend yang dituntut kontrak baru — `trip/[id]` dulu mengirim
+  `contact_phone: "provided-via-chat"` (tak bisa dijangkar), kini ada input
+  "Email or phone number" wajib. Detail:
+  `docs/GUEST_ORDER_LIMIT.md` §"Jangkar kontak".
+
 - **`Authorization` dibuang proxy SSE** (`frontend/src/app/api/v1/chat/route.ts`
   hanya meneruskan `Content-Type`, `Cookie`, `X-Request-ID`), padahal
   `streamChat` sudah memasangnya. Akibatnya pelanggan yang SUDAH login tetap
@@ -45,8 +73,11 @@ implementasi**: `docs/GUEST_ORDER_AUDIT.md`. Commit yang diaudit: `5b46a32`.
   eligibility yang dicatat di A.14/27 Agu 2026 **mati di praktiknya** untuk jalur
   chat (jalur trip page tetap benar) (**GO-P1-1**).
 - **TTL cookie di-slide, `guest_sessions.expires_at` tidak** → identitas berotasi
-  tiap 30 hari: allowance kembali segar dan order lama kehilangan jalur akses
-  guest (**GO-P1-2**). **Kegagalan `ClaimOrder` ditelan** (hanya `log.Printf` di
+  tiap 30 hari: order lama kehilangan jalur akses guest (**GO-P1-2**, masih
+  terbuka). Dampak "allowance kembali segar" sudah tertutup jangkar kontak
+  (GO-P0-1 fix, dikunci `TestGuestEntitlementSurvivesIdentityRotation`); yang
+  belum: order lama tidak lagi bisa dilihat guest setelah rotasi.
+  **Kegagalan `ClaimOrder` ditelan** (hanya `log.Printf` di
   Register/Login/Google callback) dan tidak punya jalur retry → order bisa
   tertinggal permanen pada user guest sekali-pakai sementara `order_count` tetap
   1 (**GO-P1-3**).
@@ -73,7 +104,9 @@ implementasi**: `docs/GUEST_ORDER_AUDIT.md`. Commit yang diaudit: `5b46a32`.
 - **Catatan test**: `guest_order_limit_test.go` memakai SQLite in-memory dengan
   `SetMaxOpenConns(1)`, jadi `SELECT ... FOR UPDATE` tidak pernah benar-benar
   diuji; jaminan konkurensi bersandar pada conditional `ConsumeGuestOrder` (yang
-  memang cukup di Postgres READ COMMITTED).
+  memang cukup di Postgres READ COMMITTED). Batasan yang sama berlaku untuk
+  `guest_order_contact_entitlement_test.go` — di situ arbiternya unique index
+  `contact_key`, yang juga cukup di Postgres.
 
 Sebelum menyentuh area ini, baca `docs/GUEST_ORDER_AUDIT.md` §7 — urutannya
 sengaja **tidak** memulai dari P0 (butuh telemetri GO-P2-8 dan perbaikan jalur
@@ -1429,6 +1462,8 @@ Aritmetika `float64` rawan galat presisi untuk nominal uang. DB sudah `numeric`,
 | PERF-3 Alokasi memori berulang (regex `slugify` re-compile + `json.Marshal` audit sinkron) | ✅ `slugNonAlnum` package-level var (regex compile sekali); audit `CreateToolCall`/`CreateAILog` dipindah ke bounded worker pool `AuditPool` (2 worker, buffer 64, detached ctx) di `audit_pool.go`; `Execute` non-blocking `Submit` + `clonePayload` defensive copy + `StopAudit` graceful drain di `main.go`; fallback `persistAuditSync` saat pool nil (4 Agu 2026) |
 | BUG-12 Streaming bocor token reasoning ("The" prefix) + container kosong saat thinking | ✅ `GenerateStream` akumulasi `reasoning_content` terpisah (tak di-stream via `onDelta`); `ChatInterface` skip render pesan streaming dgn `content === ""` (11 Agu 2026) |
 | BUG-13 Rekomendasi paket lain muncul setelah user memilih paket via `select_package` | ✅ Hapus `require_alternative: true` dari failure response `executeSearchTrips`; perketat guard `finalizeChat` suppress recommendations saat `selectedTripID != nil` tanpa syarat `hasSearchTripsAlternative` (11 Agu 2026) |
+| GO-P0-1 Identitas guest dapat dibuang klien → limit satu order bisa direset tanpa batas | ✅ Jangkar kedua berbasis kontak: tabel `guest_order_entitlements` (`contact_key` unique = `sha256("<channel>:<kontak ternormalisasi>")`) dikonsumsi di transaksi booking yang sama; normalisasi email/telepon di `services/guest_entitlement.go`; order guest wajib punya kontak yang bisa dijadikan jangkar; kontrak error 403 `GUEST_ORDER_LIMIT_REACHED` tak berubah; test `guest_order_contact_entitlement_test.go` + `guest_entitlement_test.go` (4 Sep 2026) |
+
 
 
 

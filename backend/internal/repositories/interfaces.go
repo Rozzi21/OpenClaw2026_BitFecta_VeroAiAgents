@@ -109,6 +109,11 @@ type BookingTransactionRepository interface {
 	LockGuestSession(ctx context.Context, id uuid.UUID) (models.GuestSession, error)
 	ConsumeGuestOrder(ctx context.Context, guestID, bookingID uuid.UUID) error
 	FindBookingByIdempotency(ctx context.Context, ownerID uuid.UUID, guest bool, hash string) (models.Booking, error)
+	// GO-P0-1: contact-anchored entitlement, the second (cookie-independent)
+	// half of the one-order-per-guest rule. Both methods must run inside the
+	// same booking transaction as CreateBooking/ConsumeGuestOrder.
+	FindGuestOrderEntitlement(ctx context.Context, contactKeys []string) (models.GuestOrderEntitlement, error)
+	ConsumeGuestOrderEntitlements(ctx context.Context, entitlements []models.GuestOrderEntitlement) error
 }
 
 // PaymentRepository — payment persistence + atomic status transitions.

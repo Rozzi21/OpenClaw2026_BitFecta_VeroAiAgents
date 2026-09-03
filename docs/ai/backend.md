@@ -141,6 +141,18 @@ audit `guest_order_linked`). Audit tambahan: `guest_order_created`,
 `guest_order_limit_reached`, `guest_order_auth_required` — hanya safe IDs, tanpa
 raw token. Detail: [GUEST_ORDER_LIMIT.md](../GUEST_ORDER_LIMIT.md).
 
+**Jangkar kontak (GO-P0-1, 4 Sep 2026).** `Resolve()` tetap boleh mencetak
+identitas baru saat cookie hilang (memutus itu akan mematahkan pengunjung baru
+yang sah), jadi `guest_sessions.order_count` sendirian berarti "satu order per
+cookie yang mau disimpan klien". `guest_entitlement.go` menambah jangkar kedua
+yang tidak dipilih klien: kontak order yang dinormalisasi (email di-lowercase +
+buang `+tag`; telepon jadi digit + lipat prefix `00`/`0` → `62`), di-hash jadi
+`sha256("<channel>:<nilai>")` dan disimpan di `guest_order_entitlements`
+(unique index `contact_key`). Penegakan tetap di `BookingService` — bukan di
+handler, cookie, frontend, ChatSession, AI/MCP, atau IP. `GuestService` sengaja
+TIDAK tahu soal jangkar ini: pemisahan tanggung jawab sama seperti Google OAuth
+(identitas) vs `BookingService` (policy).
+
 ### BookingService & PaymentService
 
 - `BookingService.Create()`: booking/order baru selalu `booking_status=pending`, `payment_status=pending_admin_processing` selama DOKU dinonaktifkan sementara. **Harga dihitung server-side** (SEC-3), bukan dari body client. Sejak AIW-5 (14 Agu 2026) total dihitung via shared helper `priceBreakdown(trip, adultPax, childPax).Total` — helper yang sama dipakai tool MCP `calculate_trip_price`, sehingga quote AI identik dengan tagihan booking. `priceBreakdown` internal memakai `tripAdultPrice`/`tripChildPrice` (menghormati diskon) — logic pricing tidak diduplikasi.

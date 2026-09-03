@@ -811,6 +811,14 @@ func (s *MCPService) executeCreateBooking(ctx context.Context, sessionID uuid.UU
 				"success": false, "status": "requires_authentication", "code": "GUEST_ORDER_LIMIT_REACHED", "message": "Please sign in to create another order.",
 			}}
 		}
+		if errors.Is(err, ErrBookingContactRequired) {
+			// GO-P0-1: a guest order must carry a contact that can anchor the
+			// one-order entitlement. Tell the LLM what to fix instead of letting
+			// it retry the same unusable payload.
+			return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{
+				"success": false, "error": "contact_email or contact_phone must be usable: an email containing @, or a phone number containing digits",
+			}}
+		}
 		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{"success": false, "error": "booking creation failed"}}
 	}
 	log.Printf("[mcp] create_booking saved booking_id=%s status=%s payment_status=%s total=%.2f", booking.ID, booking.BookingStatus, booking.PaymentStatus, booking.TotalPrice)

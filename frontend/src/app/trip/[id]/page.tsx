@@ -15,6 +15,7 @@ export default function TripDetailPage({ params }: { params: { id: string } }) {
   const [order, setOrder] = useState<BookingOrder | null>(null);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
+  const [contact, setContact] = useState("");
   const idempotencyKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -39,10 +40,21 @@ export default function TripDetailPage({ params }: { params: { id: string } }) {
     if (!trip || creatingOrder || order) {
       return;
     }
+    const contactValue = contact.trim();
+    // POST /api/v1/orders anchors the one-order guest entitlement on the
+    // normalized contact, so the backend rejects a contact it cannot anchor
+    // (400 BOOKING_VALIDATION_FAILED). Check the same shape here to give a
+    // useful message instead of a generic validation error.
+    const isEmail = contactValue.includes("@");
+    const hasDigits = /\d/.test(contactValue);
     setCreatingOrder(true);
     setOrderError(null);
     setAuthRequired(false);
     try {
+      if (!isEmail && !hasDigits) {
+        setOrderError("Enter your email address or phone number so we can confirm this order.");
+        return;
+      }
 	  idempotencyKeyRef.current ??= crypto.randomUUID();
 	  // ensureCustomerSession renews the 15-minute access token from the
 	  // refresh cookie; without it a signed-in user whose token expired would
@@ -51,7 +63,15 @@ export default function TripDetailPage({ params }: { params: { id: string } }) {
       const created = await apiFetch<BookingOrder>(authenticated ? "/api/v1/bookings" : "/api/v1/orders", {
         method: "POST",
 		headers: { "Idempotency-Key": idempotencyKeyRef.current },
-		body: JSON.stringify({ trip_id: trip.id, adult_pax: 1, child_pax: 0, contact_name: "Guest", contact_phone: "provided-via-chat", travel_date: trip.package_start_date ?? new Date(Date.now() + 86400000).toISOString().slice(0, 10) }),
+		body: JSON.stringify({
+		  trip_id: trip.id,
+		  adult_pax: 1,
+		  child_pax: 0,
+		  contact_name: "Guest",
+		  contact_email: isEmail ? contactValue : "",
+		  contact_phone: isEmail ? "" : contactValue,
+		  travel_date: trip.package_start_date ?? new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+		}),
       });
       setOrder(created);
 	  idempotencyKeyRef.current = null;
@@ -181,10 +201,30 @@ export default function TripDetailPage({ params }: { params: { id: string } }) {
             </div>
 
             <div className="space-y-3">
+              <div className="space-y-2 text-left">
+                <label htmlFor="order-contact" className="block text-sm font-bold text-slate-700">
+                  Email or phone number
+                </label>
+                <input
+                  id="order-contact"
+                  type="text"
+                  inputMode="email"
+                  autoComplete="email"
+                  value={contact}
+                  onChange={(event) => setContact(event.target.value)}
+                  disabled={Boolean(order)}
+                  aria-describedby="order-contact-hint"
+                  placeholder="you@example.com or 08123456789"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-slate-900 placeholder:text-slate-400 focus:border-[#df3333] focus:outline-none focus:ring-2 focus:ring-[#df3333]/30 disabled:bg-slate-50"
+                />
+                <p id="order-contact-hint" className="text-xs font-medium text-slate-500">
+                  Required so our team can confirm your order. Guests may create one order per contact.
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={handleConfirmOrder}
-                disabled={creatingOrder || Boolean(order)}
+                disabled={creatingOrder || Boolean(order) || contact.trim() === ""}
                 className="w-full bg-[#df3333] hover:bg-[#c92a2a] disabled:opacity-60 disabled:cursor-not-allowed text-white py-4 rounded-xl font-bold text-lg transition-colors shadow-lg shadow-red-500/20 flex items-center justify-center gap-2"
               >
                 <Plane size={20} />

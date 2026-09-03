@@ -220,6 +220,40 @@ type GuestSession struct {
 	ExpiresAt    time.Time  `json:"expires_at" gorm:"index;not null"`
 }
 
+// GuestOrderEntitlement is the durable, contact-anchored record that one
+// unauthenticated visitor already spent the single guest order the business
+// rule allows (GO-P0-1).
+//
+// guest_sessions.order_count alone is anchored on the vero_guest_session
+// cookie, which the client fully controls: clearing it (devtools, private
+// window, curl without a cookie jar) makes GuestService.Resolve mint a brand
+// new identity with a fresh allowance. This table adds a second anchor the
+// client does NOT choose — the contact channel the order was placed with, in
+// normalized form — so the entitlement survives cookie loss, a new ChatSession,
+// a new tab, and localStorage wipes.
+//
+// ContactKey is a SHA-256 digest of "<channel>:<normalized value>" so the raw
+// contact PII is not duplicated here (same reasoning as
+// guest_sessions.token_hash). The unique index on contact_key is what makes
+// "one guest order per contact" a database invariant rather than a service
+// check: two concurrent requests both inserting the same key means exactly one
+// INSERT affects a row, and the loser rolls its whole booking transaction back.
+type GuestOrderEntitlement struct {
+	BaseModel
+	ContactKey     string     `json:"-" gorm:"size:64;uniqueIndex;not null"`
+	Channel        string     `json:"channel" gorm:"size:10;not null"`
+	GuestSessionID *uuid.UUID `json:"-" gorm:"type:uuid;index"`
+	BookingID      uuid.UUID  `json:"-" gorm:"type:uuid;index;not null"`
+}
+
+// Guest order entitlement channels. Values persisted in
+// guest_order_entitlements.channel and used as the contact-key prefix, so they
+// must stay stable: changing them would orphan every existing anchor.
+const (
+	GuestContactChannelEmail = "email"
+	GuestContactChannelPhone = "phone"
+)
+
 type ChatSession struct {
 	BaseModel
 	Title          string        `json:"title" gorm:"size:180;not null"`

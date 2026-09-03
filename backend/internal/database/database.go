@@ -56,6 +56,7 @@ func (d *Database) AutoMigrate() error {
 		&models.OAuthState{},
 		&models.ExternalIdentity{},
 		&models.GuestSession{},
+		&models.GuestOrderEntitlement{},
 		&models.ChatSession{},
 		&models.ChatMessage{},
 		&models.Trip{},

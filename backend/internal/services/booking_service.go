@@ -69,6 +69,12 @@ func (s *BookingService) create(ctx context.Context, userID uuid.UUID, guestID *
 		ownerID = *guestID
 	}
 	keyHash := hashIdempotency(ownerID, isGuest, idempotencyKey)
+	// GO-P0-1: contact anchors are the cookie-independent half of the guest
+	// entitlement. Derived once here, then checked AND consumed inside the same
+	// transaction below so the database stays the sole authority.
+	anchors := guestContactAnchors(req)
+	limitReason := guestLimitReasonSessionSpent
+	matchedGuestSessionID := ""
 	var booking models.Booking
 	err := s.repo.WithBookingTransaction(ctx, func(tx repositories.BookingTransactionRepository) error {
 		if existing, err := tx.FindBookingByIdempotency(ctx, ownerID, isGuest, keyHash); err == nil {
@@ -84,6 +90,24 @@ func (s *BookingService) create(ctx context.Context, userID uuid.UUID, guestID *
 				if existing, err := tx.FindBookingByIdempotency(ctx, ownerID, true, keyHash); err == nil {
 					booking = existing
 					return nil
+				}
+				return ErrGuestOrderLimitReached
+			}
+			// A guest order must carry at least one anchorable contact, otherwise
+			// the entitlement would fall back to depending solely on the
+			// discardable cookie. An unusable contact ("abc" as a phone, a string
+			// without "@" as an email) is a validation failure — it consumes
+			// nothing, exactly like the other checks below.
+			if len(anchors) == 0 {
+				return ErrBookingContactRequired
+			}
+			// Same contact, different guest identity: the visitor cleared the
+			// cookie / opened a private window / called the API without a cookie
+			// jar after already spending the single guest order.
+			if used, err := tx.FindGuestOrderEntitlement(ctx, guestContactKeys(anchors)); err == nil {
+				limitReason = guestLimitReasonContactSpent
+				if used.GuestSessionID != nil {
+					matchedGuestSessionID = used.GuestSessionID.String()
 				}
 				return ErrGuestOrderLimitReached
 			}
@@ -157,12 +181,24 @@ func (s *BookingService) create(ctx context.Context, userID uuid.UUID, guestID *
 			if err := tx.ConsumeGuestOrder(ctx, *guestID, booking.ID); err != nil {
 				return ErrGuestOrderLimitReached
 			}
+			// GO-P0-1: consume the contact anchors in the same transaction. The
+			// unique index on guest_order_entitlements.contact_key decides the
+			// winner when two requests race past the read above, so concurrent
+			// guests sharing a contact cannot both persist an order.
+			if err := tx.ConsumeGuestOrderEntitlements(ctx, guestOrderEntitlements(anchors, *guestID, booking.ID)); err != nil {
+				limitReason = guestLimitReasonContactSpent
+				return ErrGuestOrderLimitReached
+			}
 		}
 		return nil
 	})
 	if err != nil {
 		if errors.Is(err, ErrGuestOrderLimitReached) {
-			auth.LogSecurity("guest_order_limit_reached", map[string]any{"guest_session_id": ownerID.String()})
+			payload := map[string]any{"guest_session_id": ownerID.String(), "reason": limitReason}
+			if matchedGuestSessionID != "" {
+				payload["matched_guest_session_id"] = matchedGuestSessionID
+			}
+			auth.LogSecurity("guest_order_limit_reached", payload)
 		}
 		return models.Booking{}, err
 	}

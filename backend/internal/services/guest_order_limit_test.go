@@ -32,7 +32,7 @@ func setupGuestTestDB(t *testing.T) (*gorm.DB, *repositories.Repository) {
 	}
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	err = db.AutoMigrate(&models.User{}, &models.GuestSession{}, &models.ChatSession{}, &models.Trip{}, &models.Itinerary{}, &models.Booking{}, &models.Payment{})
+	err = db.AutoMigrate(&models.User{}, &models.GuestSession{}, &models.GuestOrderEntitlement{}, &models.ChatSession{}, &models.Trip{}, &models.Itinerary{}, &models.Booking{}, &models.Payment{})
 	if err != nil {
 		t.Fatalf("failed to migrate test database: %v", err)
 	}

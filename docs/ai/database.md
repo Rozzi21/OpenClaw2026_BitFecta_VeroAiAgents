@@ -65,6 +65,35 @@ pernah disimpan — hanya hash-nya. Relasi balik: `ChatSession.GuestSessionID`
 (link chat→guest) dan `Booking.GuestSessionID` (ownership + policy). Detail
 lengkap: [GUEST_ORDER_LIMIT.md](../GUEST_ORDER_LIMIT.md).
 
+### GuestOrderEntitlement ([models.go](../../backend/internal/models/models.go))
+Jangkar KEDUA untuk kebijakan "satu order per guest" (GO-P0-1, 4 Sep 2026).
+`GuestSession.OrderCount` bergantung pada cookie `vero_guest_session` yang
+sepenuhnya dikuasai klien: menghapus cookie membuat `GuestService.Resolve`
+mencetak identitas baru beserta allowance segar. Tabel `guest_order_entitlements`
+menutup itu dengan kunci yang TIDAK dipilih klien: kontak order yang
+dinormalisasi.
+
+- `ContactKey` (varchar 64, **uniqueIndex**) = `sha256("<channel>:<nilai
+  ternormalisasi>")`. Hash, bukan plaintext — kontak PII tidak diduplikasi di
+  sini (alasan sama dengan `guest_sessions.token_hash`). Unique index inilah
+  penegak sebenarnya: dua request konkuren yang menyisipkan key sama membuat
+  tepat satu INSERT ber-`RowsAffected == 1`.
+- `Channel` = `email` atau `phone` (`models.GuestContactChannel*`); ikut jadi
+  prefix pre-image sehingga email tak pernah berkolisi dengan nomor telepon.
+- `GuestSessionID` (nullable, index) + `BookingID` (index) — untuk audit /
+  korelasi saja. Entitlement TETAP berlaku setelah guest session berotasi atau
+  kedaluwarsa; justru itu tujuannya.
+
+Satu order guest menulis satu baris per channel yang diisi (email + telepon =
+dua baris), sehingga pengunjung tidak bisa kembali dengan hanya salah satunya.
+Normalisasi ada di `backend/internal/services/guest_entitlement.go`: email
+di-trim + lowercase + buang suffix `+tag` (titik TIDAK dibuang — itu khas Gmail
+dan akan salah menggabungkan mailbox lain); telepon dijadikan digit saja lalu
+prefix `00`/`0` dilipat ke `62` (pasar Indonesia). Order guest WAJIB punya minimal
+satu kontak yang bisa dijadikan jangkar — bila tidak, request ditolak
+`ErrBookingContactRequired` (400) alih-alih jatuh kembali ke "satu order per
+cookie". Migrasi versioned: `backend/migrations/20260904_guest_order_contact_entitlement.sql`.
+
 ### AuthSession ([models.go](../../backend/internal/models/models.go))
 Menyimpan sesi refresh token untuk memungkinkan **revocation**.
 - `TokenJTI` (`uniqueIndex`) = klaim `jti` dari refresh JWT.
@@ -122,7 +151,10 @@ erDiagram
 
 ## Migrasi
 
-`Database.AutoMigrate()` ([database.go](../../backend/internal/database/database.go)) dipanggil di startup (`main.go`). Mendaftarkan 12 model secara berurutan: User, AuthSession, **OAuthState** (Google OAuth, 19 Agu 2026), GuestSession, ChatSession, ChatMessage, Trip, Itinerary, Booking, Payment, AILog, ToolCall. Kolom baru untuk guest order limit (`bookings.guest_session_id`, `bookings.idempotency_key_hash`, `chat_sessions.guest_session_id`) juga ditambah AutoMigrate; SQL versioned yang setara ada di `backend/migrations/20260818_guest_order_limit.sql` (additive, idempotent — termasuk partial unique index untuk `idempotency_key_hash`).
+`Database.AutoMigrate()` ([database.go](../../backend/internal/database/database.go)) dipanggil di startup (`main.go`). Mendaftarkan 14 model secara berurutan: User, AuthSession, **OAuthState** (Google OAuth, 19 Agu 2026), **ExternalIdentity**, GuestSession, **GuestOrderEntitlement** (guest one-order enforcement, 4 Sep 2026), ChatSession, ChatMessage, Trip, Itinerary, Booking, Payment, AILog, ToolCall. Kolom baru untuk guest order limit (`bookings.guest_session_id`, `bookings.idempotency_key_hash`, `chat_sessions.guest_session_id`) juga ditambah AutoMigrate; SQL versioned yang setara ada di `backend/migrations/20260818_guest_order_limit.sql` (additive, idempotent — termasuk partial unique index untuk `idempotency_key_hash`) dan `backend/migrations/20260904_guest_order_contact_entitlement.sql` (tabel `guest_order_entitlements` + unique index `contact_key`).
+
+> Catatan migrasi guest order (4 Sep 2026): order guest yang dibuat SEBELUM `guest_order_entitlements` ada tidak punya baris jangkar (kontak ternormalisasinya tidak pernah dicatat), jadi order lama tetap berjangkar cookie saja. Backfill SQL sengaja TIDAK dilakukan: mereplikasi normalisasi Go (strip `+tag`, lipat prefix telepon) di SQL berisiko menulis key yang tidak cocok dengan yang dihitung service.
+
 
 Setelah AutoMigrate, `MigrateGuestChatSessions()` menormalisasi session lama yang masih menunjuk `guest@vero.local` menjadi `UserID=NULL` dan mengisi expiry legacy dari timestamp aktivitas.
 

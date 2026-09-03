@@ -221,6 +221,16 @@ dan hash berubah begitu order pindah kepemilikan.
 
 #### GO-P0-1: Identitas guest sepenuhnya dapat dibuang klien — limit satu order dapat direset tanpa batas
 
+> **Status 4 Sep 2026: DIPERBAIKI** (opsi (a) — jangkar kedua berbasis kontak).
+> `guest_order_entitlements` (`contact_key` unique = `sha256("<channel>:<kontak
+> ternormalisasi>")`) dikonsumsi di transaksi booking yang sama, sehingga cookie
+> yang dibuang tidak lagi mencetak allowance baru. Opsi (b)/(c)/(d) TIDAK
+> dikerjakan: `POST /orders` tetap boleh mencetak identitas (agar pengguna baru
+> yang sah tidak terputus), `guest_identity_created` belum di-emit (GO-P2-8), dan
+> verifikasi kontak (OTP) tetap keputusan produk. Sisa celah: pengunjung dengan
+> email DAN telepon yang benar-benar berbeda tetap dapat satu order.
+> Detail + test: `docs/GUEST_ORDER_LIMIT.md` §"Jangkar kontak".
+
 - **File**: `backend/internal/services/guest_service.go:37-76` (`Resolve`);
   `backend/internal/handlers/booking_handlers.go:36-48` (`GuestCreateOrder`);
   `backend/internal/handlers/chat_handlers.go:53-62` (`GuestChat`)

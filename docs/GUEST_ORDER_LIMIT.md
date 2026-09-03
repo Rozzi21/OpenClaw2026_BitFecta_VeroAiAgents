@@ -1,12 +1,16 @@
 # Guest Order Limit — Dokumentasi Implementasi
 
-Status: **diimplementasikan** (18 Agustus 2026)
+Status: **diimplementasikan** (18 Agustus 2026; jangkar kontak 4 September 2026)
 
 Seorang pengunjung yang BELUM login boleh membuat **tepat SATU** order travel
 yang sukses. Setelah itu guest tetap bisa melihat/tracking order-nya dan lanjut
 memakai chat, tetapi TIDAK bisa membuat order kedua sebelum login/register.
 Backend + database adalah otoritas penegak — bukan frontend, cookie,
-localStorage, AI, atau MCP.
+localStorage, ChatSession, AI, MCP, atau IP. Sejak 4 Sep 2026 entitlement
+berjangkar DUA hal di DB: guest session (cookie) DAN kontak order yang
+dinormalisasi, sehingga menghapus cookie tidak lagi mereset allowance
+(lihat §"Jangkar kontak").
+
 
 ## Guest flow
 
@@ -22,10 +26,12 @@ localStorage, AI, atau MCP.
    localStorage TIDAK mereset allowance karena allowance hidup di guest
    session (server-side), bukan di chat session atau browser.
 3. Order guest pertama: `BookingService.CreateGuest` menjalankan satu
-   transaction PostgreSQL — lock row guest (`SELECT ... FOR UPDATE`), validasi
+   transaction PostgreSQL — lock row guest (`SELECT ... FOR UPDATE`), cek
+   `order_count`, cek jangkar kontak (lihat §"Jangkar kontak"), validasi
    trip/pax/tanggal/kontak/harga, insert `bookings` (dengan
    `guest_session_id`), lalu konsumsi entitlement
-   (`order_count=1`, `first_order_id=<booking>`) — semuanya atomik.
+   (`order_count=1`, `first_order_id=<booking>`, + baris
+   `guest_order_entitlements` per channel kontak) — semuanya atomik.
 4. Tracking order: `GET /api/v1/orders/:id` memverifikasi cookie guest dan
    `bookings.guest_session_id` cocok. UUID saja tidak cukup.
 5. Setelah login/register, handler meng-claim order guest ke akun (best-effort,
@@ -77,11 +83,58 @@ index: `token_hash` unique untuk lookup O(1) + mencegah duplikat hash;
 `idempotency_key_hash` mencegah duplikat logical request tanpa mengunci baris
 lama yang kosong.
 
+Model kedua `GuestOrderEntitlement` (`guest_order_entitlements`, 4 Sep 2026):
+UUID PK, `contact_key` (varchar 64, **uniqueIndex**), `channel`
+(`email`|`phone`), `guest_session_id` (nullable, index — audit saja),
+`booking_id` (index). Migrasi:
+`backend/migrations/20260904_guest_order_contact_entitlement.sql`.
+
+## Jangkar kontak (GO-P0-1, 4 Sep 2026)
+
+Audit `docs/GUEST_ORDER_AUDIT.md` menemukan: penegakannya sudah atomik, tapi
+**kuncinya dipilih klien**. Satu-satunya jangkar adalah cookie
+`vero_guest_session`, dan `GuestService.Resolve` mencetak identitas baru
+(allowance baru) setiap kali request datang tanpa cookie valid — devtools, mode
+privat, atau `curl` tanpa cookie jar. Efektifnya "satu order per cookie yang mau
+disimpan klien", bukan "satu order per pengunjung yang belum login".
+
+Perbaikannya menambah jangkar kedua yang **tidak dipilih klien**: kontak yang
+dipakai untuk order, dinormalisasi lalu di-hash.
+
+- Normalisasi (`backend/internal/services/guest_entitlement.go`):
+  - email → trim + lowercase + buang suffix `+tag`. Titik TIDAK dibuang (itu
+    khas Gmail dan akan salah menggabungkan mailbox provider lain).
+    `"  Guest.Order@Example.COM "`, `"guest.order@example.com"`, dan
+    `"guest.order+order2@example.com"` → satu key.
+  - telepon → digit saja, prefix `00` dibuang, prefix `0` dilipat ke `62`
+    (pasar Indonesia). `"0812-3456-789"`, `"+62 812 3456 789"`,
+    `"0062 812 3456 789"`, `"628123456789"` → satu key.
+- `contact_key` = `sha256("<channel>:<nilai ternormalisasi>")`. Hash, bukan
+  plaintext: tidak ada salinan kedua PII kontak (alasan sama dengan
+  `token_hash`). Channel ikut jadi pre-image supaya email tak pernah berkolisi
+  dengan nomor telepon.
+- Satu order menulis satu baris per channel yang diisi (email + telepon = dua
+  baris), sehingga pengunjung tidak bisa kembali dengan hanya salah satunya.
+- Order guest WAJIB punya minimal satu kontak yang bisa dijadikan jangkar.
+  Kontak tak terpakai (`"n/a"` sebagai telepon, string tanpa `@` sebagai email)
+  ditolak `BOOKING_VALIDATION_FAILED` — kalau dibiarkan lolos, aturan akan
+  kembali bergantung pada cookie saja.
+- Hanya jalur guest yang membaca DAN menulis jangkar. `POST /bookings`
+  (authenticated) tidak tersentuh: user login tetap memakai aturan booking biasa
+  walau kontaknya sama dengan order guest yang sudah terpakai.
+- Batas yang disengaja: pengunjung yang memakai email DAN telepon yang
+  benar-benar berbeda tetap dapat satu order. Menutup itu butuh verifikasi
+  kontak (OTP) — keputusan produk, bukan backend (`GUEST_ORDER_AUDIT.md`
+  GO-P0-1 (d)). Kuota per-IP sengaja TIDAK dipakai sebagai business rule (IP
+  hanya abuse control; NAT bersama akan salah menghukum pelanggan asli).
+
 ## Security model
 
 - Token opaque random CSPRNG 256-bit, hash-only at rest; raw token tak pernah
   dilog/disimpan di DB/dikirim di body.
 - Guest identity TIDAK pernah diterima dari request payload — hanya cookie.
+  Karena cookie bisa dibuang klien, entitlement punya jangkar kedua di DB
+  (`guest_order_entitlements.contact_key`, unique) — lihat §"Jangkar kontak".
 - Authorization order guest = cookie token valid + `bookings.guest_session_id`
   match. Bukan UUID/email/phone/frontend state (anti-IDOR).
 - Booking guest memakai user guest terisolasi (`guest-<uuid>@vero.local`) per
@@ -94,20 +147,30 @@ lama yang kosong.
   control.
 - Audit aman: `guest_order_created`, `guest_order_limit_reached`,
   `guest_order_linked`, `guest_order_auth_required` — hanya safe IDs; tidak ada
-  raw guest token/JWT/PII kontak.
+  raw guest token/JWT/PII kontak. `guest_order_limit_reached` membawa `reason`
+  kategori (`guest_session_spent` | `contact_already_used`) plus
+  `matched_guest_session_id` bila jangkar kontak yang menahan — cukup untuk
+  mendeteksi farming cookie tanpa pernah me-log kontak maupun hash-nya.
 
 ## Error codes
 
 | Code | HTTP | Arti |
 |---|---|---|
-| `GUEST_ORDER_LIMIT_REACHED` | 403 | Guest sudah pakai satu order; perlu login |
+| `GUEST_ORDER_LIMIT_REACHED` | 403 | Guest sudah pakai satu order (jangkar guest session ATAU kontak); perlu login |
 | `IDEMPOTENCY_KEY_REQUIRED` | 400 | Header idempotency hilang/tak valid |
-| `BOOKING_VALIDATION_FAILED` | 400 | Kontak/tanggal invalid (tidak konsumsi allowance) |
+| `BOOKING_VALIDATION_FAILED` | 400 | Kontak/tanggal invalid, termasuk kontak yang tidak bisa dijadikan jangkar (tidak konsumsi allowance) |
 
 ## Frontend behavior
 
 - Cookie otomatis terkirim (`credentials: include`). Tidak ada entitlement di
   localStorage; hanya access token customer disimpan setelah login.
+- **Kontak wajib (4 Sep 2026).** `trip/[id]` punya satu input "Email or phone
+  number"; tombol "Confirm & Create Order" disabled selama kosong, dan nilainya
+  dikirim sebagai `contact_email` (bila memuat `@`) atau `contact_phone`.
+  Sebelumnya halaman ini mengirim placeholder `contact_phone:
+  "provided-via-chat"` — tidak bisa dijadikan jangkar, jadi backend menolaknya.
+  Ini satu-satunya perubahan frontend yang dituntut kontrak baru; kode error
+  tidak berubah.
 - Order sukses: tampilkan "Your order has been created successfully" + "You can
   continue tracking this order as a guest. To create another order, please sign
   in." + tombol Continue Tracking / Login / Register.
@@ -135,6 +198,14 @@ insert + konsumsi, yang kalah membaca count=1 →
 `ErrGuestOrderLimitReached`. Conditional `ConsumeGuestOrder`
 (`WHERE order_count=0`, `RowsAffected==1`) adalah lapisan kedua. Tidak ada
 mutex in-memory (aman multi-instance).
+
+Untuk request konkuren yang masing-masing membawa **identitas guest berbeda**
+(dua cookie, dua browser, `curl` paralel tanpa cookie jar) row lock tidak
+membantu — di situ unique index `guest_order_entitlements.contact_key` yang
+memutuskan: `INSERT ... ON CONFLICT DO NOTHING` menyisipkan satu baris
+(`RowsAffected==1`) untuk pemenang, yang kalah mendapat 0 baris → dipetakan ke
+`ErrGuestOrderLimitReached` → seluruh transaksinya (termasuk insert booking dan
+`order_count`) di-rollback.
 
 ## Idempotency
 
@@ -166,12 +237,55 @@ melarang klaim sukses tanpa tool success dan melarang retry setelah code
 limit (20,21). Chat baru tidak mereset allowance karena identity terpisah dari
 chat session (5,6,7 by design).
 
+Jangkar kontak (4 Sep 2026) ditutup dua file test baru:
+
+`backend/internal/services/guest_order_contact_entitlement_test.go`
+(SQLite in-memory, memakai fixture yang sama):
+
+1. `TestGuestOrderDeniedForFreshIdentityWithSameContact` — identitas guest baru
+   (persis yang dihasilkan cookie dihapus / mode privat / `curl` tanpa cookie
+   jar) dengan kontak sama → `ErrGuestOrderLimitReached`; email saja dan telepon
+   saja masing-masing cukup untuk menahan; pengunjung lain tetap dapat order.
+2. `TestGuestEntitlementSurvivesIdentityRotation` — identitas lama di-expire
+   (rotasi TTL 30 hari), identitas baru dengan kontak sama tetap ditolak.
+3. `TestNewChatSessionDoesNotResetGuestEntitlement` — chat session baru pada
+   identitas sama, lalu chat baru + identitas baru: dua-duanya ditolak.
+4. `TestFailedGuestOrderDoesNotConsumeContactEntitlement` — trip tak dikenal +
+   tanggal invalid tidak menulis baris jangkar; kontak masih bisa dipakai satu
+   kali, lalu terpakai permanen.
+5. `TestGuestOrderRequiresAnchorableContact` — kontak tanpa jangkar ditolak
+   `ErrBookingContactRequired` tanpa mengonsumsi apa pun.
+6. `TestConcurrentGuestIdentitiesSameContactCreateOnlyOne` — 8 goroutine, 8
+   identitas berbeda, kontak sama → tepat 1 booking + 2 baris jangkar
+   (diverifikasi `go test -race`).
+7. `TestAuthenticatedBookingIgnoresGuestContactAnchors` — user login boleh dua
+   order dengan kontak yang jangkarnya sudah terpakai; jalur authenticated tidak
+   menulis jangkar.
+8. `TestConsumeGuestOrderEntitlementsRejectsTakenContactKey` — level repository:
+   `contact_key` yang sudah terpakai dilaporkan sebagai konflik
+   (`RowsAffected == 0` → `gorm.ErrDuplicatedKey`), bukan sukses senyap, dan
+   INSERT yang kalah tidak menulis baris. Perlu diuji terpisah karena pada test
+   SQLite (`SetMaxOpenConns(1)`) jalur konflik tidak pernah tercapai lewat
+   service — pre-check sudah menahan lebih dulu.
+
+`backend/internal/services/guest_entitlement_test.go` (unit, tanpa DB) mengunci
+normalisasi: varian email (trim/case/`+tag`/titik dipertahankan/malformed) dan
+telepon (`0`/`+62`/`00`/pemisah/tanpa digit), serta derivasi anchor
+(email ≠ phone key, ejaan ekuivalen → key sama, kontak beda → key beda).
+
 ## Batasan yang tersisa
 
 - Google OAuth tombol di frontend masih placeholder (disabled) — belum ada
   provider OAuth di backend.
 - Order guest lama (dibuat sebelum fitur ini) tidak punya `guest_session_id`
   dan tidak bisa di-claim otomatis; tetap dapat diakses staff.
+- Order guest yang dibuat SEBELUM jangkar kontak ada (4 Sep 2026) tidak punya
+  baris `guest_order_entitlements`, jadi masih berjangkar cookie saja. Tidak ada
+  backfill: normalisasi Go (strip `+tag`, lipat prefix telepon) tidak aman
+  direplikasi di SQL.
+- Pengunjung yang memakai email DAN telepon berbeda tetap dapat satu order —
+  butuh verifikasi kontak (OTP) untuk menutupnya (keputusan produk).
 - Token guest berlaku 30 hari; order guest yang belum di-claim setelah expiry
   token hanya bisa diakses staff (retention dapat diperpanjang via env).
 - Rate limit masih per-IP in-memory single instance (lihat known-issues PRR-P1-3).
+
