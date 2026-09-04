@@ -491,6 +491,11 @@ type mockGuestRepo struct {
 	claimGuestID uuid.UUID
 	claimUserID  uuid.UUID
 	claimBooking uuid.UUID
+	// Chat→guest binding (GO-P2-7): recorded pair + a switch to simulate a
+	// chat session already owned by another live guest identity.
+	boundChatID  uuid.UUID
+	boundGuestID uuid.UUID
+	bindRefused  bool
 }
 
 func (m *mockGuestRepo) CreateGuestSession(_ context.Context, s *models.GuestSession) error {
@@ -509,7 +514,14 @@ func (m *mockGuestRepo) FindGuestSession(_ context.Context, id uuid.UUID) (model
 	}
 	return m.session, nil
 }
-func (m *mockGuestRepo) UpdateChatSessionGuest(_ context.Context, _, _ uuid.UUID) error { return nil }
+
+// BindChatSessionGuest mirrors the conditional bind (GO-P2-7). The mock has no
+// chat sessions, so it reports the first bind as won and remembers the pair.
+func (m *mockGuestRepo) BindChatSessionGuest(_ context.Context, chatID, guestID uuid.UUID) (bool, error) {
+	m.boundChatID, m.boundGuestID = chatID, guestID
+	return !m.bindRefused, nil
+}
+
 func (m *mockGuestRepo) ClaimGuestOrder(_ context.Context, guestID, userID uuid.UUID) (repositories.GuestOrderClaim, error) {
 	m.claimed, m.claimGuestID, m.claimUserID = true, guestID, userID
 	return repositories.GuestOrderClaim{BookingID: m.claimBooking, OwnerID: userID, Transferred: true}, nil

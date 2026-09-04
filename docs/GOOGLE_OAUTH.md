@@ -400,9 +400,19 @@ lalu di-persist oleh `CreateUserWithGoogleIdentity` dalam **satu transaksi**:
    untuk login berikutnya.
 5. Audit `google_account_created` di-emit.
 
-**Race condition** (dua callback paralel membuat email/sub sama): constraint unique
-membuat `CreateUserWithGoogleIdentity` gagal → fallback `FindUserByGoogleSub`, lalu
-`FindUserByEmail`; login kedua tetap sukses memakai row yang sudah ada.
+**Race condition** (dua callback paralel, atau `POST /auth/register` paralel dengan
+email sama): constraint unique membuat `CreateUserWithGoogleIdentity` gagal.
+Fallback **hanya** resolve lewat kunci identitas yang sama seperti lookup utama —
+`FindUserByGoogleSub`. Bila `sub` masih belum ter-link, artinya create kalah pada
+`users.email` UNIQUE milik akun yang BUKAN identitas Google ini, dan hasilnya
+adalah keputusan yang sama seperti guard pra-create: `ErrGoogleAccountExists` +
+audit `google_link_required` (`reason=create_race_email_taken`). Fallback lewat
+`FindUserByEmail` (perilaku lama, P1-H1) DIHAPUS: ia mengembalikan akun password
+yang belum pernah menautkan `sub` tersebut, melewati guard anti-merge, dan
+—karena claim guest order jalan tepat setelah callback— memindahkan order guest
+si pemanggil ke akun korban. Kegagalan create yang bukan lost-race (mis. DB down)
+tetap diteruskan sebagai error (fail closed). Dikunci
+`internal/services/identity_resolution_race_test.go`.
 
 ---
 
@@ -439,6 +449,14 @@ TERBUKTI akun Vero tersebut.
    - selain itu → `LinkUserGoogleSub`: buat row `external_identities` +
      update `users.google_sub` (mirror) dalam **satu transaksi**. Audit
      `google_account_linked`. **Tidak menyentuh password/role.**
+   - **Lost race pada write (4 Sep 2026)**: cek "sudah ter-link?" adalah READ dan
+     `LinkUserGoogleSub` adalah WRITE, jadi link paralel untuk `sub` yang sama
+     bisa masuk di antaranya. `UNIQUE(provider, provider_user_id)` yang memutuskan
+     pemenang; yang kalah **resolve ulang lewat kunci yang sama** (`FindUserByGoogleSub`)
+     dan mengembalikan keputusan yang identik dengan pra-cek: akun lain →
+     `ErrGoogleIdentityTaken`, akun sendiri → no-op idempotent. Kegagalan write
+     tanpa pemilik `sub` yang terlihat tetap diteruskan sebagai error.
+     Dikunci `internal/services/identity_resolution_race_test.go`.
 4. Sukses → redirect FE `?google_linked=1` (tanpa sesi baru; user sudah login).
 
 ### 7.3 Mengapa tidak auto-merge?

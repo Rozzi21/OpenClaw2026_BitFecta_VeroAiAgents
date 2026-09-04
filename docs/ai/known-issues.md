@@ -109,32 +109,70 @@ bullet terkait); semua item lain di bawah masih terbuka.
   **Catatan sisa**: retry masih harus dipicu klien (tidak ada re-claim otomatis
   di `/auth/me` / `/auth/refresh`), dan GO-P2-6 (`GUEST_COOKIE_SAME_SITE` salah
   tulis → `Strict`) belum diperbaiki di `Config.Validate()`.
-- **P2 penting**: tidak ada cleanup `guest_sessions` maupun user guest (satu baris
+- **✅ GO-P2-3 + GO-P2-7 FIXED (4 Sep 2026) — dua race di jalur guest order.**
+  (a) *Idempotency race*: dua request dengan owner + `Idempotency-Key` sama bisa
+  lolos lookup pra-insert bersamaan; `bookings.idempotency_key_hash` (UNIQUE)
+  menolak yang kalah dan **membatalkan transaksinya**, sehingga dulu keluar
+  constraint error (HTTP 500) padahal pemenang sudah menyimpan booking untuk key
+  itu. Sekarang `BookingService.create` mengulang lookup **di luar** transaksi
+  (`FindBookingByIdempotency`, di-scope owner + key hash milik pemanggil) dan
+  mengembalikan booking pemenang sebagai replay. Tidak ada pelonggaran: hanya
+  booking milik owner yang sama dengan key yang sama bisa terbaca, dan transaksi
+  yang gagal sudah rollback sehingga allowance tidak terpakai dua kali. Error lain
+  (limit guest, kontak invalid, DB down) tetap diteruskan.
+  (b) *Chat→guest binding*: `UpdateChatSessionGuest` menimpa
+  `chat_sessions.guest_session_id` tanpa syarat, padahal kolom itu adalah INPUT
+  OTORISASI — cabang guest MCP `create_booking` menurunkan PEMILIK order dari
+  sana. Diganti `BindChatSessionGuest`: satu conditional UPDATE yang hanya menang
+  bila kolom masih NULL, sudah berisi guest yang sama, atau guest yang terikat
+  sudah kedaluwarsa/hilang. Losernya dapat `ErrChatSessionGuestMismatch` +
+  audit `guest_chat_bind_refused`; `GuestChat` lalu mencetak chat session BARU
+  untuk identitas pemanggil (pola SEC-17) alih-alih memakai sesi orang lain.
+  Dikunci `internal/services/guest_concurrency_test.go` +
+  `internal/handlers/guest_chat_bind_handler_test.go`.
+- **P2 sisa**: tidak ada cleanup `guest_sessions` maupun user guest (satu baris
   `users` + bcrypt cost 10 per identitas); `migrations/20260818_guest_order_limit.sql`
   **tidak** dipanggil dari `AutoMigrate` (partial unique index + `CHECK
   order_count >= 0` absen di DB baru — GORM membuat unique index penuh);
-  idempotency tidak concurrency-safe (race key identik → HTTP 500, bukan replay)
-  dan hash-nya bergeser saat claim (`guest:` → `user:`); guard duplikat MCP
-  bersandar pada marker di riwayat chat dengan window 200 pesan;
+  hash idempotency bergeser saat claim (`guest:` → `user:`, GO-P2-4); guard
+  duplikat MCP bersandar pada marker di riwayat chat dengan window 200 pesan;
   `GUEST_COOKIE_SAME_SITE` salah tulis jatuh ke `Strict` di `parseSameSite` dan
-  mematikan claim Google secara senyap; `UpdateChatSessionGuest` menimpa
-  `chat_sessions.guest_session_id` tanpa cek kepemilikan; event guest order tanpa
+  mematikan claim Google secara senyap; event guest order tanpa
   `ip`/`user_agent`/`request_id` dan tanpa event saat identitas dicetak.
-- **P1-H1 (`resolveUser` TOCTOU) punya dampak guest-order yang belum tercatat**:
-  callback Google memanggil `Guests.ClaimOrder` dengan cookie browser pemanggil
-  **setelah** `resolveUser`, sehingga pemenang race bisa (a) menyuntikkan order
-  guest miliknya ke akun korban (masuk antrean `pending_admin_processing`), dan
-  (b) melewati limit guest lewat account takeover ke jalur `POST /bookings` yang
-  tanpa limit. Naikkan prioritasnya. Kontras pola: fallback `GuestService.Resolve`
-  benar karena resolve ulang lewat **kunci identitas yang sama** (token hash),
-  bukan atribut sekunder — pakai itu sebagai rujukan saat memperbaiki
-  `resolveUser`.
+- **✅ P1-H1 (`resolveUser` TOCTOU) FIXED (4 Sep 2026) — termasuk dampak
+  guest-order-nya.** Fallback pasca-`CreateUserWithGoogleIdentity` gagal dulu
+  resolve lewat `FindUserByEmail`, mengembalikan akun password yang belum pernah
+  menautkan `sub` tersebut → guard anti-merge (`ErrGoogleAccountExists`) terlewati.
+  Karena callback Google memanggil `Guests.ClaimOrder` dengan cookie browser
+  pemanggil **setelah** `resolveUser`, pemenang race bisa (a) menyuntikkan order
+  guest miliknya ke akun korban, dan (b) melewati limit guest via account takeover
+  ke `POST /bookings`. Sekarang fallback hanya resolve lewat **kunci yang sama**
+  dengan lookup utama (`FindUserByGoogleSub`); bila `sub` masih belum ter-link,
+  jawabannya identik dengan guard pra-create (`ErrGoogleAccountExists`, audit
+  `google_link_required` `reason=create_race_email_taken`), dan kegagalan lain
+  diteruskan apa adanya. `LinkAccount` mendapat perlakuan sama: loser constraint
+  resolve ulang lewat `sub` → `ErrGoogleIdentityTaken` (akun lain) atau no-op
+  idempotent (akun sendiri). Efek samping: tidak ada lagi jalan agar
+  `resolveUser` mengembalikan akun yang belum ter-link, jadi order guest tidak
+  bisa lagi mendarat di akun hasil fallback. Pola rujukan tetap
+  `GuestService.Resolve` (resolve ulang lewat token hash yang sama). Dikunci
+  `internal/services/identity_resolution_race_test.go`.
 - **Catatan test**: `guest_order_limit_test.go` memakai SQLite in-memory dengan
   `SetMaxOpenConns(1)`, jadi `SELECT ... FOR UPDATE` tidak pernah benar-benar
   diuji; jaminan konkurensi bersandar pada conditional `ConsumeGuestOrder` (yang
   memang cukup di Postgres READ COMMITTED). Batasan yang sama berlaku untuk
   `guest_order_contact_entitlement_test.go` — di situ arbiternya unique index
   `contact_key`, yang juga cukup di Postgres.
+  **Sejak 4 Sep 2026 ada verifikasi mesin nyata yang opsional** (GO-P3-6):
+  `internal/services/guest_postgres_race_test.go` menjalankan empat skenario
+  (pembuatan order guest paralel, key idempotency identik paralel, claim paralel,
+  binding chat→guest paralel + resolusi identitas paralel) dengan pool 8 koneksi
+  di PostgreSQL. Di-skip otomatis kecuali `VERO_TEST_POSTGRES_DSN` di-set, dan
+  harness-nya MENOLAK jalan bila DSN tidak mengarahkan `search_path` ke schema
+  sekali-pakai yang namanya memuat `test`/`verify` (test ini melakukan TRUNCATE).
+  Terakhir dijalankan hijau pada 4 Sep 2026 lewat schema sementara
+  `toctou_verify_tmp` di DB dev (schema dibuat lalu di-DROP setelah verifikasi;
+  schema `public` tidak disentuh).
 
 Sebelum menyentuh area ini, baca `docs/GUEST_ORDER_AUDIT.md` §7 — urutannya
 sengaja **tidak** memulai dari P0 (butuh telemetri GO-P2-8 dan perbaikan jalur

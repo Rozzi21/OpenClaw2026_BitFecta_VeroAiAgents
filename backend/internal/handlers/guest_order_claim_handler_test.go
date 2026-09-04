@@ -76,8 +76,12 @@ func setupClaimEnv(t *testing.T) claimEnv {
 	}
 	repo := repositories.New(db)
 	// nil JWT service: the claim path never issues or verifies tokens, and no
-	// AI key is needed (empty config → local fallback client).
-	svc := services.New(config.Config{}, repo, nil, events.NewBus())
+	// AI key is needed (empty config → local fallback client). TTLs are set so
+	// sessions minted through the real services are live, not instantly expired.
+	svc := services.New(config.Config{
+		GuestSessionTTL:  7 * 24 * time.Hour,
+		GuestIdentityTTL: 30 * 24 * time.Hour,
+	}, repo, nil, events.NewBus())
 	t.Cleanup(svc.StopAudit)
 	return claimEnv{db: db, repo: repo, svc: svc, h: &Handler{Services: svc}}
 }

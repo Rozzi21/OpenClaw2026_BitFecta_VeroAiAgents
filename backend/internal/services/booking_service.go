@@ -40,6 +40,9 @@ type BookingRepository interface {
 	FindTrip(ctx context.Context, id uuid.UUID) (models.Trip, error)
 	WithBookingTransaction(ctx context.Context, fn func(repositories.BookingTransactionRepository) error) error
 	FindBookingForGuest(ctx context.Context, id, guestID uuid.UUID) (models.Booking, error)
+	// FindBookingByIdempotency is also used OUTSIDE the transaction, to replay
+	// the winner's booking after a lost insert race on the same key (GO-P2-3).
+	FindBookingByIdempotency(ctx context.Context, ownerID uuid.UUID, guest bool, hash string) (models.Booking, error)
 }
 
 func hashIdempotency(ownerID uuid.UUID, guest bool, key string) string {
@@ -193,6 +196,23 @@ func (s *BookingService) create(ctx context.Context, userID uuid.UUID, guestID *
 		return nil
 	})
 	if err != nil {
+		// Lost insert race on the SAME Idempotency-Key (GO-P2-3). Two requests
+		// with identical owner + key can both pass the pre-insert lookup above;
+		// bookings.idempotency_key_hash (UNIQUE) then rejects the loser and
+		// aborts its transaction, so the loser used to surface a raw constraint
+		// error (HTTP 500) even though the winner had already persisted the very
+		// booking this key stands for. Re-read with the SAME owner-scoped lookup
+		// and replay it.
+		//
+		// No check is weakened: the lookup is keyed by the caller's own owner id
+		// (guest session id for guests, user id otherwise) plus the key hash, so
+		// it can only ever return a booking this caller created with this key —
+		// never another owner's order, and never a second order for a guest. The
+		// loser's transaction (booking insert + entitlement consumption) was
+		// rolled back, so no allowance was spent twice.
+		if replay, replayErr := s.repo.FindBookingByIdempotency(ctx, ownerID, isGuest, keyHash); replayErr == nil {
+			return replay, nil
+		}
 		if errors.Is(err, ErrGuestOrderLimitReached) {
 			payload := map[string]any{"guest_session_id": ownerID.String(), "reason": limitReason}
 			if matchedGuestSessionID != "" {

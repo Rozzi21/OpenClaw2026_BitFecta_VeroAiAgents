@@ -112,6 +112,11 @@ Handler memakai helper `bind(c, &req)` yang otomatis membalas `BadRequest` bila 
 - **JANGAN pernah menerima `role` (atau field privilege lain) dari body request pada endpoint publik.** Role hanya boleh ditetapkan server-side atau lewat endpoint terproteksi `Role(admin)`. Lihat SEC-1 di `known-issues.md`.
 - **Endpoint yang mengembalikan resource milik user (booking, payment, chat) WAJIB cek kepemilikan** (`resource.UserID == currentUserID(c)`) kecuali pemanggil operator/admin. Hindari IDOR (SEC-2).
 - **Nilai uang/harga JANGAN dipercaya dari client.** Hitung `total_price`/`amount` di server dari data paket; body client hanya referensi (SEC-3).
+- **Keputusan otorisasi WAJIB konsisten antara jalur cek dan jalur race (4 Sep 2026, P1-H1 / GO-P2-3 / GO-P2-7).** Setiap "cek dulu, tulis kemudian" punya jendela TOCTOU, jadi:
+  1. **Fallback setelah write gagal hanya boleh resolve ulang lewat KUNCI YANG SAMA dengan lookup utama.** Contoh benar: `GuestService.Resolve` (token hash), `resolveUser`/`LinkAccount` (Google `sub`). Contoh yang pernah salah: fallback `resolveUser` lewat `FindUserByEmail` — mengembalikan akun yang tidak pernah menautkan `sub` dan melewati guard anti-merge.
+  2. **Jawaban saat kalah race harus identik dengan jawaban pra-cek.** Loser tidak boleh mendapat error generik (atau sukses!) yang berbeda dari keputusan yang sudah dinyatakan guard, mis. `ErrGoogleAccountExists` / `ErrGoogleIdentityTaken`.
+  3. **Kolom yang menentukan kepemilikan/otorisasi ditulis dengan conditional UPDATE single-winner**, bukan overwrite buta: `WHERE <prasyarat masih benar>` + cek `RowsAffected`. Contoh: `ConsumeGuestOrder`, `ConsumeOAuthState`, `ClaimGuestOrder`, `BindChatSessionGuest`.
+  4. **Unique index/constraint adalah otoritas final**, dan pelanggarannya harus dipetakan ke keputusan domain (replay idempoten atau penolakan) — bukan dibiarkan bocor sebagai HTTP 500. Jangan pula melonggarkan cek keamanan demi menghindari race: re-read yang dipakai untuk replay WAJIB di-scope ke identitas pemanggil (mis. owner + key hash pada `FindBookingByIdempotency`).
 
 ### 1.7 Penamaan & Format
 

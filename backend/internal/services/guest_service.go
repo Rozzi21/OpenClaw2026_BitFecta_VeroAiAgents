@@ -18,6 +18,13 @@ import (
 
 var ErrGuestSessionInvalid = errors.New("guest session invalid or expired")
 
+// ErrChatSessionGuestMismatch: the chat session presented by the caller is
+// already bound to a DIFFERENT, still-live guest identity. The binding decides
+// who owns orders created from that chat (MCP `create_booking` reads
+// chat_sessions.guest_session_id), so it is never re-pointed; the caller gets a
+// fresh session instead.
+var ErrChatSessionGuestMismatch = errors.New("chat session belongs to another guest identity")
+
 // Guest-order claim outcomes (GO-P1-3 / GO-P3-3). ClaimOrder used to return a
 // bare nil for "nothing to claim" and a raw gorm error for everything else, so
 // its three call sites (Register, Login, Google callback) could not tell a
@@ -46,6 +53,10 @@ const (
 	eventGuestOrderClaimReplayed = "guest_order_claim_replayed"
 	eventGuestOrderClaimConflict = "guest_order_claim_conflict"
 	eventGuestOrderClaimFailed   = "guest_order_claim_failed"
+	// eventGuestChatBindRefused fires when a chat session could not be bound
+	// because it already belongs to another live guest identity (GO-P2-7) —
+	// the shape of a copied chat cookie or two identities racing in one browser.
+	eventGuestChatBindRefused = "guest_chat_bind_refused"
 )
 
 // Reason categories attached to eventGuestOrderClaimFailed.
@@ -132,8 +143,29 @@ func (s *GuestService) Authenticate(ctx context.Context, token string) (models.G
 	return session, nil
 }
 
+// AttachChat binds the anonymous chat session to the guest identity that proved
+// ownership on THIS request (the HttpOnly cookie). The binding is not cosmetic:
+// MCP `create_booking` reads chat_sessions.guest_session_id to decide which
+// guest identity owns the order it creates, so a blind overwrite let any later
+// request re-point an existing chat at a different identity — spending that
+// identity's one-order allowance and attributing the order to it (GO-P2-7).
+//
+// The repository performs a single-winner conditional UPDATE. A refusal means
+// the chat session is owned by another LIVE guest identity; the caller must
+// start a fresh chat session instead of reusing it.
 func (s *GuestService) AttachChat(ctx context.Context, chatID, guestID uuid.UUID) error {
-	return s.repo.UpdateChatSessionGuest(ctx, chatID, guestID)
+	bound, err := s.repo.BindChatSessionGuest(ctx, chatID, guestID)
+	if err != nil {
+		return err
+	}
+	if !bound {
+		auth.LogSecurity(eventGuestChatBindRefused, map[string]any{
+			"chat_session_id":  chatID.String(),
+			"guest_session_id": guestID.String(),
+		})
+		return ErrChatSessionGuestMismatch
+	}
+	return nil
 }
 
 // ClaimOrder moves the single order a guest session placed to the account that

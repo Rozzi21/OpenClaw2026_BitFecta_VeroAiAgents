@@ -56,8 +56,22 @@ func (h *Handler) GuestChat(c *gin.Context) {
 		return
 	}
 	if err := h.Services.Guests.AttachChat(c.Request.Context(), sessionID, identity.Session.ID); err != nil {
-		utils.ServerError(c, err)
-		return
+		if !errors.Is(err, services.ErrChatSessionGuestMismatch) {
+			utils.ServerError(c, err)
+			return
+		}
+		// The chat cookie points at a session already owned by a DIFFERENT live
+		// guest identity (copied cookie, shared browser, or two identities
+		// racing in one browser). Never re-point it — orders created from a chat
+		// are owned by the identity bound to it — and never serve it either.
+		// Mint a fresh session for THIS identity, the same policy SEC-17 applies
+		// to foreign authenticated session ids.
+		fresh, err := h.rebindGuestChatSession(c, identity.Session.ID)
+		if err != nil {
+			utils.ServerError(c, err)
+			return
+		}
+		sessionID = fresh
 	}
 	auth.SetGuestIdentityCookie(c, h.Services.Config, identity.Token, int(h.Services.Config.GuestIdentityTTL.Seconds()))
 
@@ -151,6 +165,25 @@ func (h *Handler) GuestHistory(c *gin.Context) {
 	}
 	auth.SetGuestSessionCookie(c, h.Services.Config, id.String(), int(h.Services.Config.GuestSessionTTL.Seconds()))
 	utils.Success(c, http.StatusOK, "Chat history", gin.H{"messages": guestMessages})
+}
+
+// rebindGuestChatSession mints a brand-new anonymous chat session for a guest
+// identity whose chat cookie pointed at somebody else's session, sets the cookie
+// to the new id, and binds it. The new row starts with guest_session_id NULL, so
+// the conditional bind cannot fail for a legitimate caller; a second failure is
+// reported instead of silently continuing on an unbound session (which MCP would
+// refuse anyway).
+func (h *Handler) rebindGuestChatSession(c *gin.Context, guestSessionID uuid.UUID) (uuid.UUID, error) {
+	ctx := c.Request.Context()
+	fresh, _, err := h.Services.AI.ResolveGuestSession(ctx, uuid.Nil)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if err := h.Services.Guests.AttachChat(ctx, fresh, guestSessionID); err != nil {
+		return uuid.Nil, err
+	}
+	auth.SetGuestSessionCookie(c, h.Services.Config, fresh.String(), int(h.Services.Config.GuestSessionTTL.Seconds()))
+	return fresh, nil
 }
 
 func resolveGuestSession(h *Handler, c *gin.Context) (uuid.UUID, error) {

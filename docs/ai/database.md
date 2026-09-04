@@ -118,6 +118,7 @@ Menyimpan sesi refresh token untuk memungkinkan **revocation**.
 ### ChatSession & ChatMessage ([models.go](../../backend/internal/models/models.go))
 Percakapan AI.
 - `ChatSession` punya `Title` (ringkasan prompt pertama), `MemorySummary` (ringkasan memori jangka panjang, text), `SelectedTripID` (nullable, UUID index), `UserID` nullable, `ExpiresAt`, dan `LastActivityAt`. `UserID=NULL` berarti anonymous guest; user authenticated di masa depan memakai `UserID` biasa. `ExpiresAt`/`LastActivityAt` mendukung sliding expiration 7 hari.
+- `chat_sessions.guest_session_id` **bukan metadata**: cabang guest MCP `create_booking` menurunkan PEMILIK order dari kolom ini, jadi ia hanya boleh ditulis lewat conditional UPDATE single-winner `Repository.BindChatSessionGuest` (menang bila NULL / guest yang sama / guest terikat sudah kedaluwarsa). Jangan menambah query yang menimpanya tanpa syarat (GO-P2-7, 4 Sep 2026).
 - `ChatMessage` menyimpan `Role` (`user`/`assistant`) + `Content`. `has many` di bawah session (`foreignKey:SessionID`).
 
 ### Trip ([models.go](../../backend/internal/models/models.go))

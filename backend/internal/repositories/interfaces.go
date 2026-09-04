@@ -97,7 +97,10 @@ type GuestRepository interface {
 	CreateGuestSession(ctx context.Context, session *models.GuestSession) error
 	FindGuestSessionByTokenHash(ctx context.Context, hash string) (models.GuestSession, error)
 	FindGuestSession(ctx context.Context, id uuid.UUID) (models.GuestSession, error)
-	UpdateChatSessionGuest(ctx context.Context, chatID, guestID uuid.UUID) error
+	// BindChatSessionGuest replaced UpdateChatSessionGuest (GO-P2-7): the
+	// chat→guest binding is an authorization input for guest order ownership,
+	// so it is a single-winner conditional UPDATE, never a blind overwrite.
+	BindChatSessionGuest(ctx context.Context, chatID, guestID uuid.UUID) (bool, error)
 	ClaimGuestOrder(ctx context.Context, guestID, userID uuid.UUID) (GuestOrderClaim, error)
 }
 

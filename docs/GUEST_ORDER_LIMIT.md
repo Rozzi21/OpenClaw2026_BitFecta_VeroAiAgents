@@ -287,6 +287,15 @@ memutuskan: `INSERT ... ON CONFLICT DO NOTHING` menyisipkan satu baris
 `ErrGuestOrderLimitReached` → seluruh transaksinya (termasuk insert booking dan
 `order_count`) di-rollback.
 
+**Binding chat→guest (GO-P2-7, 4 Sep 2026).** `chat_sessions.guest_session_id`
+adalah input otorisasi (cabang guest MCP `create_booking` menurunkan pemilik
+order dari sana), jadi penulisannya juga single-winner:
+`Repository.BindChatSessionGuest` = satu conditional UPDATE yang menang hanya
+bila kolom `NULL`, sudah berisi guest yang sama, atau guest terikat sudah
+kedaluwarsa/hilang. Yang kalah dapat `ErrChatSessionGuestMismatch` (audit
+`guest_chat_bind_refused`) dan `GuestChat` mencetak chat session baru untuk
+identitas pemanggil, bukan memakai sesi milik orang lain.
+
 ## Idempotency
 
 Wajib `Idempotency-Key` header (16–200 char). Hash disimpan sebagai
@@ -295,6 +304,17 @@ SHA-256(`user:`|​`guest:` + ownerID + key) di `bookings.idempotency_key_hash`
 retry setelah allowance terpakai (lookup idempotency dijalankan sebelum dan
 sesudah cek limit). Key TIDAK memakai booking ID. MCP `create_booking`
 menurunkan key deterministik dari session+payload.
+
+**Race key identik (GO-P2-3, 4 Sep 2026).** Dua request paralel dengan owner +
+key yang sama bisa lolos lookup pra-insert bersamaan; unique index yang menolak
+yang kalah, dan di Postgres penolakan itu **membatalkan transaksi** sehingga
+baris pemenang hanya bisa dibaca setelah transaksi tersebut selesai. Karena itu
+`BookingService.create` mengulang `FindBookingByIdempotency` **di luar**
+transaksi dan mengembalikan booking pemenang sebagai replay (dulu: constraint
+error → HTTP 500). Lookup tetap di-scope owner + key hash pemanggil, jadi replay
+tidak bisa menyentuh order pemilik lain, dan allowance tidak pernah terpakai dua
+kali karena transaksi yang kalah sudah rollback. Penolakan/kegagalan lain
+(`ErrGuestOrderLimitReached`, kontak invalid, DB down) tetap diteruskan.
 
 ## Pengujian
 
@@ -388,6 +408,47 @@ pemetaan status (200 transfer, 200 replay `transferred=false`, 404
 `NO_GUEST_ORDER_TO_CLAIM`, 409 `GUEST_ORDER_CLAIMED_BY_ANOTHER_ACCOUNT`), plus
 `TestClaimOrderEndpoint_RequiresAuthenticatedAccount` — cookie guest valid tanpa
 akun → 401 dan tidak ada yang bergerak.
+
+TOCTOU/konkurensi (4 Sep 2026) dikunci tiga file tambahan:
+
+- `internal/services/guest_concurrency_test.go` — order guest dengan
+  `Idempotency-Key` sama secara paralel (satu booking, semua pemanggil menerima
+  booking yang sama, allowance + jangkar kontak terpakai sekali);
+  claim duplikat paralel oleh akun yang sama (tepat satu transfer, sisanya replay,
+  tanpa error); resolusi identitas paralel dengan cookie hidup yang sama (semua
+  resolve ke guest session yang sama, tidak ada identitas baru); binding
+  chat→guest tidak bisa dicuri identitas lain, pemenang tunggal saat paralel, dan
+  boleh diambil alih bila pemilik lama sudah kedaluwarsa.
+- `internal/services/booking_idempotency_race_test.go` — stub repository yang
+  mereproduksi transaksi ABORT karena unique index: loser membalas booking
+  pemenang, lookup replay-nya di-scope owner + key hash pemanggil, dan kegagalan
+  tanpa pemenang (limit guest, kontak invalid, DB down) tetap diteruskan. Jalur
+  ini tidak bisa diuji lewat harness SQLite (satu koneksi ⇒ transaksi
+  terserialisasi ⇒ lookup di dalam transaksi selalu menang).
+- `internal/services/identity_resolution_race_test.go` — P1-H1: `resolveUser`
+  yang kalah race TIDAK BOLEH merge by email (`ErrGoogleAccountExists`, tidak ada
+  akun yang dikembalikan, tidak ada link/mapping baru, akun korban tidak
+  disentuh), tetap sukses bila pemenangnya identitas `sub` yang sama, dan
+  meneruskan kegagalan non-race; `LinkAccount` yang kalah constraint membalas
+  `ErrGoogleIdentityTaken` (akun lain) atau no-op idempotent (akun sendiri).
+  Pemulihan handler-nya di `internal/handlers/guest_chat_bind_handler_test.go`.
+- `internal/services/guest_postgres_race_test.go` — **verifikasi mesin nyata
+  (opsional)**. Empat skenario yang sama dijalankan di PostgreSQL dengan pool 8
+  koneksi, jadi `FOR UPDATE` benar-benar berebut dan transaksi yang ditolak unique
+  index benar-benar abort. Di-skip kecuali `VERO_TEST_POSTGRES_DSN` di-set:
+
+  ```bash
+  cd backend
+  VERO_TEST_POSTGRES_DSN="host=127.0.0.1 port=5432 user=… password=… dbname=… \
+    search_path=toctou_verify_tmp sslmode=disable" \
+    go test -count=1 -run TestPostgres ./internal/services/
+  ```
+
+  Harness MENOLAK jalan bila `search_path` tidak menunjuk schema sekali-pakai yang
+  namanya memuat `test`/`verify` — test ini melakukan `TRUNCATE`, jadi jangan
+  pernah diarahkan ke schema aplikasi. Schema-nya dibuat otomatis
+  (`CREATE SCHEMA IF NOT EXISTS`, nama divalidasi sebagai identifier polos);
+  bersihkan setelah selesai dengan `DROP SCHEMA toctou_verify_tmp CASCADE`.
 
 ## Batasan yang tersisa
 

@@ -362,13 +362,29 @@ func (s *GoogleOAuthService) resolveUser(ctx context.Context, identity auth.Goog
 	// Create user + canonical ExternalIdentity (sub→user) atomically. The
 	// identity mapping — not email — is the source of truth for future logins.
 	if err := s.repo.CreateUserWithGoogleIdentity(ctx, &newUser, identity.Subject, identity.Email, identity.Picture); err != nil {
-		// Race: a parallel callback created the same email/sub first. Fall back
-		// to the now-existing row so the second login still succeeds.
+		// TOCTOU window (P1-H1): steps 1-2 above are reads, this is the write,
+		// and a parallel Google callback or POST /auth/register for the same
+		// email can commit in between. The fallback may therefore only
+		// re-resolve through the SAME key the primary lookup used — the Google
+		// sub, enforced by UNIQUE(provider, provider_user_id).
 		if existing, findErr := s.repo.FindUserByGoogleSub(ctx, identity.Subject); findErr == nil {
 			return existing, nil
 		}
-		if existing, findErr := s.repo.FindUserByEmail(ctx, identity.Email); findErr == nil {
-			return existing, nil
+		// Sub still unlinked ⇒ the create lost on users.email UNIQUE against an
+		// account that is NOT this Google identity. Resolving by email here
+		// (the old behaviour) handed the caller a session on that account,
+		// bypassing the anti-merge guard at step 2 — and the guest-order claim
+		// that runs right after the callback then moved the CALLER's guest order
+		// into it. Return the identical decision the pre-create guard makes, so
+		// the outcome never depends on who won the race.
+		if _, findErr := s.repo.FindUserByEmail(ctx, identity.Email); findErr == nil {
+			auth.LogSecurity(auth.EventGoogleLinkRequired, map[string]any{
+				"ip":         meta.IP,
+				"request_id": meta.RequestID,
+				"email":      identity.Email,
+				"reason":     "create_race_email_taken",
+			})
+			return models.User{}, ErrGoogleAccountExists
 		}
 		return models.User{}, err
 	}
@@ -424,6 +440,29 @@ func (s *GoogleOAuthService) LinkAccount(ctx context.Context, userID string, ide
 		return models.User{}, err
 	}
 	if linkErr := s.repo.LinkUserGoogleSub(ctx, user.ID.String(), identity.Subject, identity.Email, identity.Picture); linkErr != nil {
+		// Same TOCTOU shape as resolveUser: the "already linked?" check above is
+		// a read, this is the write, and a parallel link of the SAME sub can
+		// commit in between. UNIQUE(provider, provider_user_id) is what actually
+		// decides the winner, so re-resolve through that same key and answer with
+		// the decision the pre-check would have produced instead of a generic
+		// failure — the outcome must not depend on who won.
+		if existing, findErr := s.repo.FindUserByGoogleSub(ctx, identity.Subject); findErr == nil {
+			if existing.ID == user.ID {
+				// The parallel winner was this same account: idempotent success.
+				user.GoogleSub = &identity.Subject
+				return user, nil
+			}
+			auth.LogSecurity(auth.EventGoogleLoginFailed, map[string]any{
+				"ip":         meta.IP,
+				"request_id": meta.RequestID,
+				"user_id":    user.ID.String(),
+				"provider":   "google",
+				"flow":       "link",
+				"success":    false,
+				"reason":     "identity_taken",
+			})
+			return models.User{}, ErrGoogleIdentityTaken
+		}
 		return models.User{}, linkErr
 	}
 	auth.LogSecurity(auth.EventGoogleAccountLinked, map[string]any{

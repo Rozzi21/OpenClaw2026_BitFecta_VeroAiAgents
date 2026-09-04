@@ -26,8 +26,42 @@ func (r *Repository) FindGuestSession(ctx context.Context, id uuid.UUID) (models
 	return session, err
 }
 
-func (r *Repository) UpdateChatSessionGuest(ctx context.Context, chatID, guestID uuid.UUID) error {
-	return r.DB.WithContext(ctx).Model(&models.ChatSession{}).Where("id = ?", chatID).Update("guest_session_id", guestID).Error
+// BindChatSessionGuest binds an anonymous chat session to a guest identity with
+// a single conditional UPDATE (GO-P2-7). It replaced a blind
+// `UPDATE chat_sessions SET guest_session_id = ?` because that write is an
+// authorization input, not a hint: MCP `create_booking` derives the OWNER of a
+// guest order from chat_sessions.guest_session_id
+// (`mcp_service.go` guest branch), so whoever last wrote this column decided
+// whose entitlement was spent and whose order it became.
+//
+// The row is (re)bound only when it is not already owned by a different LIVE
+// guest identity:
+//   - guest_session_id IS NULL — first bind;
+//   - guest_session_id = the same guest — idempotent re-bind on every request;
+//   - the bound guest session no longer exists or has expired — a dead identity
+//     cannot own anything, and taking the row over grants no access to its old
+//     order (order reads/claims resolve the cookie hash against LIVE sessions
+//     only).
+//
+// Predicate and write are one statement, so two concurrent binds cannot both
+// win: Postgres re-evaluates the predicate on the updated row version after the
+// row lock is released, and the loser reports rowsAffected == 0. Same
+// single-winner shape as ConsumeGuestOrder / ConsumeOAuthState.
+func (r *Repository) BindChatSessionGuest(ctx context.Context, chatID, guestID uuid.UUID) (bool, error) {
+	result := r.DB.WithContext(ctx).Model(&models.ChatSession{}).
+		Where(`id = ? AND (
+			guest_session_id IS NULL
+			OR guest_session_id = ?
+			OR NOT EXISTS (
+				SELECT 1 FROM guest_sessions gs
+				WHERE gs.id = chat_sessions.guest_session_id AND gs.expires_at > ?
+			)
+		)`, chatID, guestID, time.Now()).
+		Update("guest_session_id", guestID)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 // WithBookingTransaction exposes a repository-only transaction boundary while

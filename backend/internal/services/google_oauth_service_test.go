@@ -31,6 +31,12 @@ type mockOAuthRepo struct {
 	linkedUserID string
 	createdUser  *models.User
 	createErr    error
+	// linkErr simulates UNIQUE(provider, provider_user_id) rejecting a link
+	// because a parallel request linked the same sub first. linkRaceWinner is
+	// the account that won: it becomes visible under that sub exactly when the
+	// write fails, which is the state the loser must re-read.
+	linkErr        error
+	linkRaceWinner *models.User
 
 	sessions []models.AuthSession
 }
@@ -79,6 +85,13 @@ func (m *mockOAuthRepo) FindUserByGoogleSub(_ context.Context, sub string) (mode
 }
 
 func (m *mockOAuthRepo) LinkUserGoogleSub(_ context.Context, userID string, sub string, _ string, _ string) error {
+	if m.linkErr != nil {
+		if m.linkRaceWinner != nil {
+			m.usersBySub[sub] = m.linkRaceWinner
+			m.linkRaceWinner.GoogleSub = &sub
+		}
+		return m.linkErr
+	}
 	m.linkedSub = sub
 	m.linkedUserID = userID
 	if id, err := uuid.Parse(userID); err == nil {
