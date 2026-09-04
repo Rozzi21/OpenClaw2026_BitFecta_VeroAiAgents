@@ -89,6 +89,16 @@ func Register(router *gin.Engine, h *handlers.Handler, s *services.Services) {
 			protected.DELETE("/trips/:id", middlewares.Role(models.RoleOperator, models.RoleAdmin), h.DeleteTrip)
 
 			protected.POST("/bookings", h.CreateBooking)
+			// Explicit, idempotent retry for the guest-order claim (GO-P1-3).
+			// The claim hooks in Register/Login/GoogleCallback are best-effort
+			// and can be skipped silently (guest cookie not sent on the
+			// cross-site Google callback, transient DB failure), which strands
+			// the order on a guest identity nobody can log into. This endpoint
+			// re-runs the SAME transition with the SAME proofs: Bearer token
+			// (this middleware group) for the account + vero_guest_session
+			// cookie for the guest order. No order id is accepted from the
+			// client, so it cannot be pointed at somebody else's order.
+			protected.POST("/orders/claim", h.ClaimOrderToAccount)
 			protected.GET("/bookings", middlewares.Role(models.RoleOperator, models.RoleAdmin), h.ListBookings)
 			protected.GET("/bookings/:id", h.GetBooking)
 			protected.PUT("/bookings/:id", middlewares.Role(models.RoleOperator, models.RoleAdmin), h.UpdateBooking)

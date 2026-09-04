@@ -21,6 +21,27 @@ export default function GuestOrderPage({ params }: { params: { id: string } }) {
         const result = await apiFetch<BookingOrder>(path);
         if (!cancelled) setOrder(result);
       } catch {
+        // Authenticated but the account cannot see the order: the claim hook at
+        // login/Google callback is best-effort and may have been skipped (the
+        // guest cookie is not sent on the cross-site Google callback when
+        // SameSite is too strict) — the order is then stranded on the guest
+        // identity. Re-run the claim once; it is idempotent and takes no order
+        // id, so it only ever moves THIS browser's own guest order (401/404/409
+        // otherwise) and never the order being viewed.
+        if (authenticated) {
+          try {
+            await apiFetch<{ order_id: string; transferred: boolean }>(
+              "/api/v1/orders/claim",
+              { method: "POST" }
+            );
+            const claimed = await apiFetch<BookingOrder>(path);
+            if (!cancelled) setOrder(claimed);
+            return;
+          } catch {
+            // Nothing to claim, or the order belongs to someone else: fall
+            // through to the generic message below.
+          }
+        }
         if (!cancelled) setError("Order tidak ditemukan atau bukan milik sesi guest ini.");
       }
     })();

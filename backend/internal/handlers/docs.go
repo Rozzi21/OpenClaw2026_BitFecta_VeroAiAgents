@@ -71,6 +71,14 @@ func (h *Handler) OpenAPI(c *gin.Context) {
 			// Requires an Idempotency-Key header (16..200 chars) for safe retries.
 			"/api/v1/orders":      gin.H{"post": op("Orders", "Create pending order for manual backoffice processing (guest: one order, requires Idempotency-Key header)", false)},
 			"/api/v1/orders/{id}": gin.H{"get": op("Orders", "Get a guest order by id (guest cookie ownership required)", false)},
+			// Explicit claim retry (GO-P1-3). Needs BOTH the Bearer access
+			// token (which account) and the vero_guest_session cookie (which
+			// guest order). Takes no request body: an order id or a matching
+			// email would not be accepted as proof. 200 with
+			// transferred=false is an idempotent replay, 409 means the order
+			// already belongs to another account, 404 means there is nothing
+			// to claim for this browser.
+			"/api/v1/orders/claim": gin.H{"post": op("Orders", "Claim the pending guest order (vero_guest_session cookie) for the authenticated account; idempotent, accepts no order id", true)},
 
 			// Authenticated chat history
 			"/api/v1/chat/sessions":      gin.H{"get": op("Chat", "List chat sessions for current user", true)},

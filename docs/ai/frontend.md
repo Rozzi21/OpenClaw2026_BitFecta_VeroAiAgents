@@ -46,6 +46,13 @@ jatuh ke jalur guest; setelah claim, `order/[id]` WAJIB memakai endpoint authent
 logical checkout (`crypto.randomUUID()`, di-ref hingga sukses). Setelah login,
 order di-claim backend dan tracking beralih ke `/api/v1/bookings/:id`.
 
+**Self-heal claim (4 Sep 2026).** Bila sesi aktif tapi `GET /bookings/:id` gagal,
+`order/[id]` memanggil `POST /api/v1/orders/claim` SEKALI lalu mencoba ulang
+fetch-nya. Ini menutup kasus claim otomatis yang ter-skip (cookie guest tidak
+terkirim pada callback Google lintas-situs bila `SameSite` ketat). Endpoint itu
+idempoten dan tidak menerima order id, jadi memanggilnya dari halaman order
+orang lain tidak memindahkan apa pun (404/409).
+
 ### Google OAuth UI (19 Agu 2026)
 
 Dua komponen auth baru di `frontend/src/components/auth/`:

@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/auth"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/dto"
 	"github.com/rozzi/vero-ai-travel-agents/backend/internal/services"
@@ -63,6 +64,56 @@ func (h *Handler) GuestCreateOrder(c *gin.Context) {
 		return
 	}
 	utils.Success(c, http.StatusCreated, "Order created for manual admin processing", booking)
+}
+
+// ClaimOrderToAccount is the explicit retry path for the guest-order claim
+// (GO-P1-3). The claim hooks inside Register/Login/GoogleCallback are
+// best-effort — they never fail the login — so a claim can be skipped without
+// anyone noticing: the classic case is the guest cookie not being sent on the
+// cross-site Google callback (SameSite), which leaves the order stranded on a
+// guest identity that can never log in.
+//
+// The proof requirements are exactly the same as the automatic hooks, and no
+// weaker:
+//   - Bearer access token (route sits behind middlewares.Auth) proves WHICH
+//     account claims; a guest with no session gets 401 and claims nothing.
+//   - HttpOnly vero_guest_session cookie proves WHICH guest order is at stake.
+//     Its SHA-256 digest resolves one guest session row and the booking is read
+//     from that row's first_order_id.
+//   - The client passes NO order id and NO email: neither is an input here, so
+//     neither can select or move an order.
+//
+// Idempotent: replaying it while already the owner returns 200 with
+// transferred=false and writes nothing. An order owned by a DIFFERENT account is
+// refused with 409, never transferred.
+func (h *Handler) ClaimOrderToAccount(c *gin.Context) {
+	userID := currentUserID(c)
+	if userID == uuid.Nil {
+		// Defense in depth: the route is auth-guarded, but the handler must
+		// fail closed on its own so mounting it without Auth cannot turn
+		// uuid.Nil into a booking owner.
+		utils.Unauthorized(c, "Authentication required")
+		return
+	}
+	result, err := h.Services.Guests.ClaimOrder(c.Request.Context(), auth.GetGuestIdentityCookie(c), userID)
+	switch {
+	case err == nil:
+		utils.Success(c, http.StatusOK, "Order claimed", gin.H{
+			"order_id": result.BookingID,
+			// false = idempotent replay: this account already owned the order.
+			"transferred": result.Transferred,
+		})
+	case errors.Is(err, services.ErrGuestOrderNothingToClaim):
+		// No cookie, unknown/expired guest session, or that session never
+		// ordered. Same answer for all three: nothing to reveal.
+		utils.Error(c, http.StatusNotFound, "No guest order to claim.", gin.H{"code": "NO_GUEST_ORDER_TO_CLAIM"})
+	case errors.Is(err, services.ErrGuestOrderClaimConflict):
+		utils.Error(c, http.StatusConflict, "This order already belongs to another account.", gin.H{"code": "GUEST_ORDER_CLAIMED_BY_ANOTHER_ACCOUNT"})
+	case errors.Is(err, services.ErrGuestOrderClaimUnauthenticated):
+		utils.Unauthorized(c, "Authentication required")
+	default:
+		utils.ServerError(c, err)
+	}
 }
 
 func (h *Handler) GuestGetOrder(c *gin.Context) {

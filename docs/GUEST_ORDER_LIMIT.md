@@ -196,8 +196,37 @@ pemilik AKTUAL dibaca dari baris booking dan dilaporkan, tidak ditimpa.
 Handler (`handlers/helpers.go: claimGuestOrder`, dipakai Register, Login,
 GoogleCallback) tetap TIDAK memfatalkan penerbitan sesi — cookie guest yang
 tidak ada adalah kasus normal, dan penolakan tidak boleh membatalkan login.
-Batas yang masih ada: belum ada jalur retry claim (tidak ada
-`POST /api/v1/orders/claim` maupun re-claim di `/auth/me`/`/auth/refresh`).
+
+### Jalur retry eksplisit: `POST /api/v1/orders/claim` (4 Sep 2026)
+
+Karena hook otomatis di atas best-effort, claim bisa ter-skip tanpa terasa
+(cookie guest tidak terkirim pada callback Google lintas-situs bila `SameSite`
+terlalu ketat — GO-P2-6, atau kegagalan DB sesaat) dan order tertinggal pada
+identitas guest yang tidak bisa login. Endpoint
+`POST /api/v1/orders/claim` (`handlers.ClaimOrderToAccount`, grup `protected`
+⇒ `middlewares.Auth`) menjalankan ULANG transisi yang sama dengan bukti yang
+sama — tidak ada pelemahan:
+
+- Bearer access token menentukan AKUN mana yang meng-claim (tanpa akun → 401;
+  handler juga fail-closed sendiri saat `user_id` kosong, jadi salah mount
+  middleware tidak bisa menulis `uuid.Nil` ke `bookings.user_id`).
+- Cookie `vero_guest_session` menentukan ORDER mana yang di-claim.
+- Request tanpa body: order id maupun email tidak pernah diterima sebagai
+  parameter, jadi tidak bisa diarahkan ke order orang lain.
+
+| Outcome service | HTTP | Body |
+|---|---|---|
+| `Transferred=true` | 200 | `data.order_id`, `data.transferred=true` |
+| `Transferred=false` (replay idempoten) | 200 | `data.transferred=false` |
+| `ErrGuestOrderNothingToClaim` | 404 | `error.code=NO_GUEST_ORDER_TO_CLAIM` |
+| `ErrGuestOrderClaimConflict` | 409 | `error.code=GUEST_ORDER_CLAIMED_BY_ANOTHER_ACCOUNT` |
+| `ErrGuestOrderClaimUnauthenticated` / tanpa akun | 401 | envelope error generik |
+| kegagalan repository | 500 | pesan generik (SEC-15), error asli di log |
+
+Catatan: endpoint TIDAK menghapus cookie guest setelah sukses (identik dengan
+hook otomatis). Membersihkannya akan mencetak identitas guest baru dengan
+allowance segar; jangkar kontak (GO-P0-1) tetap menahan, tapi tidak perlu
+mengendurkan satu lapis pun untuk fitur retry.
 
 ## Error codes
 
@@ -206,6 +235,8 @@ Batas yang masih ada: belum ada jalur retry claim (tidak ada
 | `GUEST_ORDER_LIMIT_REACHED` | 403 | Guest sudah pakai satu order (jangkar guest session ATAU kontak); perlu login |
 | `IDEMPOTENCY_KEY_REQUIRED` | 400 | Header idempotency hilang/tak valid |
 | `BOOKING_VALIDATION_FAILED` | 400 | Kontak/tanggal invalid, termasuk kontak yang tidak bisa dijadikan jangkar (tidak konsumsi allowance) |
+| `NO_GUEST_ORDER_TO_CLAIM` | 404 | `POST /orders/claim`: tanpa cookie guest, cookie tak dikenal/kedaluwarsa, atau session itu belum pernah order |
+| `GUEST_ORDER_CLAIMED_BY_ANOTHER_ACCOUNT` | 409 | `POST /orders/claim`: order sudah dimiliki akun lain — ditolak, tidak pernah dipindah |
 
 ## Frontend behavior
 
@@ -349,6 +380,14 @@ yang sama):
 8. `TestGuestOrderClaimIgnoresMatchingEmail` — akun dengan email sama seperti
    kontak order tidak mendapat order maupun akses; cookie tetap satu-satunya
    bukti.
+
+Lapisan HTTP-nya dikunci `backend/internal/handlers/guest_order_claim_handler_test.go`
+(9 test, harness SQLite yang sama, router memakai stand-in `middlewares.Auth`):
+delapan skenario di atas diulang lewat `POST /api/v1/orders/claim` dengan
+pemetaan status (200 transfer, 200 replay `transferred=false`, 404
+`NO_GUEST_ORDER_TO_CLAIM`, 409 `GUEST_ORDER_CLAIMED_BY_ANOTHER_ACCOUNT`), plus
+`TestClaimOrderEndpoint_RequiresAuthenticatedAccount` — cookie guest valid tanpa
+akun → 401 dan tidak ada yang bergerak.
 
 ## Batasan yang tersisa
 

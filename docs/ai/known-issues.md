@@ -16,19 +16,19 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit Google OAuth (read-only): 31 Agu 2026 — 0 P0, 2 P1, 5 P2, 9 P3. Laporan: `docs/GOOGLE_OAUTH_SECURITY_AUDIT.md`. **Belum diperbaiki.**
 
-> Audit guest order system (read-only): 3 Sep 2026 — **1 P0**, 3 P1, 10 P2, 7 P3. Dicatat di bagian A.18. Laporan + urutan implementasi: `docs/GUEST_ORDER_AUDIT.md`. **GO-P0-1 (enforcement satu order per guest) SUDAH DIPERBAIKI 4 Sep 2026** — jangkar kontak di DB. **GO-P3-3 SUDAH DIPERBAIKI dan GO-P1-3 SEBAGIAN (4 Sep 2026)** — claim guest order kini punya marker `claimed_user_id`/`claimed_at`, outcome bersentinel (idempoten vs konflik), dan audit event terpisah; yang BELUM: jalur retry claim (tidak ada endpoint/hook re-claim). Sisa temuan P1/P2/P3 lain masih terbuka.
+> Audit guest order system (read-only): 3 Sep 2026 — **1 P0**, 3 P1, 10 P2, 7 P3. Dicatat di bagian A.18. Laporan + urutan implementasi: `docs/GUEST_ORDER_AUDIT.md`. **GO-P0-1 (enforcement satu order per guest) SUDAH DIPERBAIKI 4 Sep 2026** — jangkar kontak di DB. **GO-P3-3 dan GO-P1-3 SUDAH DIPERBAIKI (4 Sep 2026)** — claim guest order punya marker `claimed_user_id`/`claimed_at`, outcome bersentinel (idempoten vs konflik), audit event terpisah, DAN jalur retry eksplisit `POST /api/v1/orders/claim`. Sisa temuan P1/P2/P3 lain masih terbuka.
 
 ---
 
-## A.18 Audit Guest Order System (3 Sep 2026) — GO-P0-1 + GO-P3-3 FIXED, GO-P1-3 SEBAGIAN (4 Sep 2026), SISANYA BELUM
+## A.18 Audit Guest Order System (3 Sep 2026) — GO-P0-1 + GO-P1-3 + GO-P3-3 FIXED (4 Sep 2026), SISANYA BELUM
 
 Audit menyeluruh sistem guest order (guest session, ChatSession, Booking,
 BookingService, AuthService, `create_booking`, MCP booking tools, Google OAuth
 callback, guest order claim, order ownership, `resolveUser`, skema + migrasi).
 Laporan lengkap dengan skenario reproduksi, dampak, rekomendasi, dan **urutan
 implementasi**: `docs/GUEST_ORDER_AUDIT.md`. Commit yang diaudit: `5b46a32`.
-**GO-P0-1** dan **GO-P3-3** sudah dikerjakan, **GO-P1-3** sebagian (4 Sep 2026,
-lihat bullet terkait); semua item lain di bawah masih terbuka.
+**GO-P0-1**, **GO-P1-3**, dan **GO-P3-3** sudah dikerjakan (4 Sep 2026, lihat
+bullet terkait); semua item lain di bawah masih terbuka.
 
 - **✅ GO-P0-1 (FIXED 4 Sep 2026) — enforcement satu order per guest kini
   authoritative di DB.** Sebelumnya penegakan sudah atomik (`FOR UPDATE` +
@@ -77,8 +77,8 @@ lihat bullet terkait); semua item lain di bawah masih terbuka.
   terbuka). Dampak "allowance kembali segar" sudah tertutup jangkar kontak
   (GO-P0-1 fix, dikunci `TestGuestEntitlementSurvivesIdentityRotation`); yang
   belum: order lama tidak lagi bisa dilihat guest setelah rotasi.
-- **⚠️ GO-P1-3 SEBAGIAN DIPERBAIKI (4 Sep 2026) — outcome claim kini eksplisit,
-  jalur retry belum ada.** Sebelumnya `ClaimOrder` mengembalikan `nil` untuk
+- **✅ GO-P1-3 FIXED (4 Sep 2026) — outcome claim eksplisit + jalur retry.**
+  Sebelumnya `ClaimOrder` mengembalikan `nil` untuk
   "tidak ada yang di-claim" DAN error mentah untuk sisanya, lalu ketiga call
   site (Register/Login/Google callback) menelannya jadi satu `log.Printf`.
   Sekarang: `ClaimOrder` mengembalikan `(GuestOrderClaimResult, error)` dengan
@@ -92,14 +92,23 @@ lihat bullet terkait); semua item lain di bawah masih terbuka.
   ditulis dalam transaksi yang sama dengan transfer, jadi claim ulang dijawab
   dari marker: akun yang sama = sukses no-op, akun lain = konflik. Handler
   memakai satu helper `claimGuestOrder` dan tetap non-fatal terhadap penerbitan
-  sesi. **Masih terbuka**: tidak ada jalur retry (tidak ada
-  `POST /api/v1/orders/claim` maupun re-claim di `/auth/me` / `/auth/refresh`),
-  jadi claim yang gagal karena kegagalan DB atau cookie yang tidak terkirim
-  (GO-P2-6 `SameSite`) tetap harus dibetulkan manual — bedanya sekarang
-  kegagalannya terlihat di log/audit, bukan senyap. Regresi dikunci
+  sesi. **Jalur retry (rekomendasi ke-3)**: `POST /api/v1/orders/claim`
+  (`handlers.ClaimOrderToAccount`, grup `protected`) memanggil `ClaimOrder` yang
+  sama — Bearer token = akun, cookie `vero_guest_session` = order, tanpa body
+  sehingga order id/email tetap bukan input; 200 (transfer/replay), 404
+  `NO_GUEST_ORDER_TO_CLAIM`, 409 `GUEST_ORDER_CLAIMED_BY_ANOTHER_ACCOUNT`, 401
+  tanpa akun. `frontend/src/app/order/[id]/page.tsx` memanggilnya sekali saat
+  `GET /bookings/:id` gagal untuk sesi aktif, jadi claim yang ter-skip karena
+  cookie tidak terkirim (GO-P2-6 `SameSite`) atau kegagalan DB sesaat bisa
+  sembuh sendiri tanpa intervensi manual. Regresi dikunci
   `backend/internal/services/guest_order_claim_test.go` (8 test: valid claim,
   identitas guest invalid, guest salah, user terautentikasi salah, duplikat,
-  konkuren, order sudah di-claim tanpa marker, serangan email-only).
+  konkuren, order sudah di-claim tanpa marker, serangan email-only) +
+  `backend/internal/handlers/guest_order_claim_handler_test.go` (9 test HTTP:
+  delapan skenario yang sama lewat endpoint + cookie valid tanpa akun → 401).
+  **Catatan sisa**: retry masih harus dipicu klien (tidak ada re-claim otomatis
+  di `/auth/me` / `/auth/refresh`), dan GO-P2-6 (`GUEST_COOKIE_SAME_SITE` salah
+  tulis → `Strict`) belum diperbaiki di `Config.Validate()`.
 - **P2 penting**: tidak ada cleanup `guest_sessions` maupun user guest (satu baris
   `users` + bcrypt cost 10 per identitas); `migrations/20260818_guest_order_limit.sql`
   **tidak** dipanggil dari `AutoMigrate` (partial unique index + `CHECK

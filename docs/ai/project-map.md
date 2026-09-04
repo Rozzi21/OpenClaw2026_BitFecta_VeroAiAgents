@@ -106,7 +106,7 @@ VeroAiTravelAgents/
 
 ## Fakta Penting (Status Saat Ini)
 
-- **Automated test backend aktif** di `internal/ai`, `internal/mcp`, `internal/middlewares`, `internal/services` (incl. `guest_order_limit_test.go` — guest policy, race, idempotency, ownership, claim), `internal/utils`. Frontend belum punya test.
+- **Automated test backend aktif** di `internal/ai`, `internal/auth`, `internal/mcp`, `internal/middlewares`, `internal/handlers` (Google OAuth guard + `guest_order_claim_handler_test.go` untuk `POST /orders/claim`), `internal/services` (incl. `guest_order_limit_test.go` + `guest_order_claim_test.go` — guest policy, race, idempotency, ownership, claim), `internal/utils`. Frontend belum punya test.
 - **Tool MCP legacy masih simulasi/mock** (`mcp_service.go` method `mock` — hanya `send_whatsapp` + fallback unknown; tool rekomendasi lama di-unify ke `search_trips`).
 - **Frontend customer**: hanya 2 endpoint aktif (chat + detail paket), tanpa auth.
 - **Backoffice**: auth + CRUD paket + upload media aktif; dashboard/orders/settings masih placeholder.

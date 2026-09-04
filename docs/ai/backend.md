@@ -173,6 +173,22 @@ log generik. Regresi dikunci `internal/services/guest_order_claim_test.go`
 (valid claim, identitas guest invalid, guest salah, user salah, duplikat,
 konkuren, order sudah di-claim tanpa marker, serangan email-only).
 
+**Jalur retry claim: `POST /api/v1/orders/claim` (4 Sep 2026).** Hook otomatis di
+Register/Login/GoogleCallback best-effort, jadi claim bisa ter-skip senyap
+(cookie guest tidak terkirim pada callback Google lintas-situs bila `SameSite`
+ketat — GO-P2-6) dan order tertinggal di identitas guest yang tak bisa login.
+`handlers.ClaimOrderToAccount` (grup `protected` ⇒ `middlewares.Auth`) memanggil
+`Guests.ClaimOrder` yang SAMA dengan bukti yang sama: Bearer token = akun,
+cookie `vero_guest_session` = order, tanpa body (order id/email bukan input).
+Pemetaan outcome → HTTP: transfer/replay `200` (`data.transferred`),
+`ErrGuestOrderNothingToClaim` → `404 NO_GUEST_ORDER_TO_CLAIM`,
+`ErrGuestOrderClaimConflict` → `409 GUEST_ORDER_CLAIMED_BY_ANOTHER_ACCOUNT`,
+tanpa akun → `401`, kegagalan repository → `500` generik (SEC-15). Handler
+fail-closed sendiri saat `user_id` kosong. Dikunci
+`internal/handlers/guest_order_claim_handler_test.go` (9 test HTTP-level).
+Konsumen: `frontend/src/app/order/[id]/page.tsx` memanggilnya sekali bila
+`GET /bookings/:id` gagal untuk sesi aktif, lalu mencoba ulang.
+
 
 **Jangkar kontak (GO-P0-1, 4 Sep 2026).** `Resolve()` tetap boleh mencetak
 identitas baru saat cookie hilang (memutus itu akan mematahkan pengunjung baru
