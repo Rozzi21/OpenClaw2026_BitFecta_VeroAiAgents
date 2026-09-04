@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --experimental-transform-types --no-warnings --test src/lib/authToken.test.ts src/lib/api.test.ts"
+    "test": "node --experimental-transform-types --no-warnings --test src/lib/authToken.test.ts src/lib/api.test.ts src/lib/chatProxy.test.ts src/lib/orderGate.test.ts src/lib/chatStream.test.ts"
   },
   "dependencies": {
     "clsx": "^2.1.1",

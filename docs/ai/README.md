@@ -39,8 +39,8 @@ Baca berurutan. Setiap dokumen dibangun di atas konteks sebelumnya.
 1. **Selalu baca file aktual sebelum mengklaim perilakunya.** Knowledge base ini akurat per tanggal pembuatan, tapi kode bisa berubah. Verifikasi pada file sumber yang dirujuk.
 2. **`create_payment` MCP sengaja dinonaktifkan.** Jangan mengaktifkannya tanpa instruksi eksplisit. Lihat [known-issues.md](known-issues.md) dan [backend.md](backend.md).
 3. **Tool MCP masih mock.** Data destinasi/hotel/budget adalah dummy. Lihat [backend.md](backend.md).
-4. **Belum ada automated test.** Verifikasi perubahan dengan `go build ./...` (backend) dan `tsc --noEmit` (frontend). Lihat [coding-rules.md](coding-rules.md).
-5. **Customer frontend tidak punya auth.** Hanya guest chat + paket publik. Auth hanya di backoffice. Lihat [frontend.md](frontend.md).
+4. **Automated test sudah ada.** Backend: `go test ./...` (`ai`, `auth`, `handlers`, `mcp`, `middlewares`, `routes`, `services`, `utils`) — tanpa DB Postgres, tanpa jaringan, tanpa `OPENAI_API_KEY`. Frontend customer: `npm test` (runner bawaan Node). Tetap verifikasi juga dengan `go build ./...` dan `tsc --noEmit`. Lihat [coding-rules.md](coding-rules.md) §5.
+5. **Customer frontend punya auth opsional.** Guest chat + paket publik tetap tanpa login, tapi ada login/register/Google + guest order limit; backoffice punya auth sendiri. Lihat [frontend.md](frontend.md).
 6. **Patuhi envelope respons API seragam** `{ success, message, data, error }` dan layered architecture (Handler → Service → Repository). Lihat [coding-rules.md](coding-rules.md).
 
 ## Memelihara Knowledge Base Ini

@@ -238,6 +238,26 @@ mengendurkan satu lapis pun untuk fitur retry.
 | `NO_GUEST_ORDER_TO_CLAIM` | 404 | `POST /orders/claim`: tanpa cookie guest, cookie tak dikenal/kedaluwarsa, atau session itu belum pernah order |
 | `GUEST_ORDER_CLAIMED_BY_ANOTHER_ACCOUNT` | 409 | `POST /orders/claim`: order sudah dimiliki akun lain — ditolak, tidak pernah dipindah |
 
+Semua transport memakai satu konstanta: `services.CodeGuestOrderLimitReached`
+(dideklarasikan di `booking_service.go`, tepat di sebelah
+`ErrGuestOrderLimitReached`) sehingga handler HTTP, tool MCP, dan gate chat tidak
+bisa saling drift. Message boleh diubah/diterjemahkan kapan saja — code TIDAK.
+
+## Integrasi MCP / AI / chat (4 Sep 2026)
+
+Backend tetap satu-satunya otoritas: aturan hidup di `BookingService.create`
+(transaksi + jangkar DB). Yang ditambahkan di sini hanya penerusan keputusan itu
+ke jalur chat.
+
+| Lapisan | Perilaku |
+|---|---|
+| MCP `create_booking` | Menerjemahkan `ErrGuestOrderLimitReached` → ToolResult `status=failed` + `{success:false, status:"requires_authentication", code:"GUEST_ORDER_LIMIT_REACHED", message}`. Sukses membawa `code:"ORDER_CREATED"` + `order_id`; guard duplikat sesi (AIW-8) membawa `code:"ORDER_ALREADY_EXISTS"` + `order_id` sesi itu. Teks error Go internal tidak pernah masuk payload. |
+| AI tool loop | `executeToolCall` memanggil `blockedRetryAfterGuestOrderLimit(prior, tool)`: setelah code itu muncul di turn ini, `create_booking`/`create_order` berikutnya DITOLAK sebelum MCP dipanggil (`retry_blocked: true`, code sama). Prompt hanya saran — model bisa retry dengan argumen berbeda dan dedup AIW-3 tidak menangkapnya. Tool lain tetap boleh jalan. |
+| Chat response | `ChatResult.OrderGate` = `{code, auth_required, order_id?}` (`order_gate`, `omitempty`), diturunkan dari tool result saja. `auth_required` hanya untuk `GUEST_ORDER_LIMIT_REACHED`; `order_id` hanya untuk order milik sesi ini (limit sengaja tanpa `order_id` — order pemblokir bisa milik identitas guest lain lewat jangkar kontak). |
+| Frontend chat | `ChatInterface` menyimpan `order_gate` per pesan dan me-render `OrderGateBlock` via `orderGateView()` (`lib/orderGate.ts`): limit → Google/Login/Create Account; ada order → Continue Tracking ke `/order/{id}`. Hanya `code` yang dibaca, prosa LLM tidak pernah di-parse. |
+| Proxy SSE | `lib/chatProxy.ts` meneruskan `Authorization` (fix GO-P1-1) sehingga user yang sudah login benar-benar memakai jalur authenticated dari chat dan boleh membuat order tambahan. |
+| Kembali dari Google | `ChatInterface` me-mount `OAuthReceiver`, jadi token di fragment `#access_token=...` untuk `return_to=/` dikonsumsi; tanpa ini user kembali ke chat sebagai guest dan tetap terblokir. |
+
 ## Frontend behavior
 
 - Cookie otomatis terkirim (`credentials: include`). Tidak ada entitlement di
@@ -253,8 +273,12 @@ mengendurkan satu lapis pun untuk fitur retry.
   continue tracking this order as a guest. To create another order, please sign
   in." + tombol Continue Tracking / Login / Register.
 - Order kedua (`GUEST_ORDER_LIMIT_REACHED`): auth gate "Your guest order has
-  already been used" + tombol Continue with Google (placeholder disabled),
+  already been used" + tombol Continue with Google (aktif sejak 19 Agu 2026),
   Login, Create Account. Order pertama tetap bisa diakses.
+- **Chat (4 Sep 2026):** gate yang sama muncul di dalam percakapan lewat
+  `order_gate` (lihat "Integrasi MCP / AI / chat"), bukan lewat pembacaan teks
+  jawaban asisten. Order milik sesi chat itu tetap punya tombol Continue
+  Tracking.
 - Halaman `/login` & `/register` baru; setelah auth sukses, access token
   disimpan dan order guest di-claim backend. Halaman `/order/[id]` untuk
   tracking (guest cookie atau bearer token).
@@ -336,6 +360,40 @@ MCP second-booking mengembalikan `code=GUEST_ORDER_LIMIT_REACHED` terstruktur
 melarang klaim sukses tanpa tool success dan melarang retry setelah code
 limit (20,21). Chat baru tidak mereset allowance karena identity terpisah dari
 chat session (5,6,7 by design).
+
+Integrasi MCP/AI/chat (4 Sep 2026) ditutup dua file test baru:
+
+`backend/internal/services/guest_order_chat_gate_test.go` (tanpa DB, tanpa LLM —
+MCP + booking domain di-mock lewat interface SEC-27, jadi `OPENAI_API_KEY` tidak
+dibutuhkan):
+
+1. `TestCreateBookingGuestLimit_StructuredToolResult` — tool result membawa
+   `code`/`status`/`success:false`, tanpa `order_id`, dan tanpa teks error Go
+   internal.
+2. `TestCreateBookingAuthenticated_NoGuestLimit` — panggilan yang sama oleh akun
+   memakai `BookingService.Create` dan menghasilkan `ORDER_CREATED` + `order_id`.
+3. `TestExecuteToolCall_NoRetryAfterGuestOrderLimit` — retry dengan argumen
+   BERBEDA tidak pernah mencapai MCP (dispatch=0), model menerima code yang sama
+   + `retry_blocked`, dan tool non-order tetap jalan.
+4. `TestBlockedRetryAfterGuestOrderLimit_Scope` — tabel kapan guard menyala:
+   order pertama tidak diblok, alias `create_order` diblok, kegagalan
+   `create_booking` lain tidak diblok, code dari tool lain tidak diblok.
+5. `TestChatOrderGateFromToolResults` — `order_gate` untuk limit (auth, tanpa
+   `order_id`), created (`order_id`), duplikat (`order_id`), precedence created >
+   limit, dan code tak dikenal → tanpa gate.
+
+`backend/internal/handlers/guest_order_limit_handler_test.go` (SQLite in-memory,
+memakai harness claim): order guest pertama `201` tanpa login, kedua `403` dengan
+`error.code=GUEST_ORDER_LIMIT_REACHED` + `error.status=authentication_required`
+dan **tidak ada baris booking tambahan**; penolakan berbasis jangkar kontak
+(cookie baru, kontak sama) memakai kontrak yang identik.
+
+Frontend (`cd frontend && npm test`, runner bawaan Node):
+`chatProxy.test.ts` (`Authorization` diteruskan — regresi GO-P1-1, header di luar
+allowlist dibuang), `orderGate.test.ts` (code → keputusan UI; `auth_required`
+palsu pada `ORDER_CREATED` tidak bisa memaksa sign-in wall; code tak dikenal →
+tidak render), `chatStream.test.ts` (`order_gate` sampai utuh lewat SSE `done`,
+dan Bearer token terpasang pada request stream).
 
 Jangkar kontak (4 Sep 2026) ditutup dua file test baru:
 

@@ -16,7 +16,7 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit Google OAuth (read-only): 31 Agu 2026 — 0 P0, 2 P1, 5 P2, 9 P3. Laporan: `docs/GOOGLE_OAUTH_SECURITY_AUDIT.md`. **Belum diperbaiki.**
 
-> Audit guest order system (read-only): 3 Sep 2026 — **1 P0**, 3 P1, 10 P2, 7 P3. Dicatat di bagian A.18. Laporan + urutan implementasi: `docs/GUEST_ORDER_AUDIT.md`. **GO-P0-1 (enforcement satu order per guest) SUDAH DIPERBAIKI 4 Sep 2026** — jangkar kontak di DB. **GO-P3-3 dan GO-P1-3 SUDAH DIPERBAIKI (4 Sep 2026)** — claim guest order punya marker `claimed_user_id`/`claimed_at`, outcome bersentinel (idempoten vs konflik), audit event terpisah, DAN jalur retry eksplisit `POST /api/v1/orders/claim`. Sisa temuan P1/P2/P3 lain masih terbuka.
+> Audit guest order system (read-only): 3 Sep 2026 — **1 P0**, 3 P1, 10 P2, 7 P3. Dicatat di bagian A.18. Laporan + urutan implementasi: `docs/GUEST_ORDER_AUDIT.md`. **GO-P0-1 (enforcement satu order per guest) SUDAH DIPERBAIKI 4 Sep 2026** — jangkar kontak di DB. **GO-P3-3 dan GO-P1-3 SUDAH DIPERBAIKI (4 Sep 2026)** — claim guest order punya marker `claimed_user_id`/`claimed_at`, outcome bersentinel (idempoten vs konflik), audit event terpisah, DAN jalur retry eksplisit `POST /api/v1/orders/claim`. **GO-P1-1 SUDAH DIPERBAIKI (4 Sep 2026)** — proxy SSE chat meneruskan `Authorization`, plus integrasi aturan guest ke MCP/AI/frontend (`order_gate`, no-retry guard, auth gate di chat). Sisa temuan P1/P2/P3 lain masih terbuka.
 
 ---
 
@@ -66,12 +66,29 @@ bullet terkait); semua item lain di bawah masih terbuka.
   "Email or phone number" wajib. Detail:
   `docs/GUEST_ORDER_LIMIT.md` §"Jangkar kontak".
 
-- **`Authorization` dibuang proxy SSE** (`frontend/src/app/api/v1/chat/route.ts`
-  hanya meneruskan `Content-Type`, `Cookie`, `X-Request-ID`), padahal
-  `streamChat` sudah memasangnya. Akibatnya pelanggan yang SUDAH login tetap
-  masuk jalur `CreateGuest` dari chat → kena `GUEST_ORDER_LIMIT_REACHED`; upgrade
-  eligibility yang dicatat di A.14/27 Agu 2026 **mati di praktiknya** untuk jalur
-  chat (jalur trip page tetap benar) (**GO-P1-1**).
+- **✅ GO-P1-1 FIXED (4 Sep 2026) — `Authorization` tidak lagi dibuang proxy SSE.**
+  `frontend/src/app/api/v1/chat/route.ts` dulu hanya meneruskan `Content-Type`,
+  `Cookie`, `X-Request-ID`, padahal `streamChat` sudah memasang
+  `Authorization: Bearer`. Akibatnya pelanggan yang SUDAH login tetap masuk jalur
+  `CreateGuest` dari chat → kena `GUEST_ORDER_LIMIT_REACHED`; upgrade eligibility
+  yang dicatat di A.14/27 Agu 2026 **mati di praktiknya** untuk jalur chat (jalur
+  trip page tetap benar). Allowlist header sekarang eksplisit di
+  `frontend/src/lib/chatProxy.ts` (`forwardedChatHeaders`) dan memuat
+  `Authorization`; `Host`/`Origin`/`X-Forwarded-*`/`Content-Length` tetap dibuang
+  (rewrite `Host` merusak TLS/virtual hosting, `Content-Length` basi merusak body
+  yang diteruskan). Regresi dikunci `frontend/src/lib/chatProxy.test.ts`.
+  **Pendamping di turn yang sama:** (a) respons chat kini membawa `order_gate`
+  terstruktur (`ChatResult.OrderGate`) sehingga UI chat punya auth gate + tombol
+  Google/Login/Register + Continue Tracking tanpa mem-parse prosa LLM; (b)
+  `ChatInterface` me-mount `OAuthReceiver` — sebelumnya `return_to=/` dari Google
+  mengirim token di fragment URL yang tidak pernah dikonsumsi di halaman chat,
+  sehingga user kembali sebagai guest dan tetap terblokir; (c) retry
+  `create_booking` setelah `GUEST_ORDER_LIMIT_REACHED` diblok deterministik di
+  `executeToolCall` (`blockedRetryAfterGuestOrderLimit`) — dedup AIW-3 tidak
+  menangkap retry dengan argumen berbeda. Test: `chatProxy.test.ts`,
+  `orderGate.test.ts`, `chatStream.test.ts`,
+  `internal/services/guest_order_chat_gate_test.go`,
+  `internal/handlers/guest_order_limit_handler_test.go`.
 - **TTL cookie di-slide, `guest_sessions.expires_at` tidak** → identitas berotasi
   tiap 30 hari: order lama kehilangan jalur akses guest (**GO-P1-2**, masih
   terbuka). Dampak "allowance kembali segar" sudah tertutup jangkar kontak

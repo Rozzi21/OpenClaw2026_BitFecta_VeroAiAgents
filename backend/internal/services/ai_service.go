@@ -56,6 +56,33 @@ type ChatResult struct {
 	ShowRecommendations  bool          `json:"show_recommendations"`
 	RecommendationReason string        `json:"recommendation_reason"`
 	RecommendedPackages  []models.Trip `json:"recommended_packages"`
+	// OrderGate is the machine-readable outcome of the ordering step of this
+	// turn, or nil when the turn did not touch create_booking. It exists so the
+	// chat client can render the right next action WITHOUT parsing the
+	// assistant's prose (which is LLM-generated, localized, and unreliable).
+	// Derived from tool results only — see chatOrderGateFromToolResults.
+	OrderGate *ChatOrderGate `json:"order_gate,omitempty"`
+}
+
+// ChatOrderGate mirrors, for the chat transport, what `error.code` already does
+// for the REST transport: a stable code plus the single bit of intent the client
+// needs. The backend stays the authority — this only reports a decision the
+// booking domain already made.
+//
+//   - Code: CodeOrderCreated | CodeOrderAlreadyExists | CodeGuestOrderLimitReached.
+//   - AuthRequired: true only for CodeGuestOrderLimitReached, i.e. the guest
+//     allowance is spent and signing in (password or Google) is what unblocks a
+//     further order. It is NOT a hint the client may invent or override.
+//   - OrderID: set only when THIS chat session owns an order (just created, or
+//     found by the AIW-8 duplicate guard) so the client can keep offering order
+//     tracking. It is deliberately EMPTY for CodeGuestOrderLimitReached: that
+//     limit can be triggered by a contact anchor belonging to a different guest
+//     identity (GO-P0-1), and echoing that order's id would leak someone else's
+//     order.
+type ChatOrderGate struct {
+	Code         string `json:"code"`
+	AuthRequired bool   `json:"auth_required"`
+	OrderID      string `json:"order_id,omitempty"`
 }
 
 // chatSessionCleanupGraceExtra is the safety buffer added on top of AITimeout
@@ -328,6 +355,9 @@ func (s *AIService) finalizeChat(ctx context.Context, sessionID uuid.UUID, aiRes
 		ShowRecommendations:  showRecommendations,
 		RecommendationReason: recommendationReason,
 		RecommendedPackages:  recommendedPackages,
+		// Structured ordering outcome for the client (auth gate / order
+		// tracking). Nil when this turn did not run create_booking.
+		OrderGate: chatOrderGateFromToolResults(toolResults),
 	}, nil
 }
 
@@ -475,6 +505,92 @@ func hasSuccessfulCreateBooking(results []ToolResult) bool {
 		}
 	}
 	return false
+}
+
+// isCreateBookingTool reports whether a tool name is one of the order-creating
+// tools. create_order is an alias of create_booking (disabled in the OpenAI
+// catalog, but still routed), so every guard must treat both the same way.
+func isCreateBookingTool(name string) bool {
+	return name == mcp.ToolCreateBooking || name == mcp.ToolCreateOrder
+}
+
+// guestOrderLimitReached reports whether an order-creating tool call in THIS
+// request already came back with the guest-limit code. Matching is on the
+// structured code only — never on the message text.
+func guestOrderLimitReached(results []ToolResult) bool {
+	for _, result := range results {
+		if isCreateBookingTool(result.Tool) && result.Data["code"] == CodeGuestOrderLimitReached {
+			return true
+		}
+	}
+	return false
+}
+
+// blockedRetryAfterGuestOrderLimit is the deterministic "do not retry" rule for
+// create_booking after GUEST_ORDER_LIMIT_REACHED.
+//
+// The system prompt asks the model not to retry, but a prompt is advice: a model
+// may well call create_booking again with a tweaked payload (a different
+// contact, another trip_id), and the AIW-3 dedup map does not catch that because
+// the arguments differ. This guard makes the refusal mechanical — the second
+// call never reaches MCP, so it never reaches BookingService and never touches
+// the database. The model gets the SAME structured code back, so its next text
+// response stays consistent with the first refusal.
+//
+// It does not decide the guest rule (BookingService does) and it does not widen
+// it: authenticated turns cannot reach here, because an authenticated
+// create_booking never returns the guest-limit code.
+func blockedRetryAfterGuestOrderLimit(prior []ToolResult, toolName string) (ToolResult, bool) {
+	if !isCreateBookingTool(toolName) || !guestOrderLimitReached(prior) {
+		return ToolResult{}, false
+	}
+	return ToolResult{Tool: toolName, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{
+		"success":       false,
+		"status":        "requires_authentication",
+		"code":          CodeGuestOrderLimitReached,
+		"message":       "Please sign in to create another order.",
+		"retry_blocked": true,
+	}}, true
+}
+
+// chatOrderGateFromToolResults reduces the turn's tool results to the single
+// structured outcome the chat client needs (see ChatOrderGate). Only
+// order-creating tool results are inspected, and only their `code` field —
+// mirroring how the REST client branches on `error.code`.
+//
+// Precedence matters when a turn produced more than one order result: a created
+// order wins (it is a fact on disk), then the guest limit (the strongest
+// blocker), then the duplicate guard.
+func chatOrderGateFromToolResults(results []ToolResult) *ChatOrderGate {
+	var created, limited, duplicate *ChatOrderGate
+	for _, result := range results {
+		if !isCreateBookingTool(result.Tool) {
+			continue
+		}
+		code, _ := result.Data["code"].(string)
+		switch code {
+		case CodeOrderCreated:
+			if success, ok := result.Data["success"].(bool); ok && success {
+				orderID, _ := result.Data["order_id"].(string)
+				created = &ChatOrderGate{Code: CodeOrderCreated, OrderID: orderID}
+			}
+		case CodeGuestOrderLimitReached:
+			// No order id: the blocking order may belong to another guest
+			// identity that shares the contact anchor (GO-P0-1).
+			limited = &ChatOrderGate{Code: CodeGuestOrderLimitReached, AuthRequired: true}
+		case CodeOrderAlreadyExists:
+			orderID, _ := result.Data["order_id"].(string)
+			duplicate = &ChatOrderGate{Code: CodeOrderAlreadyExists, OrderID: orderID}
+		}
+	}
+	switch {
+	case created != nil:
+		return created
+	case limited != nil:
+		return limited
+	default:
+		return duplicate
+	}
 }
 
 func responseClaimsOrderCreated(response string) bool {
@@ -630,7 +746,7 @@ func (s *AIService) generateWithToolLoop(ctx context.Context, session models.Cha
 		messages = append(messages, assistantMsg)
 
 		for _, tc := range resp.ToolCalls {
-			toolResult, toolMsg := s.executeToolCall(ctx, sessionID, userID, tc, calledTools)
+			toolResult, toolMsg := s.executeToolCall(ctx, sessionID, userID, tc, calledTools, allToolResults)
 			allToolResults = append(allToolResults, toolResult)
 			messages = append(messages, toolMsg)
 		}
@@ -718,7 +834,7 @@ func (s *AIService) generateWithToolLoopStream(ctx context.Context, session mode
 		messages = append(messages, assistantMsg)
 
 		for _, tc := range resp.ToolCalls {
-			toolResult, toolMsg := s.executeToolCall(ctx, sessionID, userID, tc, calledTools)
+			toolResult, toolMsg := s.executeToolCall(ctx, sessionID, userID, tc, calledTools, allToolResults)
 			allToolResults = append(allToolResults, toolResult)
 			messages = append(messages, toolMsg)
 		}
@@ -735,8 +851,22 @@ func (s *AIService) generateWithToolLoopStream(ctx context.Context, session mode
 // and this function can be read/debugged in isolation. Behaviour is
 // unchanged: dedup and error mapping rules are identical to the old inline
 // block; calledTools is shared across rounds via the caller's map.
-func (s *AIService) executeToolCall(ctx context.Context, sessionID uuid.UUID, userID *uuid.UUID, tc ai.ToolCall, calledTools map[string]bool) (ToolResult, ai.Message) {
+//
+// `prior` is the tool results already produced in THIS request. It carries the
+// no-retry-after-guest-limit guard (blockedRetryAfterGuestOrderLimit) and lives
+// here — rather than in the two loops — so the streaming and non-streaming paths
+// can never enforce it differently.
+func (s *AIService) executeToolCall(ctx context.Context, sessionID uuid.UUID, userID *uuid.UUID, tc ai.ToolCall, calledTools map[string]bool, prior []ToolResult) (ToolResult, ai.Message) {
 	log.Printf("[ai] executing tool: %s (call_id=%s) args=%s", tc.Function.Name, tc.ID, tc.Function.Arguments)
+
+	// Guest allowance already refused a create_booking in this request: refuse
+	// the retry here, before MCP/BookingService/DB are touched. Different
+	// arguments are still the same refusal, which is why the AIW-3 dedup map
+	// below cannot cover this case.
+	if blocked, ok := blockedRetryAfterGuestOrderLimit(prior, tc.Function.Name); ok {
+		log.Printf("[ai] blocked create_booking retry after %s session=%s", CodeGuestOrderLimitReached, sessionID)
+		return blocked, toolResultMessage(tc, blocked)
+	}
 
 	var args map[string]interface{}
 	if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
@@ -812,7 +942,7 @@ func (s *AIService) buildMessages(ctx context.Context, session models.ChatSessio
 				"\n" +
 				"ATURAN KRITIS:\n" +
 				"- Guest boleh membuat tepat satu order tanpa login. Order guest pertama TIDAK memerlukan login; order berikutnya memerlukan login/register. Backend adalah otoritas final.\n" +
-				"- Jika create_booking mengembalikan code=GUEST_ORDER_LIMIT_REACHED, JANGAN retry tool. Beri tahu user bahwa guest order sudah digunakan dan minta login/register untuk order lain.\n" +
+				"- Jika create_booking mengembalikan code=GUEST_ORDER_LIMIT_REACHED, JANGAN retry tool — retry ditolak backend dengan code yang sama tanpa membuat order. Beri tahu user bahwa guest order sudah digunakan dan minta login/register (termasuk Google) untuk order lain. Aplikasi sudah menampilkan tombol login dari code tersebut, jadi cukup jelaskan singkat, jangan mengarang tautan atau order_id.\n" +
 				"- JANGAN pernah klaim pesanan berhasil dibuat sampai create_booking mengembalikan status=success. Jika create_booking gagal, minta maaf dan sarankan tindakan sesuai structured code. Jangan mengarang order_id atau detail booking.\n" +
 				"- Jika sebuah tool mengembalikan status=failed dengan alasan bisnis jelas (mis. \"a package is already selected\"), komunikasikan ke user konteksnya dan beri opsi: lanjutkan pemesanan paket yang sudah dipilih, lihat alternatif lain, atau batalkan pilihan. Contoh: \"Terlihat Anda sudah memilih paket [nama paket]. Mau lanjutkan pemesanan paket ini, lihat alternatif lain, atau batalkan pilihan?\"\n" +
 				"- Jika trip_id tidak ditemukan (error \"trip not found\" / \"invalid trip_id\"), jangan mengarang data paket; katakan paket tidak ditemukan dan tawarkan mencari paket lain via search_trips.\n" +

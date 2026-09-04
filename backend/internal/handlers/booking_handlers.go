@@ -49,7 +49,7 @@ func (h *Handler) GuestCreateOrder(c *gin.Context) {
 	booking, err := h.Services.Bookings.CreateGuest(ctx, identity.Session.UserID, identity.Session.ID, c.GetHeader("Idempotency-Key"), req)
 	if err != nil {
 		if errors.Is(err, services.ErrGuestOrderLimitReached) {
-			utils.Error(c, http.StatusForbidden, "Please sign in to create another order.", gin.H{"status": "authentication_required", "code": "GUEST_ORDER_LIMIT_REACHED"})
+			utils.Error(c, http.StatusForbidden, "Please sign in to create another order.", gin.H{"status": "authentication_required", "code": services.CodeGuestOrderLimitReached})
 			return
 		}
 		if errors.Is(err, services.ErrIdempotencyKeyRequired) {

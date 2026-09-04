@@ -81,6 +81,16 @@ Bentuk envelope: `{ success, message, data, error }`. Frontend bergantung pada b
 
 **Batas request publik (SEC-16):** Endpoint publik yang memicu LLM atau write ke DB wajib memakai body limit middleware dan DTO validation. `ChatRequest.Prompt` maksimum 4000 karakter; `POST /chat` dan `POST /orders` maksimum 64 KiB sebelum `ShouldBindJSON`.
 
+### 1.3a Kode Error Terstruktur (WAJIB, sejak 4 Sep 2026)
+
+Setiap keputusan bisnis yang harus diikuti klien atau LLM dikirim sebagai **code stabil**, bukan kalimat.
+
+- Deklarasikan code sebagai konstanta Go **di sebelah error/keputusan yang diterjemahkannya**, lalu pakai konstanta itu di SEMUA transport. Contoh: `services.CodeGuestOrderLimitReached` (`booking_service.go`, bersebelahan dengan `ErrGuestOrderLimitReached`) dipakai handler HTTP (`error.code` pada 403), tool MCP (`Data["code"]`), dan gate chat (`ChatResult.OrderGate.Code`). Literal string yang tersebar akan drift.
+- `message` adalah teks tampilan: boleh diubah, diterjemahkan, atau dipersingkat kapan saja. Karena itu **klien dan LLM tidak boleh bercabang pada `message`** — hanya pada `code`. Frontend melempar `APIError` dengan `code` (`lib/api.ts`) dan chat memakai `order_gate.code`.
+- Untuk transport non-HTTP (tool MCP, SSE chat) sediakan padanan `error.code`. Jangan menyuruh klien mem-parse prosa LLM: model itu non-deterministik dan multi-bahasa.
+- Terjemahkan sentinel error, jangan mengimplementasikan ulang aturannya di lapisan luar; dan jangan pernah memasukkan `err.Error()` internal ke payload tool/API (SEC-15 berlaku sama untuk tool result — riwayat tool di-replay ke LLM).
+- Code yang tidak dikenal klien harus **degrade** (tidak render / abaikan), bukan ditebak.
+
 ### 1.4 Validasi Input via DTO
 
 Request divalidasi lewat struct tag binding di `backend/internal/dto/dto.go`, bukan manual di handler.
@@ -216,6 +226,7 @@ Integrasi eksternal harus punya fallback. Contoh: klien AI (`ai/ai_client.go`) m
 
 ## 5. Verifikasi Sebelum Selesai
 
-- **Backend**: `cd backend && gofmt -w . && go build ./...` harus exit 0.
+- **Backend**: `cd backend && gofmt -w . && go build ./...` harus exit 0, lalu `go test ./...` (suite aktif: `ai`, `auth`, `handlers`, `mcp`, `middlewares`, `routes`, `services`, `utils`). Test TIDAK boleh butuh `OPENAI_API_KEY`, DB Postgres, atau jaringan — mock lewat interface narrow (SEC-27) dan pakai SQLite in-memory seperti suite guest order.
 - **Frontend/Backoffice**: `npx tsc --noEmit` harus lolos (atau `npm run lint`).
+- **Frontend customer**: `cd frontend && npm test` (runner bawaan Node, tanpa framework tambahan). File test baru WAJIB didaftarkan di skrip `test` pada `package.json` — runner memakai daftar file eksplisit, bukan glob, jadi test yang tidak didaftarkan tidak pernah jalan.
 - Hindari `npx tsc` tanpa binary lokal karena bisa memicu prompt instalasi yang hang; pakai `./node_modules/.bin/tsc --noEmit`.

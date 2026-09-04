@@ -70,6 +70,23 @@ type ToolResult struct {
 	Data   map[string]interface{} `json:"data"`
 }
 
+// Structured outcome codes carried in Data["code"] of a create_booking tool
+// result. They exist so the LLM and the frontend can branch on a stable token
+// instead of reading the human-readable `error`/`message` text (which is
+// display-only and may be reworded or translated).
+//
+// CodeGuestOrderLimitReached (booking_service.go) is the third possible outcome
+// and is deliberately declared next to the sentinel error it translates, so the
+// HTTP handler and this tool cannot drift apart.
+const (
+	// CodeOrderCreated: the order was persisted; Data["order_id"] is set.
+	CodeOrderCreated = "ORDER_CREATED"
+	// CodeOrderAlreadyExists: THIS chat session already owns an order (AIW-8
+	// duplicate guard). Data["order_id"] is that session's own order, so
+	// surfacing it to the caller reveals nothing the session did not create.
+	CodeOrderAlreadyExists = "ORDER_ALREADY_EXISTS"
+)
+
 // userID is non-nil when the chat request carried a valid Bearer access token
 // (see middlewares.OptionalAuth). Only create_booking consumes it today.
 func (s *MCPService) Execute(ctx context.Context, sessionID uuid.UUID, userID *uuid.UUID, toolName string, payload map[string]interface{}) (ToolResult, error) {
@@ -743,6 +760,7 @@ func (s *MCPService) executeCreateBooking(ctx context.Context, sessionID uuid.UU
 		log.Printf("[mcp] create_booking blocked duplicate session=%s existing_booking=%s", sessionID, existing.BookingID)
 		return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{
 			"success":        false,
+			"code":           CodeOrderAlreadyExists,
 			"error":          "an order already exists for this chat session",
 			"order_exists":   true,
 			"order_id":       existing.BookingID,
@@ -807,8 +825,15 @@ func (s *MCPService) executeCreateBooking(ctx context.Context, sessionID uuid.UU
 	if err != nil {
 		log.Printf("[mcp] create_booking save failed error=%v", err)
 		if errors.Is(err, ErrGuestOrderLimitReached) {
+			// The guest allowance is spent (this identity or the contact anchor).
+			// Report it as a STRUCTURED result: `code` is the only field the LLM
+			// and the frontend may branch on, `status` tells them what unblocks
+			// it. The rule itself is not re-implemented here — this is a
+			// translation of the booking domain's sentinel error, and a retry is
+			// refused deterministically by the AI tool loop
+			// (blockedRetryAfterGuestOrderLimit in ai_service.go).
 			return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusFailed, Data: map[string]interface{}{
-				"success": false, "status": "requires_authentication", "code": "GUEST_ORDER_LIMIT_REACHED", "message": "Please sign in to create another order.",
+				"success": false, "status": "requires_authentication", "code": CodeGuestOrderLimitReached, "message": "Please sign in to create another order.",
 			}}
 		}
 		if errors.Is(err, ErrBookingContactRequired) {
@@ -843,6 +868,7 @@ func (s *MCPService) executeCreateBooking(ctx context.Context, sessionID uuid.UU
 
 	return ToolResult{Tool: mcp.ToolCreateBooking, Status: models.ToolResultStatusSuccess, Data: map[string]interface{}{
 		"success":        true,
+		"code":           CodeOrderCreated,
 		"order_id":       booking.ID.String(),
 		"status":         booking.BookingStatus,
 		"booking_id":     booking.ID.String(),

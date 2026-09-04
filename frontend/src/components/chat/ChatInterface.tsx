@@ -3,11 +3,13 @@
 import {
   FormEvent,
   memo,
+  Suspense,
   useCallback,
   useEffect,
   useRef,
   useState,
 } from "react";
+import Link from "next/link";
 import {
   CalendarDays,
   CheckCircle2,
@@ -20,6 +22,8 @@ import {
 } from "lucide-react";
 import RecommendationCard from "../cards/RecommendationCard";
 import { TripPriceBlock } from "../pricing/TripPriceBlock";
+import { GoogleButton } from "../auth/GoogleButton";
+import { OAuthReceiver } from "../auth/OAuthReceiver";
 import {
   apiFetch,
   assetURL,
@@ -28,6 +32,8 @@ import {
   TripPackage,
   GuestChatHistoryResponse,
 } from "@/lib/api";
+import type { ChatOrderGate } from "@/lib/api";
+import { orderGateView } from "@/lib/orderGate";
 import { getTripAdultPrice, getTripChildPrice } from "@/lib/format";
 
 type ChatMessage = {
@@ -39,6 +45,9 @@ type ChatMessage = {
   showRecommendations?: boolean;
   recommendationReason?: "initial" | "alternative" | "";
   shouldAnimate?: boolean;
+  // Structured ordering outcome of the turn (backend-owned code). Drives the
+  // sign-in / order-tracking block; never inferred from `content`.
+  orderGate?: ChatOrderGate;
   // PERF-1: while streaming, the assistant message is appended incrementally.
   // `streaming` shows a caret and suppresses the post-stream typing animation
   // (the text already appeared token-by-token, so animating again would
@@ -275,6 +284,10 @@ export default function ChatInterface() {
                   showRecommendations: result.show_recommendations,
                   recommendationReason: result.recommendation_reason,
                   workflow: result.workflow,
+                  // Structured guest-order outcome. Carried through as-is so
+                  // the UI reacts to the backend's code, not to the wording of
+                  // the assistant's reply.
+                  orderGate: result.order_gate,
                   streaming: false,
                   // PERF-1 fallback: if no deltas were received (streaming
                   // failed or was buffered), animate the text so the user
@@ -341,6 +354,11 @@ export default function ChatInterface() {
 
   return (
     <div className="flex h-screen bg-[#fafafc]">
+      {/* Consumes the Google callback fragment (#access_token=...) so a customer
+          who signed in from the chat auth gate lands back here ALREADY
+          authenticated — otherwise the token is dropped and the next order
+          attempt would still run as a guest. */}
+      <OAuthReceiver />
       <div
         className={`relative flex h-screen flex-col transition-all duration-300 ${
           selectedPackage ? "w-[65%]" : "w-full"
@@ -484,10 +502,62 @@ const AssistantMessage = memo(function AssistantMessage({
               onSelect={onSelectPackage}
             />
           )}
+        <OrderGateBlock gate={message.orderGate} />
       </div>
     </div>
   );
 });
+
+// OrderGateBlock renders the next action for the ordering step of a turn. Every
+// decision comes from the backend's structured code via orderGateView() — the
+// assistant's text is never parsed. Rendering nothing is the default, so a code
+// this build does not know about degrades to "text only" instead of a wrong
+// prompt.
+function OrderGateBlock({ gate }: { gate?: ChatOrderGate }) {
+  const view = orderGateView(gate);
+  if (!view) {
+    return null;
+  }
+  return (
+    <div
+      className={`space-y-3 rounded-2xl border p-4 text-sm ${
+        view.authRequired
+          ? "border-amber-200 bg-amber-50 text-amber-900"
+          : "border-emerald-200 bg-emerald-50 text-emerald-900"
+      }`}
+      role={view.authRequired ? "alert" : "status"}
+    >
+      <p className="font-bold">{view.headline}</p>
+      {view.trackOrderId ? (
+        <Link
+          href={`/order/${view.trackOrderId}`}
+          className="inline-block rounded-lg bg-emerald-700 px-3 py-2 font-bold text-white"
+        >
+          Continue Tracking
+        </Link>
+      ) : null}
+      {view.authRequired ? (
+        <div className="grid gap-2">
+          <Suspense fallback={null}>
+            <GoogleButton />
+          </Suspense>
+          <Link
+            href="/login"
+            className="rounded-lg bg-[#df3333] px-3 py-2 text-center font-bold text-white"
+          >
+            Login
+          </Link>
+          <Link
+            href="/register"
+            className="rounded-lg border border-amber-700 px-3 py-2 text-center font-bold"
+          >
+            Create Account
+          </Link>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function TypingText({
   text,

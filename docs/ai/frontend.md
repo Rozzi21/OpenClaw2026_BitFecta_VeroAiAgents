@@ -14,7 +14,7 @@ Antarmuka chat AI untuk tamu, kini dengan auth opsional (login/register) untuk f
 
 | Route | File | Fungsi |
 |---|---|---|
-| `/` | `frontend/src/app/page.tsx` | Halaman utama, me-render `ChatInterface` |
+| `/` | `frontend/src/app/page.tsx` | Halaman utama, me-render `ChatInterface` (chat + guest-gate `order_gate` + `OAuthReceiver` untuk kembali dari Google, 4 Sep 2026) |
 | `/trip/[id]` | `frontend/src/app/trip/[id]/page.tsx` | Detail paket trip (memanggil `GET /api/v1/packages/:id`) + kotak order: input **Email or phone number** (wajib, 4 Sep 2026 — dikirim sebagai `contact_email`/`contact_phone`; backend menjangkar entitlement guest ke kontak itu), tombol Confirm & Create Order, guest-gate `GUEST_ORDER_LIMIT_REACHED` |
 | layout root | `frontend/src/app/layout.tsx` | Layout global, font, metadata |
 | `/login` | `frontend/src/app/login/page.tsx` | Login customer (access token di localStorage, refresh via cookie) |
@@ -26,7 +26,7 @@ Antarmuka chat AI untuk tamu, kini dengan auth opsional (login/register) untuk f
 
 | Komponen | Path | Tanggung jawab |
 |---|---|---|
-| `ChatInterface` | `frontend/src/components/chat/ChatInterface.tsx` | Inti aplikasi: kirim prompt ke `POST /api/v1/chat` (mode streaming SSE, PERF-1), render pesan + caret saat stream + animasi mengetik untuk history, render kartu rekomendasi, panel detail paket. Sebelum kirim, memanggil `ensureCustomerSession()` (27 Agu 2026) agar Bearer token valid terpasang — user login (password/Google) membuat order chat atas nama akunnya, bukan kena guest limit |
+| `ChatInterface` | `frontend/src/components/chat/ChatInterface.tsx` | Inti aplikasi: kirim prompt ke `POST /api/v1/chat` (mode streaming SSE, PERF-1), render pesan + caret saat stream + animasi mengetik untuk history, render kartu rekomendasi, panel detail paket. Sebelum kirim, memanggil `ensureCustomerSession()` (27 Agu 2026) agar Bearer token valid terpasang — user login (password/Google) membuat order chat atas nama akunnya, bukan kena guest limit. Sejak 4 Sep 2026 juga menyimpan `order_gate` per pesan dan me-render `OrderGateBlock` (Continue Tracking / Google / Login / Create Account) + me-mount `OAuthReceiver` |
 | `RecommendationCard` | `frontend/src/components/cards/RecommendationCard.tsx` | Kartu paket rekomendasi inline di chat |
 | `TripPriceBlock` | `frontend/src/components/pricing/TripPriceBlock.tsx` | Blok harga paket (base/discount/child) |
 | `Sidebar` | `frontend/src/components/layout/Sidebar.tsx` | Navigasi kiri (sebagian link masih placeholder `href="#"`) |
@@ -53,6 +53,34 @@ terkirim pada callback Google lintas-situs bila `SameSite` ketat). Endpoint itu
 idempoten dan tidak menerima order id, jadi memanggilnya dari halaman order
 orang lain tidak memindahkan apa pun (404/409).
 
+**Guest gate di CHAT (4 Sep 2026).** Sebelumnya aturan guest order hanya punya UI
+di halaman trip; di chat, penolakan cuma muncul sebagai kalimat dari LLM sehingga
+user tidak punya jalan keluar dan klien tidak punya sinyal yang bisa dipercaya.
+Sekarang respons chat membawa `order_gate` terstruktur (lihat
+[api.md](api.md)) dan `ChatInterface` menyimpannya di pesan asisten
+(`ChatMessage.orderGate`) lalu me-render `OrderGateBlock`:
+
+- `GUEST_ORDER_LIMIT_REACHED` → blok amber "sign in to create another order" +
+  **Continue with Google** (`GoogleButton` dalam `Suspense`), Login, Create Account.
+- `ORDER_CREATED` / `ORDER_ALREADY_EXISTS` → blok emerald + **Continue Tracking**
+  ke `/order/{order_id}`, jadi tracking order guest tidak hilang saat user
+  diminta login.
+- Code tak dikenal / turn tanpa langkah order → tidak ada blok.
+
+Keputusannya diambil `orderGateView()` dari `code` saja; teks jawaban asisten
+TIDAK pernah di-parse. `ChatInterface` juga me-mount `OAuthReceiver` (dulu hanya
+di `/login`, `/register`, `trip/[id]`) — tanpa itu, `return_to=/` dari Google
+membawa token di fragment URL yang tak pernah dikonsumsi dan user kembali ke chat
+tetap sebagai guest.
+
+**Fix GO-P1-1 (4 Sep 2026).** `app/api/v1/chat/route.ts` (proxy SSE) dulu hanya
+meneruskan `Content-Type`, `Cookie`, `X-Request-ID` sehingga `Authorization` yang
+sudah dipasang `streamChat` DIBUANG: backend melihat semua chat sebagai anonim,
+`create_booking` jatuh ke `CreateGuest`, dan user yang SUDAH login tetap kena
+`GUEST_ORDER_LIMIT_REACHED`. Allowlist header kini di `lib/chatProxy.ts`
+(`forwardedChatHeaders`) dan menyertakan `Authorization`, jadi eligibility
+authenticated dari jalur chat benar-benar hidup.
+
 ### Google OAuth UI (19 Agu 2026)
 
 Dua komponen auth baru di `frontend/src/components/auth/`:
@@ -73,7 +101,7 @@ Setelah token tersimpan, flow existing berjalan normal: `apiFetch` menyertakan B
 
 Sebelumnya customer frontend hanya menyimpan access token dan TIDAK pernah memanggil `/auth/refresh` atau `/auth/logout` — token mati setelah 15 menit tanpa perpanjangan dan tidak ada cara client me-revoke sesi. Helper ini menutup gap itu sehingga user Google (dan password) bisa refresh session + logout + revoke seperti fitur authenticated normal.
 
-**Hardening token storage (31 Agu 2026).** Helper token dipindah ke `frontend/src/lib/authToken.ts` (tetap di-re-export oleh `api.ts`): token divalidasi bentuk compact-JWT + cap 8 KiB sebelum disimpan/dipakai, disimpan dengan marker expiry (`vero_customer_access_token_expires_at` dari `expires_in` backend / claim `exp`, skew 30 dtk) sehingga token kedaluwarsa dibuang dan selalu memicu refresh, refresh 401 membersihkan token lokal (logout aman), dan `parseJsonEnvelope` tidak lagi me-log body respons (body auth memuat access token). `OAuthReceiver` kini memakai `consumeOAuthFragment()` (pure): fragment ber-`access_token` selalu di-strip walau invalid, dan `?auth_error` dibersihkan dari history. Unit test: `frontend/src/lib/authToken.test.ts` + `api.test.ts` (`npm test`, runner bawaan Node). Rincian keputusan & threat model: `docs/GOOGLE_OAUTH.md` bagian 9.4.
+**Hardening token storage (31 Agu 2026).** Helper token dipindah ke `frontend/src/lib/authToken.ts` (tetap di-re-export oleh `api.ts`): token divalidasi bentuk compact-JWT + cap 8 KiB sebelum disimpan/dipakai, disimpan dengan marker expiry (`vero_customer_access_token_expires_at` dari `expires_in` backend / claim `exp`, skew 30 dtk) sehingga token kedaluwarsa dibuang dan selalu memicu refresh, refresh 401 membersihkan token lokal (logout aman), dan `parseJsonEnvelope` tidak lagi me-log body respons (body auth memuat access token). `OAuthReceiver` kini memakai `consumeOAuthFragment()` (pure): fragment ber-`access_token` selalu di-strip walau invalid, dan `?auth_error` dibersihkan dari history. Unit test: `frontend/src/lib/authToken.test.ts` + `api.test.ts` (`npm test`, runner bawaan Node). Sejak 4 Sep 2026 skrip `npm test` juga menjalankan `chatProxy.test.ts` (allowlist header proxy chat, termasuk regresi `Authorization`/GO-P1-1), `orderGate.test.ts` (pemetaan code → UI), dan `chatStream.test.ts` (`order_gate` utuh lewat SSE + Bearer terpasang). Rincian keputusan & threat model: `docs/GOOGLE_OAUTH.md` bagian 9.4.
 
 ### Mekanisme Rekomendasi
 
@@ -90,6 +118,8 @@ Frontend hanya merender `PackageRecommendations` bila `show_recommendations === 
 |---|---|
 | `frontend/src/lib/api.ts` | `apiFetch()` envelope-aware, memeriksa `Content-Type`, menangani respons HTML/proxy error, timeout 35 s via `AbortController`, serta `assetURL()` + tipe `TripPackage`. **`streamChat()` (PERF-1, 3 Agu 2026)** — konsumsi SSE chat streaming via `fetch` + `ReadableStream` reader + parser SSE manual (`parseSSEBlock`), dispatch `delta`/`done`/`error` ke callback; tidak pakai timeout 35s (stream wajar hidup lama, backend kunci via `AI_TIMEOUT_SECONDS` + ctx), `AbortController` tetap membatalkan stream di hulu. Sejak 27 Agu 2026 menempelkan header `Authorization: Bearer` bila access token tersimpan (aturan sama seperti `apiFetch`) untuk `OptionalAuth` di `POST /chat`. Base URL kosong di browser (proxy), `NEXT_PUBLIC_API_BASE_URL` di server |
 | `frontend/src/lib/format.ts` | Format harga (`formatIDR`, `getDiscountMeta`, `getTripAdultPrice`/`getTripChildPrice`). `formatIDR` memformat angka termasuk `0` sebagai Rp 0; `"TBD"` hanya untuk `null`/`undefined`/`NaN` |
+| `frontend/src/lib/orderGate.ts` | **(4 Sep 2026)** Pemetaan murni `orderGateView(gate)` dari `order_gate` respons chat ke keputusan UI (`authRequired`, `trackOrderId`, `headline`) + konstanta code (`GUEST_ORDER_LIMIT_REACHED`, `ORDER_CREATED`, `ORDER_ALREADY_EXISTS`). HANYA `code` yang dibaca — `auth_required` di payload tidak bisa mengubah state sukses menjadi sign-in wall, dan code tak dikenal menghasilkan `null` (render kosong, teks asisten tetap tampil). Test: `orderGate.test.ts` |
+| `frontend/src/lib/chatProxy.ts` | **(4 Sep 2026)** `forwardedChatHeaders()` — allowlist header yang diteruskan proxy SSE `app/api/v1/chat/route.ts` ke backend: `Authorization` (fix GO-P1-1), `Cookie`, `X-Request-ID`, plus `Content-Type: application/json` yang selalu dipaksa. `Host`/`Origin`/`X-Forwarded-*`/`Content-Length` sengaja dibuang. Test: `chatProxy.test.ts` |
 | `frontend/src/lib/format-trip-pax.ts` | Format jumlah pax (dewasa/anak) |
 | `frontend/src/lib/utils.ts` | Util umum (mis. `cn()` untuk className) |
 

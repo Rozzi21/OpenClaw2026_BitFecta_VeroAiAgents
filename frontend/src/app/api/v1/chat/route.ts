@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { forwardedChatHeaders } from "@/lib/chatProxy";
 
 // SSE streaming proxy for POST /api/v1/chat.
 //
@@ -25,21 +26,12 @@ const BACKEND_URL =
 export async function POST(request: NextRequest) {
   const body = await request.text();
 
-  // Forward only the headers the backend needs. Server-side fetch is not
-  // subject to CORS, so we can forward the Cookie header directly.
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-
-  const cookie = request.headers.get("cookie");
-  if (cookie) {
-    headers["Cookie"] = cookie;
-  }
-
-  const requestID = request.headers.get("X-Request-ID");
-  if (requestID) {
-    headers["X-Request-ID"] = requestID;
-  }
+  // Forward only the allowlisted headers (see lib/chatProxy.ts). Server-side
+  // fetch is not subject to CORS, so Cookie can be forwarded directly; the
+  // Authorization header must be forwarded too, otherwise a signed-in customer
+  // is treated as a guest by the backend and runs into the one-order guest
+  // limit from the chat (GO-P1-1).
+  const headers = forwardedChatHeaders(request.headers);
 
   let backendResponse: Response;
   try {

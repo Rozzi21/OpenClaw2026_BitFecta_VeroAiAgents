@@ -23,6 +23,18 @@ var ErrIdempotencyKeyRequired = errors.New("idempotency key is required")
 var ErrBookingContactRequired = errors.New("contact email or phone is required")
 var ErrBookingTravelDateInvalid = errors.New("travel date is invalid")
 
+// CodeGuestOrderLimitReached is the STABLE machine-readable code every transport
+// exposes when ErrGuestOrderLimitReached escapes the booking domain: HTTP
+// (`error.code` on 403, booking_handlers.go), MCP tool results (`data.code`,
+// mcp_service.go) and the chat order gate (ChatResult.OrderGate, ai_service.go).
+//
+// It is declared here, next to the error it maps from, because it is the ONLY
+// thing clients and the LLM are allowed to branch on. The human-readable
+// message is for display and may be reworded/translated at any time; the code
+// may not. Never derive the guest rule from a message string — the rule lives in
+// BookingService.create and is enforced by the database.
+const CodeGuestOrderLimitReached = "GUEST_ORDER_LIMIT_REACHED"
+
 // SEC-27: BookingService depends on a narrow repository interface instead of
 // the concrete *repositories.Repository. It needs bookings + trip lookup
 // (Create resolves the trip for server-side pricing, SEC-3).

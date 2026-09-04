@@ -72,6 +72,22 @@ export type ChatResponse = {
   show_recommendations: boolean;
   recommendation_reason: "initial" | "alternative" | "";
   recommended_packages?: TripPackage[];
+  // Structured outcome of the ordering step of this turn (backend:
+  // services.ChatOrderGate). Absent when the turn did not run create_booking.
+  // This is the ONLY thing the UI may branch on for the guest-order rule — the
+  // assistant's prose is display text, never a signal.
+  order_gate?: ChatOrderGate;
+};
+
+// ChatOrderGate is the chat-transport twin of `error.code` on the REST
+// endpoints. `code` is stable and backend-owned; `auth_required` is true only
+// when the backend refused a guest order because the one-order allowance is
+// spent; `order_id` is present only when THIS chat session owns an order, so
+// tracking survives the sign-in prompt.
+export type ChatOrderGate = {
+  code: string;
+  auth_required: boolean;
+  order_id?: string;
 };
 
 export type GuestChatHistoryResponse = {

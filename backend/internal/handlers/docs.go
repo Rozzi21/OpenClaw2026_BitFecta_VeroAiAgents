@@ -60,8 +60,16 @@ func (h *Handler) OpenAPI(c *gin.Context) {
 			"/api/v1/packages":      gin.H{"get": op("Packages", "List published packages (public)", false)},
 			"/api/v1/packages/{id}": gin.H{"get": op("Packages", "Get a published package by id or slug (public)", false)},
 
-			// Guest AI chat (no auth) — consumed by the customer frontend
-			"/api/v1/chat": gin.H{"post": op("Chat", "Run the autonomous AI chat workflow as guest", false)},
+			// Guest AI chat (no auth). A valid Bearer token is OPTIONAL
+			// (middlewares.OptionalAuth) and only upgrades order attribution:
+			// orders created by create_booking then belong to the account and
+			// are not bound by the one-order guest allowance.
+			// The response carries `order_gate` when the turn ran create_booking:
+			// {code: ORDER_CREATED|ORDER_ALREADY_EXISTS|GUEST_ORDER_LIMIT_REACHED,
+			// auth_required, order_id?}. Clients must branch on `code`, never on
+			// the assistant's message text. order_id is present only for THIS
+			// session's own order.
+			"/api/v1/chat": gin.H{"post": op("Chat", "Run the autonomous AI chat workflow as guest (optional Bearer upgrades order attribution)", false)},
 
 			// Public manual order creation while DOKU payment is disabled.
 			// Guest identity comes from the vero_guest_session HttpOnly cookie
