@@ -165,12 +165,50 @@ func deriveGoogleLinkRedirectURI(loginURI string) string {
 	return loginURI
 }
 
+// cookieSameSiteValues lists the only SameSite policies the cookie layer can
+// honor (auth.parseSameSite). Config.Validate rejects everything else because an
+// unrecognized value does NOT fail loudly at runtime — it silently degrades to
+// SameSite=Strict, and a Strict guest cookie is not sent on the cross-site
+// top-level navigation Google's OAuth callback performs. The guest order then
+// never reaches the account: no error, no log, no way to diagnose it from the
+// outside (GO-P2-6, docs/GUEST_ORDER_AUDIT.md).
+var cookieSameSiteValues = []string{"Strict", "Lax", "None"}
+
+// validateCookieSameSite rejects any value outside cookieSameSiteValues,
+// case-insensitively and ignoring surrounding whitespace (auth.parseSameSite
+// trims and lowercases too, so validation and parsing accept exactly the same
+// set). An empty value means "not configured": Load already substituted the
+// documented default, so it is accepted and that default applies.
+func validateCookieSameSite(envName, value string) error {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	for _, allowed := range cookieSameSiteValues {
+		if strings.EqualFold(trimmed, allowed) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s=%q is not a valid SameSite policy: use one of %s (an unsupported value would silently fall back to Strict and break the guest-order claim on the Google callback)",
+		envName, value, strings.Join(cookieSameSiteValues, ", "))
+}
+
 // Validate enforces production-safety invariants. In production the JWT secret
 // must be explicitly set to a non-default, non-empty value; otherwise tokens
 // could be forged using the well-known development secret. When payments are
 // explicitly re-enabled, the DOKU webhook secret is also required so payment
 // webhooks cannot be forged (SEC-4).
 func (c Config) Validate() error {
+	// Cookie SameSite policies are validated in EVERY environment, not only in
+	// production: the failure mode of a typo is silence (see
+	// cookieSameSiteValues), so it has to be caught at configuration time on the
+	// developer's machine as well.
+	if err := validateCookieSameSite("JWT_COOKIE_SAME_SITE", c.JWTCookieSameSite); err != nil {
+		return err
+	}
+	if err := validateCookieSameSite("GUEST_COOKIE_SAME_SITE", c.GuestCookieSameSite); err != nil {
+		return err
+	}
 	if c.AppEnv == "production" {
 		databaseURLProvided := strings.TrimSpace(c.DatabaseURL) != ""
 		databaseURLUnsafe := strings.Contains(c.DatabaseURL, defaultDatabasePassword) || strings.Contains(c.DatabaseURL, "password_aman") || strings.Contains(c.DatabaseURL, "YOUR_PASSWORD")

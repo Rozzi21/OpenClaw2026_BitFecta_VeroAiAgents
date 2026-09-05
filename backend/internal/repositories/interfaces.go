@@ -112,6 +112,10 @@ type BookingTransactionRepository interface {
 	LockGuestSession(ctx context.Context, id uuid.UUID) (models.GuestSession, error)
 	ConsumeGuestOrder(ctx context.Context, guestID, bookingID uuid.UUID) error
 	FindBookingByIdempotency(ctx context.Context, ownerID uuid.UUID, guest bool, hash string) (models.Booking, error)
+	// ListClaimedGuestSessionIDs supports the claim-crossing idempotency check
+	// (GO-P2-4): an Idempotency-Key first used as a guest must not create a
+	// second order after the guest order was claimed by the account.
+	ListClaimedGuestSessionIDs(ctx context.Context, userID uuid.UUID, limit int) ([]uuid.UUID, error)
 	// GO-P0-1: contact-anchored entitlement, the second (cookie-independent)
 	// half of the one-order-per-guest rule. Both methods must run inside the
 	// same booking transaction as CreateBooking/ConsumeGuestOrder.

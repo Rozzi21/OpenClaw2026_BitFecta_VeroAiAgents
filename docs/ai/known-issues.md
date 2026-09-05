@@ -124,8 +124,8 @@ bullet terkait); semua item lain di bawah masih terbuka.
   `backend/internal/handlers/guest_order_claim_handler_test.go` (9 test HTTP:
   delapan skenario yang sama lewat endpoint + cookie valid tanpa akun → 401).
   **Catatan sisa**: retry masih harus dipicu klien (tidak ada re-claim otomatis
-  di `/auth/me` / `/auth/refresh`), dan GO-P2-6 (`GUEST_COOKIE_SAME_SITE` salah
-  tulis → `Strict`) belum diperbaiki di `Config.Validate()`.
+  di `/auth/me` / `/auth/refresh`). GO-P2-6 (`GUEST_COOKIE_SAME_SITE` salah tulis
+  → `Strict`) **sudah diperbaiki** di `Config.Validate()` — lihat entri berikut.
 - **✅ GO-P2-3 + GO-P2-7 FIXED (4 Sep 2026) — dua race di jalur guest order.**
   (a) *Idempotency race*: dua request dengan owner + `Idempotency-Key` sama bisa
   lolos lookup pra-insert bersamaan; `bookings.idempotency_key_hash` (UNIQUE)
@@ -147,15 +147,54 @@ bullet terkait); semua item lain di bawah masih terbuka.
   untuk identitas pemanggil (pola SEC-17) alih-alih memakai sesi orang lain.
   Dikunci `internal/services/guest_concurrency_test.go` +
   `internal/handlers/guest_chat_bind_handler_test.go`.
+- **✅ GO-P2-6 FIXED (4 Sep 2026) — `SameSite` salah tulis tidak lagi jatuh
+  senyap ke `Strict`.** `Config.Validate()` kini menolak nilai
+  `GUEST_COOKIE_SAME_SITE` / `JWT_COOKIE_SAME_SITE` di luar
+  `Strict`/`Lax`/`None` (trim + case-insensitive, string kosong = "tidak di-set"
+  ⇒ default `Load()` berlaku) di **semua** environment, bukan hanya production —
+  mode gagalnya adalah kesenyapan, jadi harus tertangkap di laptop developer juga.
+  `auth.parseSameSite` tetap punya fallback `Strict` sebagai defense-in-depth,
+  tapi sekarang tidak ada nilai tak dikenal yang bisa mencapainya. Catatan yang
+  tetap berlaku: `Strict` adalah nilai VALID yang tetap mematikan claim order
+  guest pada callback Google (navigasi top-level lintas-situs) — didokumentasikan
+  di `backend/.env.example`, `docs/ai/deployment.md`, dan
+  `docs/GUEST_ORDER_LIMIT.md`. Dikunci `backend/internal/config/config_test.go`
+  (nilai valid diterima, 11 varian salah tulis ditolak dengan menyebut nama env
+  var, penolakan berlaku di development/staging/production, jalur nyata
+  `Load()` + `Validate()`, dan default yang dikirimkan tetap valid).
+- **✅ GO-P2-4 FIXED (4 Sep 2026) — replay `Idempotency-Key` lintas batas claim
+  tidak lagi mencetak order kedua.** `bookings.idempotency_key_hash` di-scope
+  OWNER (`sha256("guest:"+guestSessionID+":"+key)` vs
+  `sha256("user:"+userID+":"+key)`) — itu yang memisahkan dua pemanggil berbeda
+  yang memakai key sama. Claim memindahkan booking ke akun **tanpa bisa
+  me-rehash** (key mentah tidak pernah disimpan), jadi akun yang mengulang
+  request yang tadi ia buat sebagai guest tidak menemukan order-nya sendiri dan
+  membuat order KEDUA — persis di momen retry paling mungkin (klien mengulang
+  request yang baru saja ditolak 403 `GUEST_ORDER_LIMIT_REACHED`, dan jalur akun
+  tidak punya limit). Perbaikannya read-only dan tanpa perubahan skema:
+  `Repository.ListClaimedGuestSessionIDs` membaca marker
+  `guest_sessions.claimed_user_id` (maks 5 terbaru, `maxClaimedGuestIdempotencyScopes`),
+  lalu `BookingService.create` mencoba lookup dengan hash guest yang diturunkan
+  dari tiap marker itu — **tetap** dengan filter owner pemanggil
+  (`user_id = caller AND guest_session_id IS NULL`). Dua-duanya harus cocok, dan
+  keduanya milik pemanggil, jadi order pemilik lain tetap tak terjangkau dan
+  pemanggil yang tidak pernah jadi guest tidak menjalankan query tambahan sama
+  sekali. Dikunci `backend/internal/services/guest_order_idempotency_claim_test.go`
+  (replay setelah claim = order yang sama; akun lain dengan key sama dapat order
+  sendiri; key berbeda tetap membuat order baru; guest order yang BELUM di-claim
+  tidak pernah tersaji ke akun) + `TestPostgresClaimedGuestIdempotencyKeyNotReplayable`
+  pada suite Postgres opsional (memverifikasi SQL marker dan lookup kolom uuid
+  nullable di mesin nyata).
 - **P2 sisa**: tidak ada cleanup `guest_sessions` maupun user guest (satu baris
-  `users` + bcrypt cost 10 per identitas); `migrations/20260818_guest_order_limit.sql`
+  `users` + bcrypt cost 10 per identitas — GO-P2-1);
+  `migrations/20260818_guest_order_limit.sql`
   **tidak** dipanggil dari `AutoMigrate` (partial unique index + `CHECK
   order_count >= 0` absen di DB baru — GORM membuat unique index penuh);
-  hash idempotency bergeser saat claim (`guest:` → `user:`, GO-P2-4); guard
-  duplikat MCP bersandar pada marker di riwayat chat dengan window 200 pesan;
-  `GUEST_COOKIE_SAME_SITE` salah tulis jatuh ke `Strict` di `parseSameSite` dan
-  mematikan claim Google secara senyap; event guest order tanpa
-  `ip`/`user_agent`/`request_id` dan tanpa event saat identitas dicetak.
+  guard duplikat MCP bersandar pada marker di riwayat chat dengan window 200
+  pesan (GO-P2-5); event guest order tanpa `ip`/`user_agent`/`request_id` dan
+  tanpa event saat identitas dicetak (GO-P2-8); pointer guest ↔ booking
+  (`guest_sessions.first_order_id`, `bookings.guest_session_id`,
+  `guest_order_entitlements.booking_id`) tanpa FK (GO-P3-2).
 - **✅ P1-H1 (`resolveUser` TOCTOU) FIXED (4 Sep 2026) — termasuk dampak
   guest-order-nya.** Fallback pasca-`CreateUserWithGoogleIdentity` gagal dulu
   resolve lewat `FindUserByEmail`, mengembalikan akun password yang belum pernah
@@ -181,13 +220,15 @@ bullet terkait); semua item lain di bawah masih terbuka.
   `guest_order_contact_entitlement_test.go` — di situ arbiternya unique index
   `contact_key`, yang juga cukup di Postgres.
   **Sejak 4 Sep 2026 ada verifikasi mesin nyata yang opsional** (GO-P3-6):
-  `internal/services/guest_postgres_race_test.go` menjalankan empat skenario
-  (pembuatan order guest paralel, key idempotency identik paralel, claim paralel,
-  binding chat→guest paralel + resolusi identitas paralel) dengan pool 8 koneksi
-  di PostgreSQL. Di-skip otomatis kecuali `VERO_TEST_POSTGRES_DSN` di-set, dan
-  harness-nya MENOLAK jalan bila DSN tidak mengarahkan `search_path` ke schema
-  sekali-pakai yang namanya memuat `test`/`verify` (test ini melakukan TRUNCATE).
-  Terakhir dijalankan hijau pada 4 Sep 2026 lewat schema sementara
+  `internal/services/guest_postgres_race_test.go` menjalankan lima skenario
+  konkurensi (pembuatan order guest paralel, key idempotency identik paralel,
+  claim paralel, binding chat→guest paralel, resolusi identitas paralel) plus
+  satu regresi non-race yang SQL-nya engine-dependent
+  (`TestPostgresClaimedGuestIdempotencyKeyNotReplayable`, GO-P2-4) dengan pool 8
+  koneksi di PostgreSQL. Di-skip otomatis kecuali `VERO_TEST_POSTGRES_DSN`
+  di-set, dan harness-nya MENOLAK jalan bila DSN tidak mengarahkan `search_path`
+  ke schema sekali-pakai yang namanya memuat `test`/`verify` (test ini melakukan
+  TRUNCATE). Terakhir dijalankan hijau 6/6 pada 4 Sep 2026 lewat schema sementara
   `toctou_verify_tmp` di DB dev (schema dibuat lalu di-DROP setelah verifikasi;
   schema `public` tidak disentuh).
 

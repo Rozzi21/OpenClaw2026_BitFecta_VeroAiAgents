@@ -1,6 +1,7 @@
 # Guest Order Limit — Dokumentasi Implementasi
 
-Status: **diimplementasikan** (18 Agustus 2026; jangkar kontak 4 September 2026)
+Status: **diimplementasikan** (18 Agustus 2026; jangkar kontak 4 September 2026;
+final review + GO-P2-4/GO-P2-6 4 September 2026)
 
 Seorang pengunjung yang BELUM login boleh membuat **tepat SATU** order travel
 yang sukses. Setelah itu guest tetap bisa melihat/tracking order-nya dan lanjut
@@ -19,7 +20,8 @@ dinormalisasi, sehingga menghapus cookie tidak lagi mereset allowance
    `vero_guest_session` berisi token opaque random 256-bit (hex 64 char).
    Hanya SHA-256 hash token yang disimpan di `guest_sessions.token_hash`.
    Cookie: `HttpOnly`, `Secure` di production, `SameSite` dari
-   `GUEST_COOKIE_SAME_SITE` (default `Lax`), path `/api/v1`, TTL dari
+   `GUEST_COOKIE_SAME_SITE` (default `Lax`, hanya `Strict`/`Lax`/`None` yang
+   diterima — lihat §"Validasi konfigurasi cookie"), path `/api/v1`, TTL dari
    `GUEST_IDENTITY_TTL_HOURS` (default 720 jam / 30 hari).
 2. Chat session yang dibuat di-link ke guest session
    (`chat_sessions.guest_session_id`). Refresh browser, chat baru, dan hapus
@@ -340,6 +342,98 @@ tidak bisa menyentuh order pemilik lain, dan allowance tidak pernah terpakai dua
 kali karena transaksi yang kalah sudah rollback. Penolakan/kegagalan lain
 (`ErrGuestOrderLimitReached`, kontak invalid, DB down) tetap diteruskan.
 
+**Replay lintas batas claim (GO-P2-4, 4 Sep 2026).** Hash idempotency di-scope
+OWNER — `sha256("guest:"+guestSessionID+":"+key)` sebelum claim,
+`sha256("user:"+userID+":"+key)` sesudahnya. Scope itulah yang memisahkan dua
+pemanggil berbeda yang kebetulan memilih key sama, tapi claim memindahkan booking
+ke akun **tanpa bisa me-rehash** (key mentah tidak pernah disimpan, hanya
+hash-nya). Akibatnya akun yang mengulang request yang tadi ia buat sebagai guest
+tidak menemukan order-nya sendiri dan membuat order KEDUA — persis pada momen
+retry paling mungkin: klien mengulang request yang baru saja dijawab 403
+`GUEST_ORDER_LIMIT_REACHED` setelah penggunanya login, dan jalur akun tidak punya
+limit sebagai rem.
+
+Perbaikannya read-only, tanpa perubahan skema dan tanpa menyentuh unique index:
+
+1. `Repository.ListClaimedGuestSessionIDs(userID, limit)` membaca marker
+   `guest_sessions.claimed_user_id` (urut `claimed_at DESC`, maksimal
+   `maxClaimedGuestIdempotencyScopes` = 5 identitas terbaru). Marker ini SENGAJA
+   tidak difilter `expires_at` — ia harus tetap berlaku setelah cookie guest
+   kedaluwarsa.
+2. `BookingService.create` (jalur authenticated saja) mengulang
+   `FindBookingByIdempotency` dengan hash `guest:<guestSessionID>:<key>` untuk
+   tiap marker itu, **tetap** dengan filter owner pemanggil:
+   `user_id = <pemanggil> AND guest_session_id IS NULL`.
+
+Tidak ada pelonggaran otorisasi: kedua bagian harus cocok, dan keduanya milik
+pemanggil (guest session id hanya berasal dari claim yang dilakukan OLEH akun
+itu), jadi order pemilik lain tetap tak terjangkau. Pemanggil yang tidak pernah
+menjadi guest tidak menjalankan query tambahan sama sekali (tidak ada marker ⇒
+tidak ada lookup). Jalur guest tidak berubah.
+
+## Validasi konfigurasi cookie (GO-P2-6, 4 Sep 2026)
+
+`auth.parseSameSite` memetakan `lax`/`none`/`strict` dan mengembalikan
+`SameSiteStrictMode` untuk **semua** nilai lain — termasuk salah tulis. Fallback
+itu senyap, dan cookie guest `SameSite=Strict` TIDAK dikirim pada navigasi
+top-level lintas-situs, yaitu tepat bentuk request callback Google
+(`GET /api/v1/auth/google/callback` dari `accounts.google.com`). Efeknya:
+`ClaimOrder` menerima token kosong → dianggap "tidak ada yang di-claim" → order
+guest tidak pernah pindah ke akun, tanpa error dan tanpa log.
+
+Sekarang `Config.Validate()` menolak nilai `GUEST_COOKIE_SAME_SITE` dan
+`JWT_COOKIE_SAME_SITE` di luar `Strict`/`Lax`/`None`:
+
+- perbandingan trim + case-insensitive, jadi validasi menerima persis set yang
+  sama dengan yang bisa di-parse `auth.parseSameSite`;
+- string kosong = "tidak di-set" ⇒ default dari `Load()` berlaku;
+- berlaku di **semua** environment, bukan hanya production — mode gagalnya
+  kesenyapan, jadi harus tertangkap di laptop developer juga;
+- pesan error menyebut nama env var + daftar nilai yang sah, dan proses berhenti
+  (`main.go`: `log.Fatalf("invalid configuration: %v", err)`).
+
+`parseSameSite` tetap punya fallback `Strict` sebagai defense-in-depth; yang
+hilang adalah kemungkinan nilai tak dikenal mencapainya tanpa disadari.
+
+**Yang sengaja TIDAK dijadikan error**: `Strict` adalah nilai valid. Deployment
+tanpa Google OAuth boleh memakainya, jadi pilihan itu tidak diblokir —
+konsekuensinya (claim Google mati) didokumentasikan di `backend/.env.example`,
+`docs/ai/deployment.md`, dan di sini. Untuk frontend lintas-origin pakai `None` +
+`GUEST_COOKIE_SECURE=true` (cookie layer memaksa `Secure` bila `None`).
+
+## Kebijakan identitas guest kedaluwarsa (keputusan sadar)
+
+Chat session yang terikat ke identitas guest **kedaluwarsa** boleh di-rebind ke
+identitas guest baru (`Repository.BindChatSessionGuest`, GO-P2-7). Tanpa
+kelonggaran itu, satu chat yang panjang jadi permanen tidak bisa dipakai setelah
+`GUEST_IDENTITY_TTL_HOURS` (default 30 hari): setiap request berikutnya ditolak
+`ErrChatSessionGuestMismatch` dan pengunjung dipaksa memulai chat baru tanpa
+riwayat.
+
+Ini kebijakan, bukan celah — pengambilalihan itu tidak memberi apa pun:
+
+- **Tidak memberi akses order identitas lama.** Semua pembacaan order guest
+  memakai `Authenticate` (`FindGuestSessionByTokenHash` + `expires_at > now`) lalu
+  `FindBookingForGuest(id, guestID)`. Identitas penerus punya `guest_session_id`
+  berbeda ⇒ `ErrBookingNotFound`. UUID order tetap tidak cukup.
+- **Tidak melewati aturan satu order.** Allowance ada di baris
+  `guest_sessions` lama (`order_count = 1`) DAN di `guest_order_entitlements`
+  (jangkar kontak, tanpa masa berlaku). Identitas penerus yang memakai kontak
+  yang sama tetap ditolak `ErrGuestOrderLimitReached`.
+- **Tidak bisa meng-claim order identitas lama.** `ClaimOrder` menurunkan booking
+  dari `guest_sessions.first_order_id` milik identitas YANG COOKIE-NYA
+  DISODORKAN; identitas penerus tidak punya `first_order_id`, dan token identitas
+  lama sudah tidak resolve (kedaluwarsa) ⇒ keduanya
+  `ErrGuestOrderNothingToClaim`, marker claim tidak ditulis.
+- Identitas kedaluwarsa juga tidak bisa membuat order baru: cabang guest MCP dan
+  `LockGuestSession` sama-sama menyaring `expires_at > now`.
+
+Konsekuensi yang diterima: order guest yang belum di-claim setelah token
+kedaluwarsa hanya bisa diakses staff (retention dapat diperpanjang lewat env).
+Dikunci `backend/internal/services/guest_expired_identity_policy_test.go`
+(`TestExpiredGuestIdentityTakeoverGrantsNothing`) +
+`TestChatGuestBindingTakenOverWhenOwnerExpired`.
+
 ## Pengujian
 
 `backend/internal/services/guest_order_limit_test.go` (SQLite in-memory):
@@ -491,9 +585,12 @@ TOCTOU/konkurensi (4 Sep 2026) dikunci tiga file tambahan:
   `ErrGoogleIdentityTaken` (akun lain) atau no-op idempotent (akun sendiri).
   Pemulihan handler-nya di `internal/handlers/guest_chat_bind_handler_test.go`.
 - `internal/services/guest_postgres_race_test.go` — **verifikasi mesin nyata
-  (opsional)**. Empat skenario yang sama dijalankan di PostgreSQL dengan pool 8
-  koneksi, jadi `FOR UPDATE` benar-benar berebut dan transaksi yang ditolak unique
-  index benar-benar abort. Di-skip kecuali `VERO_TEST_POSTGRES_DSN` di-set:
+  (opsional)**. Lima skenario konkurensi yang sama dijalankan di PostgreSQL dengan
+  pool 8 koneksi, jadi `FOR UPDATE` benar-benar berebut dan transaksi yang ditolak
+  unique index benar-benar abort, plus satu regresi non-race yang SQL-nya
+  engine-dependent (`TestPostgresClaimedGuestIdempotencyKeyNotReplayable`,
+  GO-P2-4: pluck kolom uuid + lookup `guest_session_id IS NULL`). Di-skip kecuali
+  `VERO_TEST_POSTGRES_DSN` di-set:
 
   ```bash
   cd backend
@@ -508,10 +605,65 @@ TOCTOU/konkurensi (4 Sep 2026) dikunci tiga file tambahan:
   (`CREATE SCHEMA IF NOT EXISTS`, nama divalidasi sebagai identifier polos);
   bersihkan setelah selesai dengan `DROP SCHEMA toctou_verify_tmp CASCADE`.
 
+  **Status terakhir: PostgreSQL concurrency test VERIFIED — 6/6 hijau (4 Sep
+  2026)**, dijalankan pada PostgreSQL lokal (schema sementara `toctou_verify_tmp`
+  di DB dev, schema `public` tidak disentuh, schema di-DROP setelah verifikasi).
+  Tanpa DSN, `go test ./...` men-SKIP file ini — dan tanpa run tersebut jaminan
+  row-lock PostgreSQL TIDAK boleh diklaim terverifikasi (harness SQLite memakai
+  satu koneksi, jadi `FOR UPDATE` tidak pernah berebut).
+
+Regresi tambahan dari final review (4 Sep 2026):
+
+- `internal/config/config_test.go` — GO-P2-6: nilai `SameSite` valid diterima
+  (termasuk case/whitespace campur dan string kosong = tidak di-set), 11 varian
+  salah tulis ditolak dengan menyebut nama env var, penolakan berlaku di
+  development/staging/production, jalur nyata `Load()` + `Validate()` ikut diuji,
+  dan default yang dikirimkan (`Lax`/`Strict`) tetap valid.
+- `internal/services/guest_order_idempotency_claim_test.go` — GO-P2-4: replay key
+  guest setelah claim mengembalikan order YANG SAMA (bukan order kedua); akun lain
+  dengan key sama mendapat order sendiri dan tidak pernah membaca order yang sudah
+  di-claim; key berbeda dari akun yang sama tetap membuat order baru (guard bukan
+  lock per-akun); guest order yang BELUM di-claim tidak pernah tersaji ke akun.
+- `internal/services/guest_expired_identity_policy_test.go` — kebijakan identitas
+  kedaluwarsa: setelah chat diambil alih identitas penerus, identitas itu tidak
+  bisa membaca order identitas lama, tidak bisa mereset aturan satu order (jangkar
+  kontak tetap menahan), dan tidak bisa meng-claim order itu — begitu pula token
+  identitas lama yang sudah kedaluwarsa; marker claim tetap kosong.
+
+**Batasan pengujian yang diketahui**: recovery binding chat→guest diuji di level
+helper (`Handler.rebindGuestChatSession` di
+`internal/handlers/guest_chat_bind_handler_test.go`) dan level service
+(`GuestService.AttachChat`), BUKAN lewat `POST /chat` utuh. Endpoint itu
+menjalankan seluruh workflow AI (klien LLM + loop tool MCP + persist pesan), jadi
+mengetesnya utuh berarti membangun harness AI lengkap — di luar cakupan review
+ini dan tidak memberi jaminan tambahan atas keputusan binding, yang seluruhnya ada
+di conditional UPDATE repository.
+
 ## Batasan yang tersisa
 
-- Google OAuth tombol di frontend masih placeholder (disabled) — belum ada
-  provider OAuth di backend.
+Status verifikasi (final review 4 Sep 2026):
+
+- **PostgreSQL concurrency test: VERIFIED** (6/6, lihat §Pengujian).
+- **Real Google E2E not verified.** Jalur Google diuji dengan klien OAuth
+  ter-mock (`internal/services/google_oauth_callback_test.go`,
+  `TestGoogleLogin_ClaimsGuestOrder`) — tidak ada round-trip nyata ke
+  `accounts.google.com` dalam review ini.
+
+Isu yang diketahui dan SENGAJA tidak diperbaiki di review ini (klasifikasi
+terhadap keamanan guest order):
+
+| ID | Isu | Klasifikasi |
+|---|---|---|
+| GO-P2-1 | Tidak ada cleanup `guest_sessions` maupun user guest (satu baris `users` + bcrypt cost 10 per identitas) | **follow-up** — biaya/pertumbuhan, bukan bypass; tidak ada keputusan otorisasi yang bergantung padanya |
+| GO-P3-2 | Pointer guest ↔ booking (`guest_sessions.first_order_id`, `bookings.guest_session_id`, `guest_order_entitlements.booking_id`) tanpa FK | **non-blocking** — integritas referensial; jalur claim sudah fail-closed bila `first_order_id` menunjuk booking guest lain (`resolveUnmarkedGuestOrderClaim`) |
+| GO-P2-5 | Guard duplikat MCP membaca marker dari riwayat chat dengan window 200 pesan; chat session baru mereset guard + scope idempotency MCP | **non-blocking untuk guest** (entitlement DB tetap menahan order kedua), **follow-up untuk akun** — di jalur authenticated guard ini satu-satunya pencegah order ganda dari chat |
+| GO-P2-8 | Event guest order tanpa `ip`/`user_agent`/`request_id`, dan tidak ada event saat identitas guest dicetak | **follow-up** — telemetri/deteksi, bukan penegakan |
+
+Tidak satu pun dari empat isu di atas diperbaiki oleh review ini; jangan anggap
+selesai.
+
+Batasan fungsional lain:
+
 - Order guest lama (dibuat sebelum fitur ini) tidak punya `guest_session_id`
   dan tidak bisa di-claim otomatis; tetap dapat diakses staff.
 - Order guest yang dibuat SEBELUM jangkar kontak ada (4 Sep 2026) tidak punya
@@ -521,6 +673,13 @@ TOCTOU/konkurensi (4 Sep 2026) dikunci tiga file tambahan:
 - Pengunjung yang memakai email DAN telepon berbeda tetap dapat satu order —
   butuh verifikasi kontak (OTP) untuk menutupnya (keputusan produk).
 - Token guest berlaku 30 hari; order guest yang belum di-claim setelah expiry
-  token hanya bisa diakses staff (retention dapat diperpanjang via env).
+  token hanya bisa diakses staff (retention dapat diperpanjang via env). Lihat
+  §"Kebijakan identitas guest kedaluwarsa".
+- Replay `Idempotency-Key` lintas claim hanya memeriksa 5 identitas guest
+  terakhir yang di-claim akun itu (`maxClaimedGuestIdempotencyScopes`). Akun
+  dengan lebih banyak order guest historis dan key yang SANGAT lama bisa
+  membuat order baru — batas yang dipilih agar biaya per-request tetap konstan.
+- `GUEST_COOKIE_SAME_SITE=Strict` valid tapi mematikan claim otomatis pada
+  callback Google; jalur pulihnya `POST /api/v1/orders/claim`.
 - Rate limit masih per-IP in-memory single instance (lihat known-issues PRR-P1-3).
 

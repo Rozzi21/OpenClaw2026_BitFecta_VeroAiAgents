@@ -370,3 +370,47 @@ func TestPostgresConcurrentIdentityResolutionIsStable(t *testing.T) {
 		t.Fatalf("expected one guest session, got %d", got)
 	}
 }
+
+// TestPostgresClaimedGuestIdempotencyKeyNotReplayable is the real-engine check of
+// the claim-crossing idempotency guard (GO-P2-4). It is not a race — it lives
+// here because the guard runs one extra query whose behaviour is engine
+// dependent: `... WHERE claimed_user_id = ? ORDER BY claimed_at DESC LIMIT n`
+// plucking a uuid column into []uuid.UUID, plus a lookup of
+// `user_id = ? AND guest_session_id IS NULL` on a genuinely nullable uuid column.
+// The SQLite harness cannot vouch for either.
+func TestPostgresClaimedGuestIdempotencyKeyNotReplayable(t *testing.T) {
+	repo := setupPostgresRaceDB(t)
+	guestUser, trip, guest := seedGuestFixture(t, repo.DB)
+	svc := newGuestBookingService(repo)
+	ctx := context.Background()
+
+	const key = "pg-claim-idem-0000001"
+	req := claimBookingReq(trip, 951)
+	guestOrder, err := svc.CreateGuest(ctx, guestUser.ID, guest.ID, key, req)
+	if err != nil {
+		t.Fatalf("guest order: %v", err)
+	}
+	account := seedClaimAccount(t, repo.DB, "pg-claimant-"+uuid.NewString()+"@example.com")
+	if _, err := repo.ClaimGuestOrder(ctx, guest.ID, account.ID); err != nil {
+		t.Fatalf("claim guest order: %v", err)
+	}
+
+	claimed, err := repo.ListClaimedGuestSessionIDs(ctx, account.ID, 5)
+	if err != nil {
+		t.Fatalf("list claimed guest sessions: %v", err)
+	}
+	if len(claimed) != 1 || claimed[0] != guest.ID {
+		t.Fatalf("claim marker not readable on postgres: %v want [%s]", claimed, guest.ID)
+	}
+
+	replay, err := svc.Create(ctx, account.ID, key, req)
+	if err != nil {
+		t.Fatalf("authenticated replay of the claimed key: %v", err)
+	}
+	if replay.ID != guestOrder.ID {
+		t.Fatalf("replay created a duplicate order: %s (claimed order %s)", replay.ID, guestOrder.ID)
+	}
+	if got := countRows(t, repo.DB, &models.Booking{}, ""); got != 1 {
+		t.Fatalf("expected one booking in total, got %d", got)
+	}
+}

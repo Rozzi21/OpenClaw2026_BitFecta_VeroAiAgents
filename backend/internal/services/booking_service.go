@@ -66,6 +66,56 @@ func hashIdempotency(ownerID uuid.UUID, guest bool, key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// maxClaimedGuestIdempotencyScopes bounds how many previously claimed guest
+// identities the authenticated path re-checks for a replayed Idempotency-Key
+// (GO-P2-4). A guest identity can hold at most ONE order, so this is also the
+// number of guest orders an account may have absorbed; 5 covers a customer who
+// ordered as a guest from several browsers before signing in, while keeping the
+// work per booking request constant.
+const maxClaimedGuestIdempotencyScopes = 5
+
+// claimedGuestIdempotencyLookup is the read side needed to recognise an
+// Idempotency-Key that was first used before the caller signed in. Satisfied by
+// both the transaction handle and the plain repository.
+type claimedGuestIdempotencyLookup interface {
+	FindBookingByIdempotency(ctx context.Context, ownerID uuid.UUID, guest bool, hash string) (models.Booking, error)
+	ListClaimedGuestSessionIDs(ctx context.Context, userID uuid.UUID, limit int) ([]uuid.UUID, error)
+}
+
+// findClaimedGuestIdempotencyReplay resolves the booking an Idempotency-Key
+// already produced while the caller was still a guest (GO-P2-4).
+//
+// bookings.idempotency_key_hash binds the key to its OWNER
+// (sha256("guest:"+guestSessionID+":"+key) vs sha256("user:"+userID+":"+key)),
+// which is what keeps two different owners using the same key apart. The claim
+// changes the owner without being able to rehash anything (the raw key is never
+// stored), so the account replaying the very request it made as a guest used to
+// miss its own order and create a SECOND one — precisely at the moment a client
+// retries the request that was refused with GUEST_ORDER_LIMIT_REACHED.
+//
+// The lookup re-derives the guest-scoped hash from the claim marker and keeps the
+// owner filter on the caller: `user_id = caller AND guest_session_id IS NULL AND
+// idempotency_key_hash = <guest hash>`. Both halves are needed to hit a row, and
+// both are the caller's own — the guest session ids come from claims made BY this
+// account, so another owner's order can never be returned, and nothing is
+// weakened for callers that never were a guest (no marker ⇒ no lookup).
+func findClaimedGuestIdempotencyReplay(ctx context.Context, repo claimedGuestIdempotencyLookup, userID uuid.UUID, key string) (models.Booking, bool) {
+	if userID == uuid.Nil {
+		return models.Booking{}, false
+	}
+	guestIDs, err := repo.ListClaimedGuestSessionIDs(ctx, userID, maxClaimedGuestIdempotencyScopes)
+	if err != nil || len(guestIDs) == 0 {
+		return models.Booking{}, false
+	}
+	for _, guestID := range guestIDs {
+		existing, err := repo.FindBookingByIdempotency(ctx, userID, false, hashIdempotency(guestID, true, key))
+		if err == nil {
+			return existing, true
+		}
+	}
+	return models.Booking{}, false
+}
+
 func (s *BookingService) Create(ctx context.Context, userID uuid.UUID, idempotencyKey string, req dto.BookingRequest) (models.Booking, error) {
 	return s.create(ctx, userID, nil, idempotencyKey, req)
 }
@@ -95,6 +145,16 @@ func (s *BookingService) create(ctx context.Context, userID uuid.UUID, guestID *
 		if existing, err := tx.FindBookingByIdempotency(ctx, ownerID, isGuest, keyHash); err == nil {
 			booking = existing
 			return nil
+		}
+		if !isGuest {
+			// GO-P2-4: the same logical request may already have been placed by
+			// this very customer while they were still a guest, with the key
+			// hashed under the guest scope. Replay that order instead of
+			// creating a second one for the same key.
+			if existing, ok := findClaimedGuestIdempotencyReplay(ctx, tx, userID, idempotencyKey); ok {
+				booking = existing
+				return nil
+			}
 		}
 		if isGuest {
 			guest, err := tx.LockGuestSession(ctx, *guestID)

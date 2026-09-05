@@ -128,6 +128,39 @@ func (r *Repository) ConsumeGuestOrderEntitlements(ctx context.Context, entitlem
 	return nil
 }
 
+// ListClaimedGuestSessionIDs returns the guest identities whose single order was
+// already claimed by this account, most recently claimed first (GO-P2-4).
+//
+// It exists so the authenticated booking path can recognise an Idempotency-Key
+// that was first used while the caller was still a guest: the stored
+// bookings.idempotency_key_hash is scoped to the GUEST session that created the
+// order, and the claim moves the row to the account without rehashing it (the
+// raw key is never stored, so it cannot be rehashed). The claim marker is the
+// only durable link back to that guest scope.
+//
+// Deliberately NOT filtered by expires_at: the marker outlives the 30-day guest
+// identity TTL, and a replay must stay blocked after the cookie is gone.
+// Returning these ids grants nothing on its own — the caller can only use them
+// to recompute a hash for a booking that already belongs to the same user id.
+func (r *Repository) ListClaimedGuestSessionIDs(ctx context.Context, userID uuid.UUID, limit int) ([]uuid.UUID, error) {
+	if userID == uuid.Nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 1
+	}
+	var ids []uuid.UUID
+	err := r.DB.WithContext(ctx).Model(&models.GuestSession{}).
+		Where("claimed_user_id = ?", userID).
+		Order("claimed_at DESC").
+		Limit(limit).
+		Pluck("id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 func (r *Repository) FindBookingByIdempotency(ctx context.Context, ownerID uuid.UUID, guest bool, hash string) (models.Booking, error) {
 	var booking models.Booking
 	q := r.DB.WithContext(ctx).Preload("Trip").Where("idempotency_key_hash = ?", hash)

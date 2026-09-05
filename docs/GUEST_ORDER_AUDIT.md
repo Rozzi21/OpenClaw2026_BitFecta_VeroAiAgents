@@ -513,6 +513,18 @@ dan hash berubah begitu order pindah kepemilikan.
   `sha256(key)` + kolom owner terpisah pada unique index majemuk), atau simpan
   hash guest asli pada booking dan sertakan dalam lookup jalur akun.
 - **Implementation risk**: Sedang (menyentuh index unik yang sudah ada).
+- **Status (4 Sep 2026): FIXED — tanpa menyentuh index unik.** Alih-alih mengubah
+  skema/hash, jalur akun sekarang juga mencari key di bawah scope guest yang
+  SUDAH di-claim oleh akun itu: `Repository.ListClaimedGuestSessionIDs` membaca
+  marker `guest_sessions.claimed_user_id` (maks
+  `maxClaimedGuestIdempotencyScopes` = 5 terbaru) dan
+  `BookingService.create` mengulang `FindBookingByIdempotency` dengan hash
+  `guest:<guestSessionID>:<key>` — filter owner tetap milik pemanggil
+  (`user_id = caller AND guest_session_id IS NULL`), jadi tidak ada order pemilik
+  lain yang bisa terbaca dan pemanggil tanpa marker tidak menjalankan query
+  tambahan. Regresi:
+  `backend/internal/services/guest_order_idempotency_claim_test.go` +
+  `TestPostgresClaimedGuestIdempotencyKeyNotReplayable` (suite Postgres opsional).
 
 #### GO-P2-5: Guard duplikat MCP terikat chat session dan window 200 pesan
 
@@ -552,6 +564,16 @@ dan hash berubah begitu order pindah kepemilikan.
   dikenal alih-alih diam-diam mengetatkan. Dokumentasikan bahwa jalur claim
   Google membutuhkan `Lax` atau `None`.
 - **Implementation risk**: Rendah.
+- **Status (4 Sep 2026): FIXED.** `Config.Validate()` menolak apa pun di luar
+  `Strict`/`Lax`/`None` (trim + case-insensitive; string kosong = "tidak di-set",
+  default `Load()` berlaku) untuk KEDUA env var, di **semua** environment — mode
+  gagalnya kesenyapan, jadi tidak boleh hanya dijaga di production.
+  `auth.parseSameSite` tetap fallback ke `Strict` sebagai defense-in-depth. Yang
+  TIDAK berubah (sengaja): `Strict` adalah nilai valid yang tetap mematikan claim
+  Google — itu didokumentasikan di `backend/.env.example`,
+  `docs/ai/deployment.md`, dan `docs/GUEST_ORDER_LIMIT.md`, bukan dijadikan error,
+  karena deployment tanpa Google OAuth boleh memilihnya. Regresi:
+  `backend/internal/config/config_test.go`.
 
 
 #### GO-P2-7: `AttachChat` menimpa `chat_sessions.guest_session_id` tanpa cek kepemilikan

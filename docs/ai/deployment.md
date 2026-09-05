@@ -40,13 +40,13 @@ Sumber kebenaran: `backend/internal/config/config.go` (fungsi `Load()`), contoh 
 | `JWT_REFRESH_TTL_HOURS` | `720` | Masa hidup refresh token (30 hari) |
 | `JWT_COOKIE_NAME` | `refresh_token` | Nama cookie refresh HttpOnly |
 | `JWT_COOKIE_SECURE` | `APP_ENV==production` | Cookie hanya via HTTPS |
-| `JWT_COOKIE_SAME_SITE` | `Strict` | `Lax`/`None`/`Strict`. `None` otomatis memaksa `Secure=true` |
+| `JWT_COOKIE_SAME_SITE` | `Strict` | `Lax`/`None`/`Strict` (case-insensitive). `None` otomatis memaksa `Secure=true`. Nilai lain **menggagalkan `Config.Validate()`** saat start (GO-P2-6) |
 
 ### Guest Identity (Guest Order Limit)
 | Variabel | Default | Keterangan |
 |---|---|---|
 | `GUEST_COOKIE_SECURE` | `APP_ENV==production` | Cookie guest hanya via HTTPS |
-| `GUEST_COOKIE_SAME_SITE` | `Lax` | SameSite cookie `vero_chat_session` dan `vero_guest_session` |
+| `GUEST_COOKIE_SAME_SITE` | `Lax` | SameSite cookie `vero_chat_session` dan `vero_guest_session`. Hanya `Strict`/`Lax`/`None` (case-insensitive) — nilai lain/salah tulis **menggagalkan `Config.Validate()`** saat start, tidak lagi jatuh senyap ke `Strict` (GO-P2-6). Pakai `Lax` (atau `None` + `GUEST_COOKIE_SECURE=true`): `Strict` valid tapi mematikan claim order guest pada callback Google |
 | `GUEST_SESSION_TTL_HOURS` | `168` | Sliding TTL `ChatSession` tamu (7 hari) |
 | `GUEST_IDENTITY_TTL_HOURS` | `720` | TTL `GuestSession` server-side untuk guest order limit (30 hari) |
 
