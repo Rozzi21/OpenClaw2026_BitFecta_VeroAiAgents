@@ -18,6 +18,8 @@ Catatan jujur tentang keterbatasan, technical debt, dan area yang perlu diperhat
 
 > Audit guest order system (read-only): 3 Sep 2026 — **1 P0**, 3 P1, 10 P2, 7 P3. Dicatat di bagian A.18. Laporan + urutan implementasi: `docs/GUEST_ORDER_AUDIT.md`. **GO-P0-1 (enforcement satu order per guest) SUDAH DIPERBAIKI 4 Sep 2026** — jangkar kontak di DB. **GO-P3-3 dan GO-P1-3 SUDAH DIPERBAIKI (4 Sep 2026)** — claim guest order punya marker `claimed_user_id`/`claimed_at`, outcome bersentinel (idempoten vs konflik), audit event terpisah, DAN jalur retry eksplisit `POST /api/v1/orders/claim`. **GO-P1-1 SUDAH DIPERBAIKI (4 Sep 2026)** — proxy SSE chat meneruskan `Authorization`, plus integrasi aturan guest ke MCP/AI/frontend (`order_gate`, no-retry guard, auth gate di chat). Sisa temuan P1/P2/P3 lain masih terbuka.
 
+> Audit backend menyeluruh (read-only): 6 Sep 2026 (komit `5a26240`) — **1 P0-equivalent (P1), 3 P2, 4 P3**; build/vet/test/race semua hijau. Laporan lengkap: `docs/report/ReportBackendSep6.MD`. Temuan kunci: (1) **BSD-1 [P1]** verifikasi HMAC DOKU webhook selalu memakai body kosong karena `ShouldBindJSON` sudah mengonsumsi body sebelum `c.GetRawData()` → **wajib diperbaiki sebelum `PAYMENTS_ENABLED=true`**; (2) BSD-2 metric label `path` memakai `URL.Path` (bukan `FullPath()`) → cardinality Prometheus; (3) BSD-3 `UpdateChatSession` masih `.Save()` (pola DB-2) tanpa caller; (4) BSD-4 `TripListQuery` tanpa clamp; (5) BSD-5 `Handler.Chat` dead code; (6) BSD-6 `FindBookingBySession` query kolom `session_id` yang tidak ada; (7) BSD-7 `strings.Title` deprecated; (8) BSD-8 coverage ai/handlers/auth rendah & 5 package 0%.
+
 ---
 
 ## A.18 Audit Guest Order System (3 Sep 2026) — GO-P0-1 + GO-P1-3 + GO-P3-3 FIXED (4 Sep 2026), SISANYA BELUM
